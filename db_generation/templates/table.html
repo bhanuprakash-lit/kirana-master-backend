@@ -1,0 +1,64 @@
+{% extends "layout.html" %}
+
+{% block content %}
+  <section class="hero">
+    <span class="pill">{{ schema }}</span>
+    <span class="pill">{{ count }} rows</span>
+    <span class="pill">
+      {% if selected_store %}{{ selected_store.name }}{% else %}All stores{% endif %}
+    </span>
+    <h2>{{ table }}</h2>
+    <p class="muted">Showing page {{ page }} of {{ total_pages }} with {{ page_size }} rows per page.</p>
+  </section>
+
+  <section class="card">
+    <h3>Columns</h3>
+    {% if columns %}
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        {% for col in columns %}
+          <span class="pill">{{ col.column_name }}: {{ col.data_type }}</span>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty">No columns found.</div>
+    {% endif %}
+  </section>
+
+  <section class="card" style="margin-top:16px;">
+    <h3>Rows</h3>
+    {% if rows %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for col in columns %}
+                <th>{{ col.column_name }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                {% for col in columns %}
+                  <td>{{ row[col.column_name] }}</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty">This table is empty.</div>
+    {% endif %}
+
+    <div class="pagination">
+      {% if page > 1 %}
+        <a class="button" href="{{ store_url('table_view', schema=schema, table=table, page=page-1) }}">Previous</a>
+      {% endif %}
+      <span class="muted">Page {{ page }} / {{ total_pages }}</span>
+      {% if page < total_pages %}
+        <a class="button" href="{{ store_url('table_view', schema=schema, table=table, page=page+1) }}">Next</a>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

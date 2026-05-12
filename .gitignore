@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# Database / data files
+*.db
+*.sqlite
+*.sqlite3
+lit_db/
+
+# ML model artifacts (large binaries — store in cloud storage)
+ml_models/**/*.pkl
+ml_models/**/*.joblib
+ml_models/**/*.json
+!ml_models/**/.gitkeep
+
+# Output files
+outputs/
+
+# Excel / data files
+*.xlsx
+*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/

@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_title }}</title>
+  <style>
+    :root {
+      --bg: #f6f0e5;
+      --panel: #fffaf0;
+      --panel-strong: #fff;
+      --ink: #1f2933;
+      --muted: #5b6670;
+      --line: #dfd4c4;
+      --accent: #1f6f5f;
+      --accent-soft: #e1f0ec;
+      --warn: #b45309;
+      --shadow: 0 12px 30px rgba(74, 55, 28, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(31, 111, 95, 0.10), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(180, 83, 9, 0.08), transparent 26%),
+        var(--bg);
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      padding: 24px 18px;
+      background: rgba(255, 250, 240, 0.82);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+    }
+
+    .brand {
+      margin-bottom: 24px;
+      padding: 16px;
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .brand h1 {
+      margin: 0 0 6px;
+      font-size: 1.55rem;
+      line-height: 1.1;
+    }
+
+    .brand p, .nav-group-title, .muted {
+      color: var(--muted);
+    }
+
+    .nav-group {
+      margin-top: 20px;
+    }
+
+    .nav-group-title {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.72rem;
+      margin-bottom: 10px;
+    }
+
+    .nav-link {
+      display: block;
+      padding: 10px 12px;
+      border-radius: 12px;
+      margin-bottom: 6px;
+      border: 1px solid transparent;
+    }
+
+    .nav-link:hover, .nav-link.active {
+      background: var(--accent-soft);
+      border-color: rgba(31, 111, 95, 0.14);
+      color: var(--accent);
+    }
+
+    .content {
+      padding: 28px;
+    }
+
+    .hero {
+      margin-bottom: 22px;
+      padding: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero h2 {
+      margin: 0 0 8px;
+      font-size: 2rem;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid.cards {
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      margin-bottom: 18px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    }
+
+    .card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .card h3 {
+      margin: 0 0 14px;
+      font-size: 1rem;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 0.88rem;
+      margin-bottom: 6px;
+    }
+
+    .metric-value {
+      font-size: 2rem;
+      font-weight: bold;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel-strong);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 0.95rem;
+    }
+
+    th {
+      background: #f9f3e8;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.8rem;
+      margin-right: 8px;
+    }
+
+    .pagination {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    .button {
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      padding: 10px 14px;
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .store-switcher {
+      margin-top: 16px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .store-switcher select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-strong);
+      color: var(--ink);
+      padding: 10px 12px;
+      font: inherit;
+    }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--line);
+      border-radius: 16px;
+      color: var(--muted);
+      background: rgba(255,255,255,0.45);
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: relative;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .content {
+        padding: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>{{ app_title }}</h1>
+        <p class="muted">Read-only browsing for lit_db across kirana_oltp and kirana_olap.</p>
+        <form class="store-switcher" method="get" action="{{ request.path }}">
+          <label class="nav-group-title" for="store_id">Store scope</label>
+          <select id="store_id" name="store_id" onchange="this.form.submit()">
+            <option value="" {% if selected_store_id is none %}selected{% endif %}>All stores</option>
+            {% for store in stores %}
+              <option value="{{ store.store_id }}" {% if selected_store_id == store.store_id %}selected{% endif %}>
+                {{ store.store_id }} - {{ store.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">Dashboard</div>
+        <a class="nav-link {% if request.path == '/' %}active{% endif %}" href="{{ store_url('index') }}">Overview</a>
+      </div>
+
+      {% for schema_name, grouped_tables in [('kirana_oltp', tables|selectattr('table_schema', 'equalto', 'kirana_oltp')|list), ('kirana_olap', tables|selectattr('table_schema', 'equalto', 'kirana_olap')|list)] %}
+      <div class="nav-group">
+        <div class="nav-group-title">{{ schema_name }}</div>
+        {% for item in grouped_tables %}
+            <a
+              class="nav-link {% if request.path == url_for('table_view', schema=item.table_schema, table=item.table_name) %}active{% endif %}"
+            href="{{ store_url('table_view', schema=item.table_schema, table=item.table_name) }}"
+          >
+            {{ item.table_name }}
+          </a>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </aside>
+
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

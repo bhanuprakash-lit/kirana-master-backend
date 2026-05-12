@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kirana Master Backend — API Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --card: #20232e;
+    --border: #2e3347; --accent: #6366f1; --accent2: #8b5cf6;
+    --green: #10b981; --amber: #f59e0b; --red: #ef4444; --blue: #3b82f6;
+    --text: #e2e8f0; --muted: #64748b; --code-bg: #0d1117;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 14px; }
+
+  /* Layout */
+  .sidebar { position: fixed; left: 0; top: 0; width: 220px; height: 100vh; background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; overflow-y: auto; z-index: 100; }
+  .main    { margin-left: 220px; padding: 24px; min-height: 100vh; }
+
+  /* Sidebar */
+  .logo { padding: 0 16px 16px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+  .logo h1 { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: .5px; }
+  .logo p  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .nav-group { padding: 4px 0; }
+  .nav-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; padding: 6px 16px; }
+  .nav-item  { display: block; padding: 6px 16px; color: var(--muted); text-decoration: none; cursor: pointer; font-size: 13px; border-left: 2px solid transparent; transition: all .15s; }
+  .nav-item:hover, .nav-item.active { color: var(--text); background: rgba(99,102,241,.08); border-left-color: var(--accent); }
+
+  /* Auth bar */
+  .auth-bar { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+  .auth-bar h3 { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .auth-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px; }
+  .auth-field label { font-size: 11px; color: var(--muted); }
+  .auth-field input { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; color: var(--text); font-size: 13px; font-family: monospace; outline: none; }
+  .auth-field input:focus { border-color: var(--accent); }
+  .auth-status { font-size: 11px; padding: 4px 8px; border-radius: 4px; white-space: nowrap; }
+  .auth-status.ok  { background: rgba(16,185,129,.15); color: var(--green); }
+  .auth-status.bad { background: rgba(239,68,68,.15);  color: var(--red); }
+
+  /* Section header */
+  .section { margin-bottom: 32px; }
+  .section-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 10px; }
+  .section-title .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; }
+  .section-sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+
+  /* Endpoint card */
+  .ep-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+  .ep-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; user-select: none; transition: background .15s; }
+  .ep-header:hover { background: rgba(255,255,255,.03); }
+  .ep-method { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 4px; min-width: 52px; text-align: center; font-family: monospace; }
+  .method-GET    { background: rgba(16,185,129,.15); color: var(--green); }
+  .method-POST   { background: rgba(99,102,241,.15);  color: var(--accent); }
+  .method-PUT    { background: rgba(245,158,11,.15);  color: var(--amber); }
+  .method-PATCH  { background: rgba(59,130,246,.15);  color: var(--blue); }
+  .method-DELETE { background: rgba(239,68,68,.15);   color: var(--red); }
+  .ep-path { font-family: monospace; font-size: 13px; font-weight: 600; flex: 1; }
+  .ep-desc { font-size: 12px; color: var(--muted); flex: 2; }
+  .ep-chevron { color: var(--muted); font-size: 12px; transition: transform .2s; }
+  .ep-card.open .ep-chevron { transform: rotate(90deg); }
+
+  /* Expanded body */
+  .ep-body { display: none; border-top: 1px solid var(--border); padding: 16px; }
+  .ep-card.open .ep-body { display: block; }
+  .ep-body-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width:900px) { .ep-body-grid { grid-template-columns: 1fr; } }
+
+  /* Params form */
+  .param-group { margin-bottom: 14px; }
+  .param-group h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 8px; }
+  .param-row { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+  .param-row label { font-size: 11px; color: var(--muted); }
+  .param-row .hint  { font-size: 10px; color: var(--muted); opacity: .7; }
+  .param-row input, .param-row textarea, .param-row select {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 10px; color: var(--text); font-size: 12px; font-family: monospace;
+    outline: none; width: 100%; resize: vertical;
+  }
+  .param-row input:focus, .param-row textarea:focus { border-color: var(--accent); }
+
+  /* Run button */
+  .run-btn { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s; display: flex; align-items: center; gap: 6px; }
+  .run-btn:hover { background: var(--accent2); }
+  .run-btn.loading { opacity: .6; cursor: default; }
+  .run-btn .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Response panel */
+  .response-panel { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .response-meta  { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .status-pill { padding: 2px 8px; border-radius: 4px; font-weight: 600; font-family: monospace; }
+  .status-2xx { background: rgba(16,185,129,.2); color: var(--green); }
+  .status-4xx { background: rgba(245,158,11,.2); color: var(--amber); }
+  .status-5xx { background: rgba(239,68,68,.2);  color: var(--red); }
+  .response-time { color: var(--muted); }
+  .response-body { max-height: 420px; overflow-y: auto; padding: 12px; }
+  pre { font-family: 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+  .json-key    { color: #79c0ff; }
+  .json-str    { color: #a5d6ff; }
+  .json-num    { color: #ff7b72; }
+  .json-bool   { color: #56d364; }
+  .json-null   { color: var(--muted); }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 13px; z-index: 9999; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="logo">
+    <h1>🏪 Kirana Master</h1>
+    <p>API Dashboard v1.0</p>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Overview</div>
+    <a class="nav-item active" onclick="scrollTo('root')">Root &amp; Health</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Kirana AI</div>
+    <a class="nav-item" onclick="scrollTo('kirana-auth')">Auth &amp; Users</a>
+    <a class="nav-item" onclick="scrollTo('kirana-stores')">Stores</a>
+    <a class="nav-item" onclick="scrollTo('kirana-recs')">Recommendations</a>
+    <a class="nav-item" onclick="scrollTo('kirana-agents')">AI Agents</a>
+    <a class="nav-item" onclick="scrollTo('kirana-pipeline')">Pipeline</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">POS System</div>
+    <a class="nav-item" onclick="scrollTo('pos-auth')">Auth</a>
+    <a class="nav-item" onclick="scrollTo('pos-catalog')">Catalog</a>
+    <a class="nav-item" onclick="scrollTo('pos-orders')">Orders &amp; Payments</a>
+    <a class="nav-item" onclick="scrollTo('pos-reports')">Reports</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">WhatsApp</div>
+    <a class="nav-item" onclick="scrollTo('wa-webhook')">Webhook</a>
+    <a class="nav-item" onclick="scrollTo('wa-send')">Send Messages</a>
+    <a class="nav-item" onclick="scrollTo('wa-session')">Sessions</a>
+  </div>
+</nav>
+
+<!-- Main -->
+<main class="main">
+
+  <!-- Auth bar -->
+  <div class="auth-bar">
+    <div class="auth-field">
+      <label>Kirana API Key (X-API-Key)</label>
+      <input id="apiKey" type="text" placeholder="kirana-dev-key" value="kirana-dev-key">
+    </div>
+    <div class="auth-field">
+      <label>POS JWT Token (Bearer)</label>
+      <input id="jwtToken" type="text" placeholder="Paste JWT from /pos/token here">
+    </div>
+    <button class="run-btn" onclick="testHealth()" style="height:36px">▶ Test Connection</button>
+    <span id="connStatus" class="auth-status bad">Not tested</span>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ ROOT -->
+  <div class="section" id="root">
+    <div class="section-title">Root &amp; Health <span class="badge" style="background:rgba(99,102,241,.15);color:var(--accent)">GLOBAL</span></div>
+    <div class="section-sub">Server root and health check endpoints — no auth required.</div>
+    <div id="ep-root"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ KIRANA AUTH -->
+  <div class="section" id="kirana-auth">
+    <div class="section-title" style="color:#a78bfa">Kirana AI — Auth &amp; Users</div>
+    <div class="section-sub">Session-based auth with API key or Bearer token. Roles: admin / store_owner.</div>
+    <div id="ep-kirana-auth"></div>
+  </div>
+
+  <div class="section" id="kirana-stores">
+    <div class="section-title" style="color:#a78bfa">Kirana AI — Stores</div>
+    <div class="section-sub">Store management, inventory snapshots, per-store recommendation views.</div>
+    <div id="ep-kirana-stores"></div>
+  </div>
+
+  <div class="section" id="kirana-recs">
+    <div class="section-title" style="color:#a78bfa">Kirana AI — Recommendations</div>
+    <div class="section-sub">ML-powered recommendations: stockout risk, reorder, fast-moving, profit opportunities.</div>
+    <div id="ep-kirana-recs"></div>
+  </div>
+
+  <div class="section" id="kirana-agents">
+    <div class="section-title" style="color:#a78bfa">Kirana AI — AI Agents</div>
+    <div class="section-sub">Natural language queries and Mistral-powered explanations.</div>
+    <div id="ep-kirana-agents"></div>
+  </div>
+
+  <div class="section" id="kirana-pipeline">
+    <div class="section-title" style="color:#a78bfa">Kirana AI — Pipeline</div>
+    <div class="section-sub">Refresh ML model results from disk.</div>
+    <div id="ep-kirana-pipeline"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ POS -->
+  <div class="section" id="pos-auth">
+    <div class="section-title" style="color:#34d399">POS — Auth</div>
+    <div class="section-sub">OAuth2 password flow. Copy the returned JWT into the auth bar above.</div>
+    <div id="ep-pos-auth"></div>
+  </div>
+
+  <div class="section" id="pos-catalog">
+    <div class="section-title" style="color:#34d399">POS — Catalog</div>
+    <div class="section-sub">Stores, categories, and products from kirana_oltp schema. Prices and stock included.</div>
+    <div id="ep-pos-catalog"></div>
+  </div>
+
+  <div class="section" id="pos-orders">
+    <div class="section-title" style="color:#34d399">POS — Orders &amp; Payments</div>
+    <div class="section-sub">Create orders (auto-deducts stock), list orders, record payments.</div>
+    <div id="ep-pos-orders"></div>
+  </div>
+
+  <div class="section" id="pos-reports">
+    <div class="section-title" style="color:#34d399">POS — Reports</div>
+    <div class="section-sub">Daily revenue and order stats per store.</div>
+    <div id="ep-pos-reports"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ WHATSAPP -->
+  <div class="section" id="wa-webhook">
+    <div class="section-title" style="color:#60a5fa">WhatsApp — Webhook</div>
+    <div class="section-sub">Meta webhook verification (GET) and inbound message handler (POST).</div>
+    <div id="ep-wa-webhook"></div>
+  </div>
+
+  <div class="section" id="wa-send">
+    <div class="section-title" style="color:#60a5fa">WhatsApp — Send Messages</div>
+    <div class="section-sub">Manually send text, templates, or media. Useful for testing the conversation flow.</div>
+    <div id="ep-wa-send"></div>
+  </div>
+
+  <div class="section" id="wa-session">
+    <div class="section-title" style="color:#60a5fa">WhatsApp — Sessions</div>
+    <div class="section-sub">Link phone numbers to stores, inspect conversation state, reset sessions.</div>
+    <div id="ep-wa-session"></div>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BASE = window.location.origin;
+let _counter = 0;
+
+// ── Endpoint definitions ─────────────────────────────────────────────────────
+const ENDPOINTS = {
+  'ep-root': [
+    { method:'GET', path:'/', desc:'Service overview and module links', auth:false, params:[] },
+    { method:'GET', path:'/health', desc:'Full health check — DB, ML row count, WhatsApp config', auth:false, params:[] },
+    { method:'GET', path:'/kirana/health', desc:'Kirana AI service health + ML row count', auth:false, params:[] },
+    { method:'GET', path:'/whatsapp/health', desc:'WhatsApp service config status', auth:false, params:[] },
+  ],
+  'ep-kirana-auth': [
+    { method:'POST', path:'/kirana/auth/login', desc:'Login and get Bearer token', auth:false,
+      body:{ username:'admin', password:'changeme' } },
+    { method:'POST', path:'/kirana/auth/register', desc:'Register a new store owner', auth:'api',
+      body:{ username:'owner1', password:'pass123', full_name:'Raju Kirana', store_name:'Raju General Store', store_type:'kirana', footfall:60 } },
+    { method:'GET',  path:'/kirana/auth/me', desc:'Get currently authenticated user', auth:'api', params:[] },
+    { method:'PATCH',path:'/kirana/auth/me', desc:'Update name or password', auth:'bearer',
+      body:{ full_name:'New Name' } },
+    { method:'GET',  path:'/kirana/users', desc:'List all users (admin only)', auth:'api', params:[] },
+    { method:'POST', path:'/kirana/users', desc:'Create a new user (admin)', auth:'api',
+      body:{ username:'cashier1', password:'pass', full_name:'Cashier One', role:'store_owner', store_id:1 } },
+    { method:'DELETE',path:'/kirana/users/{user_id}', desc:'Soft-delete a user', auth:'api',
+      pathParams:[{ name:'user_id', hint:'User ID to delete' }] },
+  ],
+  'ep-kirana-stores': [
+    { method:'GET', path:'/kirana/stores', desc:'List all stores with ML summary counts', auth:'api', params:[] },
+    { method:'GET', path:'/kirana/stores/{store_id}/recommendations', desc:'All ML recommendations for a store', auth:'api',
+      pathParams:[{ name:'store_id', default:'1', hint:'Store ID (1–4)' }] },
+    { method:'GET', path:'/kirana/stores/{store_id}/reorder', desc:'Only reorder_now recommendations', auth:'api',
+      pathParams:[{ name:'store_id', default:'1' }] },
+    { method:'GET', path:'/kirana/stores/{store_id}/risks', desc:'Stockout risk recommendations sorted by probability', auth:'api',
+      pathParams:[{ name:'store_id', default:'1' }] },
+    { method:'GET', path:'/kirana/stores/{store_id}/opportunities', desc:'High profit-margin SKU recommendations', auth:'api',
+      pathParams:[{ name:'store_id', default:'1' }] },
+    { method:'POST', path:'/kirana/stores/{store_id}/snapshot', desc:'Ingest inventory snapshot data', auth:'api',
+      pathParams:[{ name:'store_id', default:'1' }],
+      body:{ snapshot_date:'2026-04-25', items:[{ sku_id:1, units_sold:5, stock:20, price:45.0 }] } },
+    { method:'PATCH', path:'/kirana/stores/{store_id}', desc:'Update store profile (footfall, budget)', auth:'api',
+      pathParams:[{ name:'store_id', default:'1' }],
+      body:{ store_name:'Updated Store Name', footfall:80 } },
+  ],
+  'ep-kirana-recs': [
+    { method:'GET', path:'/kirana/recommendations', desc:'Query recommendations with filters', auth:'api',
+      params:[
+        { name:'recommendation_type', hint:'stockout_risk | reorder_now | fast_moving | profit_opportunity', default:'stockout_risk' },
+        { name:'store_id',   hint:'Filter by store (1–4)', default:'1' },
+        { name:'top_n',      hint:'Limit results', default:'10' },
+        { name:'sort_by',    hint:'stockout_probability | forecast_demand | expected_profit', default:'stockout_probability' },
+        { name:'only_high_priority', hint:'true/false', default:'false' },
+        { name:'only_reorder',       hint:'true/false', default:'false' },
+      ]
+    },
+    { method:'POST', path:'/kirana/recommendations/query', desc:'Advanced query with full request body', auth:'api',
+      body:{ store_id:1, recommendation_type:'reorder_now', top_n:5, only_reorder:true, sort_by:'expected_profit' } },
+  ],
+  'ep-kirana-agents': [
+    { method:'POST', path:'/kirana/agent/explain', desc:'Get Mistral-generated plain-English explanations for recommendations', auth:'api',
+      body:{ store_id:1, recommendation_type:'stockout_risk', top_n:3 } },
+    { method:'POST', path:'/kirana/agent/query', desc:'Natural language query: intent detection + results + explanations', auth:'api',
+      body:{ query:'which items are about to run out of stock?', store_id:1, top_n:5 } },
+  ],
+  'ep-kirana-pipeline': [
+    { method:'POST', path:'/kirana/pipeline/refresh', desc:'Reload ML results CSVs from disk (runs after model retrain)', auth:'api', params:[] },
+  ],
+
+  'ep-pos-auth': [
+    { method:'POST', path:'/pos/token', desc:'POS login — returns JWT. Paste token in auth bar above.', auth:false, isForm:true,
+      body:{ username:'gurumurthy', password:'changeme' }, formHint:'Uses kirana_app_users table. Register via /kirana/auth/register first.' },
+    { method:'GET',  path:'/pos/me',   desc:'Current POS user info from token', auth:'bearer', params:[] },
+  ],
+  'ep-pos-catalog': [
+    { method:'GET', path:'/pos/stores',           desc:'List all kirana stores from kirana_oltp.store', auth:false, params:[] },
+    { method:'GET', path:'/pos/stores/{store_id}',desc:'Get a single store', auth:false,
+      pathParams:[{ name:'store_id', default:'1' }] },
+    { method:'GET', path:'/pos/categories',       desc:'All product categories from kirana_oltp.category', auth:false, params:[] },
+    { method:'GET', path:'/pos/products',         desc:'Products with current price + stock (per store)', auth:'bearer',
+      params:[
+        { name:'store_id', hint:'Store ID for pricing and stock', default:'1' },
+        { name:'skip',  hint:'Offset', default:'0' },
+        { name:'limit', hint:'Page size', default:'20' },
+      ]
+    },
+    { method:'GET', path:'/pos/products/barcode/{barcode}', desc:'Look up product by barcode', auth:'bearer',
+      pathParams:[{ name:'barcode', default:'891958682846' }],
+      params:[{ name:'store_id', default:'1' }] },
+    { method:'GET', path:'/pos/products/{product_id}',      desc:'Single product with price and stock', auth:'bearer',
+      pathParams:[{ name:'product_id', default:'1' }],
+      params:[{ name:'store_id', default:'1' }] },
+  ],
+  'ep-pos-orders': [
+    { method:'POST', path:'/pos/orders', desc:'Create order — validates stock, deducts inventory, computes total', auth:'bearer',
+      body:{ items:[{ product_id:1, quantity:2 }, { product_id:2, quantity:1 }], customer_id:null } },
+    { method:'GET',  path:'/pos/orders', desc:'List recent orders for authenticated user\'s store', auth:'bearer',
+      params:[{ name:'skip', default:'0' },{ name:'limit', default:'20' }] },
+    { method:'GET',  path:'/pos/orders/{order_id}', desc:'Get a single order with items', auth:'bearer',
+      pathParams:[{ name:'order_id', default:'1' }] },
+    { method:'POST', path:'/pos/payments', desc:'Record payment for an order (cash/upi/card/credit)', auth:'bearer',
+      body:{ order_id:1, amount:62.18, payment_method:'upi' } },
+  ],
+  'ep-pos-reports': [
+    { method:'GET', path:'/pos/reports/daily-sales', desc:'Daily revenue, order count, avg order value', auth:'bearer',
+      params:[
+        { name:'date',     hint:'YYYY-MM-DD (defaults to today)', default:'' },
+        { name:'store_id', hint:'Override store (uses auth user store if blank)', default:'' },
+      ]
+    },
+  ],
+
+  'ep-wa-webhook': [
+    { method:'GET',  path:'/whatsapp/webhook', desc:'Meta webhook verification (hub.mode=subscribe)', auth:false,
+      params:[
+        { name:'hub.mode',         default:'subscribe' },
+        { name:'hub.challenge',    default:'test123' },
+        { name:'hub.verify_token', default:'kirana_verify_token' },
+      ]
+    },
+    { method:'POST', path:'/whatsapp/webhook', desc:'Simulate incoming WhatsApp message (first-time user)', auth:false,
+      body:{
+        object:'whatsapp_business_account',
+        entry:[{ changes:[{ field:'messages', value:{
+          contacts:[{ wa_id:'919876543210' }],
+          messages:[{ id:'wamid.test01', type:'text', text:{ body:'Hello' }, from:'919876543210' }]
+        }}]}]
+      }
+    },
+  ],
+  'ep-wa-send': [
+    { method:'POST', path:'/whatsapp/send/text', desc:'Send a plain text message', auth:false,
+      body:{ phone_number:'+919876543210', message:'Hello from Kirana Master! 🏪' } },
+    { method:'POST', path:'/whatsapp/send/template', desc:'Send a pre-approved template', auth:false,
+      body:{ phone_number:'+919876543210', template_name:'onboarding_template', template_language:'en_US', parameters:['42'] } },
+    { method:'POST', path:'/whatsapp/send/media', desc:'Send an image or document', auth:false,
+      body:{ phone_number:'+919876543210', media_type:'image', media_url:'https://example.com/logo.png', caption:'Kirana Store' } },
+  ],
+  'ep-wa-session': [
+    { method:'POST', path:'/whatsapp/session/link-store', desc:'Link a WhatsApp phone to a store for scoped analytics', auth:false,
+      body:{ phone_number:'+919876543210', store_id:1, owner_name:'Gurumurthy', store_name:'Gurumurthy Kirana' } },
+    { method:'GET',  path:'/whatsapp/session/{phone}', desc:'Get conversation state for a phone number', auth:false,
+      pathParams:[{ name:'phone', default:'919876543210' }] },
+    { method:'DELETE',path:'/whatsapp/session/{phone}', desc:'Reset conversation to NEW state', auth:false,
+      pathParams:[{ name:'phone', default:'919876543210' }] },
+  ],
+};
+
+// ── Render endpoints ──────────────────────────────────────────────────────────
+function renderAll() {
+  Object.entries(ENDPOINTS).forEach(([containerId, eps]) => {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = eps.map((ep, i) => renderCard(ep, `${containerId}-${i}`)).join('');
+  });
+}
+
+function renderCard(ep, id) {
+  const pathDisplay = ep.path.replace(/{(\w+)}/g, '<span style="color:var(--amber)">{$1}</span>');
+  return `
+<div class="ep-card" id="card-${id}">
+  <div class="ep-header" onclick="toggleCard('${id}')">
+    <span class="ep-method method-${ep.method}">${ep.method}</span>
+    <code class="ep-path">${pathDisplay}</code>
+    <span class="ep-desc">${ep.desc}</span>
+    <span class="ep-chevron">▶</span>
+  </div>
+  <div class="ep-body">
+    <div class="ep-body-grid">
+      <div>${renderForm(ep, id)}</div>
+      <div>
+        <div class="param-group"><h4>Response</h4></div>
+        <div class="response-panel" id="res-${id}">
+          <div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">Click ▶ Run to see the response</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`;
+}
+
+function renderForm(ep, id) {
+  let html = '';
+
+  if (ep.pathParams?.length) {
+    html += `<div class="param-group"><h4>Path Parameters</h4>`;
+    ep.pathParams.forEach(p => {
+      html += `<div class="param-row">
+        <label>${p.name}${p.hint ? ` <span class="hint">(${p.hint})</span>` : ''}</label>
+        <input id="pp-${id}-${p.name}" placeholder="${p.name}" value="${p.default||''}">
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  if (ep.params?.length) {
+    html += `<div class="param-group"><h4>Query Parameters</h4>`;
+    ep.params.forEach(p => {
+      html += `<div class="param-row">
+        <label>${p.name}${p.hint ? ` <span class="hint">(${p.hint})</span>` : ''}</label>
+        <input id="qp-${id}-${p.name}" placeholder="${p.hint||p.name}" value="${p.default||''}">
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  if (ep.body) {
+    const bodyStr = JSON.stringify(ep.body, null, 2);
+    html += `<div class="param-group"><h4>Request Body</h4>`;
+    if (ep.formHint) html += `<p class="hint" style="margin-bottom:8px">${ep.formHint}</p>`;
+    html += `<div class="param-row">
+      <textarea id="body-${id}" rows="8">${bodyStr}</textarea>
+    </div></div>`;
+  }
+
+  if (ep.isForm) {
+    const u = ep.body?.username || '';
+    const p = ep.body?.password || '';
+    html = `<div class="param-group"><h4>Login Credentials</h4>
+      <div class="param-row"><label>username</label><input id="form-username-${id}" value="${u}" placeholder="username"></div>
+      <div class="param-row"><label>password</label><input id="form-password-${id}" type="password" placeholder="password"></div>
+    </div>`;
+  }
+
+  html += `<button class="run-btn" id="btn-${id}" onclick="runEndpoint('${id}', ${JSON.stringify(ep).replace(/"/g,'&quot;')})">
+    <span>▶ Run</span>
+  </button>`;
+  return html;
+}
+
+// ── Run endpoint ──────────────────────────────────────────────────────────────
+async function runEndpoint(id, ep) {
+  const btn = document.getElementById(`btn-${id}`);
+  btn.innerHTML = '<span class="spinner"></span><span>Running…</span>';
+  btn.classList.add('loading');
+
+  try {
+    // Build URL
+    let path = ep.path;
+    (ep.pathParams || []).forEach(p => {
+      const val = document.getElementById(`pp-${id}-${p.name}`)?.value?.trim() || p.default || '';
+      path = path.replace(`{${p.name}}`, encodeURIComponent(val));
+    });
+
+    const qps = new URLSearchParams();
+    (ep.params || []).forEach(p => {
+      const val = document.getElementById(`qp-${id}-${p.name}`)?.value?.trim();
+      if (val) qps.set(p.name, val);
+    });
+    const qs = qps.toString();
+    const url = BASE + path + (qs ? '?' + qs : '');
+
+    // Build headers
+    const headers = { 'Content-Type': 'application/json' };
+    if (ep.auth === 'api')    headers['X-API-Key'] = document.getElementById('apiKey').value.trim();
+    if (ep.auth === 'bearer') headers['Authorization'] = 'Bearer ' + document.getElementById('jwtToken').value.trim();
+
+    // Build body
+    let body = undefined;
+    if (ep.isForm) {
+      const u = document.getElementById(`form-username-${id}`)?.value || '';
+      const p = document.getElementById(`form-password-${id}`)?.value || '';
+      body = `username=${encodeURIComponent(u)}&password=${encodeURIComponent(p)}`;
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    } else if (ep.body) {
+      const raw = document.getElementById(`body-${id}`)?.value;
+      body = raw;
+    }
+
+    const t0 = performance.now();
+    const res = await fetch(url, { method: ep.method, headers, body });
+    const ms  = Math.round(performance.now() - t0);
+    const text = await res.text();
+
+    let data = text;
+    try { data = JSON.parse(text); } catch(e) {}
+
+    showResponse(id, res.status, ms, data);
+
+    // Auto-fill JWT if this was a POS login
+    if (ep.path === '/pos/token' && res.ok && data.access_token) {
+      document.getElementById('jwtToken').value = data.access_token;
+      toast('JWT token saved to auth bar ✓');
+    }
+  } catch(e) {
+    showResponse(id, 0, 0, { error: e.message });
+  } finally {
+    btn.innerHTML = '<span>▶ Run</span>';
+    btn.classList.remove('loading');
+  }
+}
+
+function showResponse(id, status, ms, data) {
+  const panel = document.getElementById(`res-${id}`);
+  const cls   = status >= 500 ? 'status-5xx' : status >= 400 ? 'status-4xx' : 'status-2xx';
+  const label = status === 0 ? 'NETWORK ERROR' : status;
+  panel.innerHTML = `
+    <div class="response-meta">
+      <span class="status-pill ${cls}">${label}</span>
+      <span class="response-time">${ms}ms</span>
+    </div>
+    <div class="response-body"><pre>${syntaxHighlight(JSON.stringify(data, null, 2))}</pre></div>`;
+}
+
+function syntaxHighlight(json) {
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, m => {
+    if (/^"/.test(m)) return /:$/.test(m) ? `<span class="json-key">${esc(m)}</span>` : `<span class="json-str">${esc(m)}</span>`;
+    if (/true|false/.test(m)) return `<span class="json-bool">${m}</span>`;
+    if (/null/.test(m))       return `<span class="json-null">${m}</span>`;
+    return `<span class="json-num">${m}</span>`;
+  });
+}
+function esc(s) { return s.replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Misc ──────────────────────────────────────────────────────────────────────
+function toggleCard(id) {
+  document.getElementById(`card-${id}`).classList.toggle('open');
+}
+
+function scrollTo(id) {
+  document.getElementById(id)?.scrollIntoView({ behavior:'smooth', block:'start' });
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  event?.target?.classList.add('active');
+}
+
+async function testHealth() {
+  try {
+    const r = await fetch(BASE + '/health');
+    const d = await r.json();
+    const el = document.getElementById('connStatus');
+    if (r.ok) {
+      el.textContent = `✓ Connected — ${d.kirana?.ml_rows || 0} ML rows`;
+      el.className = 'auth-status ok';
+    } else {
+      el.textContent = '✗ Server error';
+      el.className = 'auth-status bad';
+    }
+  } catch(e) {
+    const el = document.getElementById('connStatus');
+    el.textContent = '✗ Cannot reach server';
+    el.className = 'auth-status bad';
+  }
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+renderAll();
+testHealth();
+</script>
+</body>
+</html>

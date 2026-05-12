@@ -1,0 +1,101 @@
+{% extends "layout.html" %}
+
+{% block content %}
+  <section class="hero">
+    <span class="pill">Live Postgres</span>
+    <span class="pill">
+      {% if selected_store %}{{ selected_store.name }}{% else %}All stores{% endif %}
+    </span>
+    <h2>Database overview</h2>
+    <p class="muted">Quick visibility into row counts, data quality checks, inventory spread, and recent retail activity for the selected store scope.</p>
+  </section>
+
+  <section class="grid cards">
+    {% for label, value in summary_cards %}
+      <article class="card">
+        <div class="metric-label">{{ label }}</div>
+        <div class="metric-value">{{ value }}</div>
+      </article>
+    {% endfor %}
+  </section>
+
+  <section class="grid two">
+    <article class="card">
+      <h3>Data quality checks</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Check</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in quality_checks %}
+              <tr>
+                <td>{{ item.label }}</td>
+                <td>{{ item.value }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <h3>Inventory by store</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Store ID</th>
+              <th>Min Qty</th>
+              <th>Max Qty</th>
+              <th>Avg Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in inventory_distribution %}
+              <tr>
+                <td>{{ row.store_id }}</td>
+                <td>{{ row.min_qty }}</td>
+                <td>{{ row.max_qty }}</td>
+                <td>{{ row.avg_qty }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="card" style="margin-top:16px;">
+    <h3>Recent orders</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Order ID</th>
+            <th>Order Date</th>
+            <th>Store</th>
+            <th>User</th>
+            <th>Customer</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in recent_orders %}
+            <tr>
+              <td>{{ row.order_id }}</td>
+              <td>{{ row.order_date }}</td>
+              <td>{{ row.store_name }}</td>
+              <td>{{ row.username }}</td>
+              <td>{{ row.customer_name }}</td>
+              <td>{{ row.total_amount }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
