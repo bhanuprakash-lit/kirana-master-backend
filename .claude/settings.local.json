@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(conda run *)",
+      "Bash(del \"C:\\\\Users\\\\Bhanuprakash\\\\Documents\\\\kirana-master-backend\\\\_check_users.py\")"
+    ]
+  }
+}
