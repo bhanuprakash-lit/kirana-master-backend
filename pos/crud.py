@@ -189,13 +189,15 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
             cost_price=cost_price,
         ))
 
-    db_order.total_amount = total
+    # Use caller-supplied total if provided (e.g. after referral discount), else sum from items
+    final_total = float(order.total_amount) if order.total_amount is not None else total
+    db_order.total_amount = final_total
     db.flush()
 
     # Auto-create payment record so payment_method filter works correctly
     db.add(KiranaPayment(
         order_id=db_order.order_id,
-        amount=total,
+        amount=final_total,
         payment_method=order.payment_method,
         status="paid",
         created_at=datetime.utcnow(),

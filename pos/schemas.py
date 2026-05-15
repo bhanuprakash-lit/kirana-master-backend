@@ -57,7 +57,7 @@ class ProductOut(BaseModel):
 
 class OrderItemCreate(BaseModel):
     product_id: int
-    quantity: int
+    quantity: float
     unit_price: Optional[float] = None
     selling_price: Optional[float] = None
 
@@ -73,7 +73,7 @@ class OrderItemOut(BaseModel):
     order_item_id: int
     product_id: int
     product_name: Optional[str] = None
-    quantity: int
+    quantity: float
     unit_price: float
     selling_price: Optional[float] = None
     cost_price: Optional[float] = None

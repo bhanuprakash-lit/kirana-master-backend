@@ -109,7 +109,7 @@ class KiranaOrderItem(POSBase):
     order_item_id = Column(BigInteger, primary_key=True)
     order_id      = Column(BigInteger, ForeignKey("kirana_oltp.orders.order_id"))
     product_id    = Column(BigInteger, ForeignKey("kirana_oltp.product.product_id"))
-    quantity      = Column(Integer)
+    quantity      = Column(Numeric)
     unit_price    = Column(Numeric)
     cost_price    = Column(Numeric)
 

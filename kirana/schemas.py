@@ -26,6 +26,18 @@ class PhoneLoginRequest(BaseModel):
     firebase_uid: str  # client-side verified; backend trusts mobile app
 
 
+class CashflowRequestCreate(BaseModel):
+    store_id: int
+    amount_requested: float
+    selected_bank: Optional[str] = None
+
+
+class CashflowRequestResponse(BaseModel):
+    request_id: int
+    status: str
+    message: str
+
+
 class RegisterStoreOwnerRequest(BaseModel):
     username: str
     password: str = ""          # empty for phone-auth users
@@ -38,6 +50,8 @@ class RegisterStoreOwnerRequest(BaseModel):
     email: Optional[str] = None          # store owner's contact email
     phone_number: Optional[str] = None   # set for phone-auth registrations
     firebase_uid: Optional[str] = None   # for audit trail
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class RegisterStoreOwnerResponse(BaseModel):
@@ -211,6 +225,8 @@ class UserPrefs(BaseModel):
     notify_in_app: bool = True
     quiet_hours_start: int = 22
     quiet_hours_end: int = 7
+    allow_social_marketing: bool = False
+    alert_expiry_days: int = 7
 
 
 class UserPrefsUpdate(BaseModel):
@@ -223,6 +239,8 @@ class UserPrefsUpdate(BaseModel):
     notify_in_app: Optional[bool] = None
     quiet_hours_start: Optional[int] = None
     quiet_hours_end: Optional[int] = None
+    allow_social_marketing: Optional[bool] = None
+    alert_expiry_days: Optional[int] = None
 
 
 # ── Finance ───────────────────────────────────────────────────────────────────
@@ -285,3 +303,30 @@ class IssueReportCreate(BaseModel):
 
 class FcmTokenUpdate(BaseModel):
     fcm_token: str
+
+
+class ReferralCampaignCreate(BaseModel):
+    store_id: int
+    name: str
+    referral_discount_pct: float = 10.0
+    milestone_every_n: int = 10
+    milestone_reward_pct: float = 5.0
+    max_referrals_per_referrer: int = 50
+
+
+class ReferralTokenRequest(BaseModel):
+    store_id: int
+    customer_id: int
+    campaign_id: int
+
+
+class ReferralScanRequest(BaseModel):
+    token_hash: str
+    new_customer_phone: str
+    new_customer_name: str = ""
+    order_id: Optional[int] = None
+
+
+class VoucherUseRequest(BaseModel):
+    voucher_id: int
+    order_id: Optional[int] = None

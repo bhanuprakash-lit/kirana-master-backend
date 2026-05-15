@@ -282,6 +282,8 @@ class KiranaService:
                 email=req.email,
                 phone_number=req.phone_number,
                 firebase_uid=req.firebase_uid,
+                latitude=req.latitude,
+                longitude=req.longitude,
             )
         except Exception as exc:
             msg = str(exc)
@@ -648,3 +650,51 @@ class KiranaService:
             raise ValueError(f"WhatsApp service error: {e}")
             
         return {"success": True, "phone": phone, "message": message}
+
+
+    def create_cashflow_request(self, store_id: int, user_id: int,
+                                amount: float, selected_bank: str | None) -> dict:
+        from kirana.repository import KiranaRepository
+        result = KiranaRepository(self._db).create_cashflow_request(
+            store_id, user_id, amount, selected_bank
+        )
+        return result
+
+    def get_cashflow_status(self, store_id: int) -> dict:
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).get_cashflow_status(store_id)
+
+    # ── Referral System ───────────────────────────────────────────────────────
+
+    def create_referral_campaign(self, store_id, name, referral_discount_pct, milestone_every_n, milestone_reward_pct, max_referrals_per_referrer=50):
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).create_referral_campaign(
+            store_id, name, referral_discount_pct, milestone_every_n, milestone_reward_pct, max_referrals_per_referrer)
+
+    def list_referral_campaigns(self, store_id):
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).list_referral_campaigns(store_id)
+
+    def toggle_referral_campaign(self, campaign_id, is_active):
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).toggle_referral_campaign(campaign_id, is_active)
+
+    def get_or_create_referral_token(self, store_id, customer_id, campaign_id):
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).get_or_create_referral_token(store_id, customer_id, campaign_id)
+
+    def get_token_info(self, token_hash):
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).get_token_info(token_hash)
+
+    def process_referral(self, token_hash, new_phone, new_name, order_id=None):
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).process_referral(token_hash, new_phone, new_name, order_id)
+
+    def get_pending_vouchers(self, customer_id, store_id):
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).get_pending_vouchers(customer_id, store_id)
+
+    def use_voucher(self, voucher_id, order_id=None):
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).use_voucher(voucher_id, order_id)

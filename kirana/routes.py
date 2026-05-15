@@ -10,7 +10,9 @@ from kirana.schemas import (
     RegisterStoreOwnerRequest,
     InventorySnapshotWriteRequest,
     UdhaarAddRequest, UdhaarRecoveryRequest, UdhaarRemindRequest, CustomerSyncRequest,
-    CustomerSyncItem
+    CustomerSyncItem,
+    CashflowRequestCreate,
+    ReferralCampaignCreate, ReferralTokenRequest, ReferralScanRequest, VoucherUseRequest,
 )
 from kirana.service import KiranaService
 
@@ -264,3 +266,89 @@ async def remind_udhaar(request: Request, body: UdhaarRemindRequest, user: dict 
         raise HTTPException(status_code=403, detail="Store owner login required")
     wa_client = request.app.state.wa_client
     return _svc(request).send_udhaar_reminder(int(sid), body.khata_id, wa_client)
+
+
+# ── Cashflow Support ──────────────────────────────────────────────────────────
+
+@router.post("/cashflow/request")
+async def create_cashflow_request(
+    request: Request,
+    body: CashflowRequestCreate,
+    user: dict = Depends(_auth),
+):
+    user_id = user.get("user_id")
+    store_id = body.store_id
+    if user.get("role") != "admin" and user.get("store_id") != store_id:
+        raise HTTPException(status_code=403, detail="Access denied to this store")
+    result = _svc(request).create_cashflow_request(
+        store_id=store_id,
+        user_id=user_id,
+        amount=body.amount_requested,
+        selected_bank=body.selected_bank,
+    )
+    return {
+        "request_id": result["request_id"],
+        "status": result["status"],
+        "message": "We've received your request! Our team will contact you within 2 business days.",
+    }
+
+
+@router.get("/cashflow/status")
+async def get_cashflow_status(
+    request: Request,
+    store_id: int,
+    user: dict = Depends(_auth),
+):
+    if user.get("role") != "admin" and user.get("store_id") != store_id:
+        raise HTTPException(status_code=403, detail="Access denied to this store")
+    return _svc(request).get_cashflow_status(store_id)
+
+
+# ── Referral Marketing ────────────────────────────────────────────────────────
+
+@router.post("/referral/campaigns")
+async def create_campaign(request: Request, body: ReferralCampaignCreate, user: dict = Depends(_auth)):
+    if user.get("role") != "admin" and user.get("store_id") != body.store_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return _svc(request).create_referral_campaign(
+        body.store_id, body.name, body.referral_discount_pct,
+        body.milestone_every_n, body.milestone_reward_pct,
+        body.max_referrals_per_referrer)
+
+@router.get("/referral/campaigns")
+async def list_campaigns(request: Request, store_id: int, user: dict = Depends(_auth)):
+    if user.get("role") != "admin" and user.get("store_id") != store_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return {"campaigns": _svc(request).list_referral_campaigns(store_id)}
+
+@router.patch("/referral/campaigns/{campaign_id}/toggle")
+async def toggle_campaign(campaign_id: int, is_active: bool, request: Request, user: dict = Depends(_auth)):
+    return _svc(request).toggle_referral_campaign(campaign_id, is_active)
+
+@router.post("/referral/token")
+async def get_referral_token(request: Request, body: ReferralTokenRequest, user: dict = Depends(_auth)):
+    result = _svc(request).get_or_create_referral_token(body.store_id, body.customer_id, body.campaign_id)
+    return result
+
+@router.get("/referral/token-info")
+async def token_info(request: Request, token: str, user: dict = Depends(_auth)):
+    info = _svc(request).get_token_info(token)
+    if not info:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return info
+
+@router.post("/referral/scan")
+async def process_referral(request: Request, body: ReferralScanRequest, user: dict = Depends(_auth)):
+    try:
+        return _svc(request).process_referral(body.token_hash, body.new_customer_phone, body.new_customer_name, body.order_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/referral/vouchers")
+async def get_vouchers(request: Request, customer_id: int, store_id: int, user: dict = Depends(_auth)):
+    return {"vouchers": _svc(request).get_pending_vouchers(customer_id, store_id)}
+
+@router.post("/referral/vouchers/use")
+async def use_voucher(request: Request, body: VoucherUseRequest, user: dict = Depends(_auth)):
+    ok = _svc(request).use_voucher(body.voucher_id, body.order_id)
+    return {"success": ok}
