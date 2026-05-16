@@ -64,5 +64,4 @@ htmlcov/
 
 # Scratch / dev utility scripts
 misc/
-
 serviceAccountKey.json
