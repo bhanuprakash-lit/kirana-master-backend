@@ -346,11 +346,154 @@ def upgrade():
     $$ LANGUAGE plpgsql;
     """)
 
+    # =========================
+    # 5. USER_PREFS — subscribed_kpis column
+    # =========================
+    cur.execute("""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='kirana_oltp'
+            AND table_name='user_prefs'
+            AND column_name='subscribed_kpis'
+        ) THEN
+            ALTER TABLE kirana_oltp.user_prefs ADD COLUMN subscribed_kpis TEXT;
+        END IF;
+    END $$;
+    """)
+
+    # =========================
+    # 6. SUBSCRIPTION TABLE UPGRADE
+    # =========================
+    cur.execute("""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='kirana_oltp'
+            AND table_name='subscription'
+            AND column_name='is_trial'
+        ) THEN
+            ALTER TABLE kirana_oltp.subscription ADD COLUMN is_trial BOOLEAN NOT NULL DEFAULT FALSE;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='kirana_oltp'
+            AND table_name='subscription'
+            AND column_name='trial_ends_at'
+        ) THEN
+            ALTER TABLE kirana_oltp.subscription ADD COLUMN trial_ends_at TIMESTAMP;
+        END IF;
+    END $$;
+    """)
+
+    # =========================
+    # BARCODE INDEX
+    # =========================
+    cur.execute("""
+    CREATE INDEX IF NOT EXISTS idx_product_barcode
+        ON kirana_oltp.product (barcode)
+        WHERE barcode IS NOT NULL;
+    """)
+
+    # =========================
+    # KPI TIER CONFIG TABLE
+    # =========================
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS kirana_oltp.kpi_tier_config (
+        kpi_id       TEXT        PRIMARY KEY,
+        required_tier TEXT       NOT NULL DEFAULT 'basic'
+            CHECK (required_tier IN ('basic', 'pro')),
+        updated_at   TIMESTAMP   NOT NULL DEFAULT NOW()
+    );
+    """)
+
+    # =========================
+    # STORE ASSOCIATIONS
+    # =========================
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS kirana_oltp.store_association (
+        association_id      SERIAL PRIMARY KEY,
+        store_id            INTEGER NOT NULL
+            REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+        name                TEXT NOT NULL,
+        area_type           TEXT NOT NULL
+            CHECK (area_type IN ('apartment','hostel','school','office','colony')),
+        estimated_households INTEGER,
+        notes               TEXT,
+        is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_store_association_store
+        ON kirana_oltp.store_association (store_id);
+    """)
+
+    cur.execute("""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'kirana_oltp'
+              AND table_name   = 'customer'
+              AND column_name  = 'association_id'
+        ) THEN
+            ALTER TABLE kirana_oltp.customer
+                ADD COLUMN association_id INTEGER
+                REFERENCES kirana_oltp.store_association(association_id)
+                ON DELETE SET NULL;
+        END IF;
+    END $$;
+    """)
+
+    # =========================
+    # INTELLIGENCE LOG TABLE
+    # =========================
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS kirana_oltp.intelligence_log (
+        id              BIGSERIAL PRIMARY KEY,
+        store_id        INTEGER NOT NULL,
+        user_id         INTEGER,
+        trigger_type    VARCHAR(50) NOT NULL,
+        title           TEXT NOT NULL,
+        body            TEXT NOT NULL,
+        payload         JSONB NOT NULL DEFAULT '{}',
+        sent_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        opened_at       TIMESTAMPTZ,
+        status          VARCHAR(20) NOT NULL DEFAULT 'sent'
+            CHECK (status IN ('sent', 'failed', 'opened', 'skipped'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_intel_log_store
+        ON kirana_oltp.intelligence_log (store_id, sent_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_intel_log_trigger
+        ON kirana_oltp.intelligence_log (trigger_type, sent_at DESC);
+    """)
+
+    # =========================
+    # CART SESSION TABLE
+    # Tracks active POS cart state pushed from the Flutter app.
+    # Used by abandoned-cart detection.
+    # =========================
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS kirana_oltp.cart_session (
+        store_id        INTEGER PRIMARY KEY,
+        item_count      INTEGER NOT NULL DEFAULT 0,
+        cart_data       JSONB NOT NULL DEFAULT '[]',
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        notified_at     TIMESTAMPTZ,
+        converted_at    TIMESTAMPTZ
+    );
+    """)
+
     conn.commit()
     cur.close()
     conn.close()
 
-    print("Upgrade complete: partitions, triggers, materialized views, ETL added.")
+    print("Upgrade complete: intelligence_log, cart_session added.")
 
 
 if __name__ == "__main__":

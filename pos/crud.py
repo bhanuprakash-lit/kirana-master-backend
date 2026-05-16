@@ -128,16 +128,39 @@ def get_product(db: Session, product_id: int, store_id: int) -> dict | None:
 
 
 def get_product_by_barcode(db: Session, barcode: str, store_id: int) -> dict | None:
-    p = (
-        db.query(KiranaProduct)
-        .join(KiranaInventory, KiranaInventory.product_id == KiranaProduct.product_id)
-        .filter(
-            KiranaProduct.barcode == barcode,
-            KiranaInventory.store_id == store_id,
-        )
-        .first()
-    )
-    return _enrich(db, p, store_id) if p else None
+    sql = """
+        SELECT
+            p.product_id, p.name, p.brand, p.unit,
+            p.weight::float            AS weight,
+            p.sku, p.barcode, p.is_perishable, p.is_loose, p.category_id,
+            COALESCE(pr.price, 0.0)::float  AS price,
+            pr.mrp::float                   AS mrp,
+            COALESCE(inv.quantity, 0)        AS stock_quantity,
+            TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
+        FROM kirana_oltp.product p
+        JOIN kirana_oltp.inventory inv
+            ON inv.product_id = p.product_id AND inv.store_id = :sid
+        LEFT JOIN LATERAL (
+            SELECT price, mrp
+            FROM kirana_oltp.pricing
+            WHERE product_id = p.product_id
+              AND store_id   = :sid
+              AND valid_from <= NOW()
+            ORDER BY valid_from DESC
+            LIMIT 1
+        ) pr ON TRUE
+        LEFT JOIN kirana_oltp.inventory_batch ib
+            ON ib.product_id = p.product_id
+           AND ib.store_id   = :sid
+           AND ib.qty_in_stock > 0
+        WHERE p.barcode = :barcode
+        GROUP BY p.product_id, p.name, p.brand, p.unit, p.weight, p.sku,
+                 p.barcode, p.is_perishable, p.is_loose, p.category_id,
+                 pr.price, pr.mrp, inv.quantity
+        LIMIT 1
+    """
+    row = db.execute(text(sql), {"barcode": barcode, "sid": store_id}).mappings().first()
+    return dict(row) if row else None
 
 
 # ── Orders ────────────────────────────────────────────────────────────────────

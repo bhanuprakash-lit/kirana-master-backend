@@ -578,9 +578,76 @@ class KiranaService:
             conn.commit()
         return True
 
+    def send_fcm_to_user(self, user_id: int, title: str, body: str, data: dict | None = None) -> bool:
+        """Fetch FCM token for user then send push notification."""
+        import logging as _log
+        _logger = _log.getLogger("kirana.fcm")
+        from kirana.repository import KiranaRepository
+        from kirana.fcm_sender import send_to_token
+        repo = KiranaRepository(self._db)
+        with repo._conn() as conn:
+            row = conn.execute(
+                text("SELECT fcm_token FROM kirana_oltp.users WHERE user_id = :uid"),
+                {"uid": user_id},
+            ).mappings().first()
+        if not row:
+            _logger.warning("send_fcm_to_user: user_id=%s not found in DB", user_id)
+            return False
+        token = row["fcm_token"]
+        if not token:
+            _logger.warning("send_fcm_to_user: user_id=%s has no FCM token stored", user_id)
+            return False
+        _logger.info("send_fcm_to_user: sending to user_id=%s token=...%s", user_id, token[-8:])
+        result = send_to_token(token, title, body, data)
+        _logger.info("send_fcm_to_user: send_to_token returned %s", result)
+        return result
+
     def refresh_ml(self) -> dict:
         self.ml.refresh()
         return self.health()
+
+    # ── Customer Segments ─────────────────────────────────────────────────────
+
+    def list_customers_with_segments(self, store_id: int) -> list[dict]:
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).list_customers_with_segments(store_id)
+
+    # ── Subscription ──────────────────────────────────────────────────────────
+
+    def get_active_subscription(self, store_id: int) -> dict | None:
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).get_active_subscription(store_id)
+
+    def request_trial(self, store_id: int) -> dict:
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).request_trial(store_id)
+
+    def approve_trial(self, store_id: int, trial_days: int) -> dict:
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).approve_trial(store_id, trial_days)
+
+    def cancel_subscription(self, store_id: int) -> dict:
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).cancel_subscription(store_id)
+
+    def upgrade_subscription(self, store_id: int, tier: str) -> dict:
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).upgrade_subscription(store_id, tier)
+
+    def create_razorpay_order(self, store_id: int, tier: str) -> dict:
+        from kirana.repository import KiranaRepository
+        s = self._s
+        return KiranaRepository(self._db).create_razorpay_order(
+            store_id, tier, s.razorpay_key_id, s.razorpay_key_secret
+        )
+
+    def verify_razorpay_payment(self, store_id: int, tier: str,
+                                 order_id: str, payment_id: str, signature: str) -> dict:
+        from kirana.repository import KiranaRepository
+        s = self._s
+        return KiranaRepository(self._db).verify_razorpay_payment(
+            store_id, tier, order_id, payment_id, signature, s.razorpay_key_secret
+        )
 
     # ── User preferences ──────────────────────────────────────────────────────
 

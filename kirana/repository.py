@@ -731,6 +731,7 @@ class KiranaRepository:
         "notify_in_app":            True,
         "quiet_hours_start":        22,
         "quiet_hours_end":          7,
+        "subscribed_kpis":          None,
     }
 
     def get_user_prefs(self, user_id: int) -> dict:
@@ -755,6 +756,228 @@ class KiranaRepository:
             row = conn.execute(text(sql), {"uid": user_id, **merged}).mappings().first()
             conn.commit()
         return dict(row)
+
+    # ── Customer Segments ─────────────────────────────────────────────────────
+
+    def list_customers_with_segments(self, store_id: int) -> list[dict]:
+        sql = """
+        SELECT
+            c.customer_id,
+            c.name,
+            c.phone,
+            c.email,
+            c.household_size,
+            c.store_id,
+            c.created_at,
+            c.association_id,
+            COALESCE(ord.total_orders, 0)   AS total_orders,
+            COALESCE(ord.total_spent, 0)    AS total_spent,
+            ord.last_order_date,
+            COALESCE(ord.orders_30d, 0)     AS orders_30d,
+            COALESCE(ord.orders_90d, 0)     AS orders_90d,
+            COALESCE(kh.balance, 0)         AS balance
+        FROM kirana_oltp.customer c
+        LEFT JOIN (
+            SELECT
+                o.customer_id,
+                COUNT(*)                                                                     AS total_orders,
+                SUM(o.total_amount)                                                          AS total_spent,
+                MAX(o.order_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')            AS last_order_date,
+                COUNT(CASE WHEN o.order_date >= NOW() - INTERVAL '30 days' THEN 1 END)      AS orders_30d,
+                COUNT(CASE WHEN o.order_date >= NOW() - INTERVAL '90 days' THEN 1 END)      AS orders_90d
+            FROM kirana_oltp.orders o
+            WHERE o.store_id = :sid AND o.customer_id IS NOT NULL
+            GROUP BY o.customer_id
+        ) ord ON ord.customer_id = c.customer_id
+        LEFT JOIN (
+            SELECT customer_id, SUM(amount) AS balance
+            FROM kirana_oltp.khata
+            WHERE store_id = :sid
+            GROUP BY customer_id
+        ) kh ON kh.customer_id = c.customer_id
+        WHERE c.store_id = :sid
+        ORDER BY c.name ASC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("last_order_date"):
+                d["last_order_date"] = d["last_order_date"].isoformat()
+            if d.get("created_at"):
+                d["created_at"] = d["created_at"].isoformat()
+            result.append(d)
+        return result
+
+    # ── Subscription ──────────────────────────────────────────────────────────
+
+    def get_active_subscription(self, store_id: int) -> dict | None:
+        sql = """
+        SELECT * FROM kirana_oltp.subscription
+        WHERE store_id = :sid
+        ORDER BY started_at DESC
+        LIMIT 1
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"sid": store_id}).mappings().first()
+        if not row:
+            return None
+        d = dict(row)
+        from datetime import datetime
+        now = datetime.now()
+        if d.get("is_trial") and d.get("trial_ends_at"):
+            delta = d["trial_ends_at"] - now
+            d["days_remaining"] = max(0, delta.days)
+            d["seconds_remaining"] = max(0, int(delta.total_seconds()))
+            d["is_expired"] = delta.total_seconds() <= 0
+            d["trial_ends_at"] = d["trial_ends_at"].isoformat()
+        else:
+            d["days_remaining"] = 0
+            d["seconds_remaining"] = 0
+            d["is_expired"] = False
+        if d.get("started_at"):
+            d["started_at"] = d["started_at"].isoformat()
+        if d.get("ended_at"):
+            d["ended_at"] = d["ended_at"].isoformat()
+        return d
+
+    def request_trial(self, store_id: int) -> dict:
+        """Create a pending_trial subscription if no subscription exists."""
+        existing = self.get_active_subscription(store_id)
+        if existing:
+            return existing
+        sql = """
+        INSERT INTO kirana_oltp.subscription
+            (store_id, tier, monthly_price, started_at, is_trial)
+        VALUES (:sid, 'pending_trial', 0, NOW(), TRUE)
+        RETURNING *
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"sid": store_id}).mappings().first()
+            conn.commit()
+        d = dict(row)
+        d["started_at"] = d["started_at"].isoformat()
+        if d.get("ended_at"): d["ended_at"] = d["ended_at"].isoformat()
+        d["days_remaining"] = 0
+        d["seconds_remaining"] = 0
+        return d
+
+    def approve_trial(self, store_id: int, trial_days: int) -> dict:
+        """Promote pending_trial → trial for the given store."""
+        from datetime import datetime, timedelta
+        trial_ends_at = datetime.now() + timedelta(days=trial_days)
+        sql = """
+        UPDATE kirana_oltp.subscription
+        SET tier = 'trial',
+            trial_ends_at = :te,
+            ended_at = NULL
+        WHERE store_id = :sid
+          AND tier = 'pending_trial'
+        RETURNING *
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"sid": store_id, "te": trial_ends_at}).mappings().first()
+            conn.commit()
+        if not row:
+            raise ValueError(f"No pending trial found for store {store_id}")
+        d = dict(row)
+        d["days_remaining"] = trial_days
+        d["seconds_remaining"] = int(trial_days * 86400)
+        d["trial_ends_at"] = d["trial_ends_at"].isoformat()
+        d["started_at"] = d["started_at"].isoformat()
+        if d.get("ended_at"): d["ended_at"] = d["ended_at"].isoformat()
+        return d
+
+    def cancel_subscription(self, store_id: int) -> dict:
+        """Mark current subscription as ended."""
+        sql = """
+        UPDATE kirana_oltp.subscription
+        SET ended_at = NOW()
+        WHERE store_id = :sid
+          AND (ended_at IS NULL OR ended_at > NOW())
+          AND tier NOT IN ('pending_trial')
+        RETURNING *
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"sid": store_id}).mappings().first()
+            conn.commit()
+        if not row:
+            raise ValueError("No active subscription to cancel")
+        d = dict(row)
+        if d.get("started_at"): d["started_at"] = d["started_at"].isoformat()
+        if d.get("ended_at"): d["ended_at"] = d["ended_at"].isoformat()
+        if d.get("trial_ends_at"): d["trial_ends_at"] = d["trial_ends_at"].isoformat()
+        return d
+
+    def upgrade_subscription(self, store_id: int, tier: str) -> dict:
+        prices = {"basic": 200, "pro": 500}
+        if tier not in prices:
+            raise ValueError(f"Invalid tier: {tier}")
+        with self._conn() as conn:
+            conn.execute(text("""
+                UPDATE kirana_oltp.subscription
+                SET ended_at = NOW()
+                WHERE store_id = :sid AND (ended_at IS NULL OR ended_at > NOW())
+            """), {"sid": store_id})
+            row = conn.execute(text("""
+                INSERT INTO kirana_oltp.subscription
+                    (store_id, tier, monthly_price, started_at, is_trial)
+                VALUES (:sid, :tier, :price, NOW(), FALSE)
+                RETURNING *
+            """), {"sid": store_id, "tier": tier, "price": prices[tier]}).mappings().first()
+            conn.commit()
+        d = dict(row)
+        d["started_at"] = d["started_at"].isoformat()
+        if d.get("ended_at"): d["ended_at"] = d["ended_at"].isoformat()
+        d["days_remaining"] = 0
+        d["seconds_remaining"] = 0
+        return d
+
+    def create_razorpay_order(self, store_id: int, tier: str, key_id: str, key_secret: str) -> dict:
+        """Call Razorpay API to create a payment order. Returns order details."""
+        import requests as req_lib
+        prices = {"basic": 200, "pro": 500}
+        if tier not in prices:
+            raise ValueError(f"Invalid tier: {tier}")
+        amount_paise = prices[tier] * 100  # Razorpay uses paise
+        payload = {
+            "amount": amount_paise,
+            "currency": "INR",
+            "receipt": f"kirana_{store_id}_{tier}",
+            "notes": {"store_id": str(store_id), "tier": tier},
+        }
+        resp = req_lib.post(
+            "https://api.razorpay.com/v1/orders",
+            json=payload,
+            auth=(key_id, key_secret),
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            raise ValueError(f"Razorpay order creation failed: {resp.text}")
+        order = resp.json()
+        return {
+            "order_id": order["id"],
+            "amount": order["amount"],
+            "currency": order["currency"],
+            "key_id": key_id,
+            "tier": tier,
+        }
+
+    def verify_razorpay_payment(self, store_id: int, tier: str,
+                                 razorpay_order_id: str, razorpay_payment_id: str,
+                                 razorpay_signature: str, key_secret: str) -> dict:
+        """Verify HMAC signature and upgrade subscription on success."""
+        import hmac
+        import hashlib
+        expected = hmac.new(
+            key_secret.encode(),
+            f"{razorpay_order_id}|{razorpay_payment_id}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        if expected != razorpay_signature:
+            raise ValueError("Payment signature verification failed")
+        return self.upgrade_subscription(store_id, tier)
 
     # ── Finance ───────────────────────────────────────────────────────────────
 
@@ -1175,3 +1398,133 @@ class KiranaRepository:
             row = conn.execute(text(sql), {"vid": voucher_id, "oid": order_id}).first()
             conn.commit()
         return row is not None
+
+    # ── Store associations ─────────────────────────────────────────────────────
+
+    def list_associations(self, store_id: int) -> list[dict]:
+        sql = """
+        SELECT association_id, store_id, name, area_type,
+               estimated_households, notes, is_active, created_at
+        FROM kirana_oltp.store_association
+        WHERE store_id = :sid
+        ORDER BY created_at DESC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("created_at"):
+                d["created_at"] = d["created_at"].isoformat()
+            result.append(d)
+        return result
+
+    def add_association(self, store_id: int, name: str, area_type: str,
+                        estimated_households: int | None, notes: str | None) -> dict:
+        sql = """
+        INSERT INTO kirana_oltp.store_association
+            (store_id, name, area_type, estimated_households, notes)
+        VALUES (:sid, :name, :atype, :hh, :notes)
+        RETURNING *
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {
+                "sid": store_id, "name": name, "atype": area_type,
+                "hh": estimated_households, "notes": notes,
+            }).mappings().first()
+            conn.commit()
+        d = dict(row)
+        if d.get("created_at"):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
+
+    def update_association(self, association_id: int, store_id: int, **fields) -> dict | None:
+        allowed = {"name", "area_type", "estimated_households", "notes", "is_active"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return None
+        set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+        sql = f"""
+        UPDATE kirana_oltp.store_association
+        SET {set_clause}
+        WHERE association_id = :aid AND store_id = :sid
+        RETURNING *
+        """
+        params = {**updates, "aid": association_id, "sid": store_id}
+        with self._conn() as conn:
+            row = conn.execute(text(sql), params).mappings().first()
+            conn.commit()
+        if not row:
+            return None
+        d = dict(row)
+        if d.get("created_at"):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
+
+    def delete_association(self, association_id: int, store_id: int) -> bool:
+        sql = """
+        DELETE FROM kirana_oltp.store_association
+        WHERE association_id = :aid AND store_id = :sid
+        """
+        with self._conn() as conn:
+            result = conn.execute(text(sql), {"aid": association_id, "sid": store_id})
+            conn.commit()
+        return result.rowcount > 0
+
+    def get_association_heatmap(self, store_id: int) -> list[dict]:
+        """Per-association sales metrics derived from customer purchase history."""
+        sql = """
+        SELECT
+            a.association_id,
+            a.name                  AS area_name,
+            a.area_type,
+            a.estimated_households,
+            COUNT(DISTINCT c.customer_id)               AS customer_count,
+            COUNT(o.order_id)                           AS total_orders,
+            COALESCE(SUM(o.total_amount), 0)::float     AS total_revenue,
+            COALESCE(AVG(o.total_amount), 0)::float     AS avg_order_value,
+            MAX(o.order_date)                           AS last_order_at
+        FROM kirana_oltp.store_association a
+        LEFT JOIN kirana_oltp.customer c
+            ON c.association_id = a.association_id
+        LEFT JOIN kirana_oltp.orders o
+            ON o.customer_id = c.customer_id
+           AND o.store_id = :sid
+           AND o.order_date >= NOW() - INTERVAL '90 days'
+        WHERE a.store_id = :sid AND a.is_active = TRUE
+        GROUP BY a.association_id, a.name, a.area_type, a.estimated_households
+        ORDER BY total_revenue DESC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("last_order_at"):
+                d["last_order_at"] = d["last_order_at"].isoformat()
+            result.append(d)
+        return result
+
+    # ── KPI tier config ────────────────────────────────────────────────────────
+
+    def get_kpi_tier_config(self) -> dict[str, str]:
+        """Returns {kpi_id: required_tier} for all configured KPIs."""
+        sql = "SELECT kpi_id, required_tier FROM kirana_oltp.kpi_tier_config"
+        with self._conn() as conn:
+            rows = conn.execute(text(sql)).mappings().all()
+        return {r["kpi_id"]: r["required_tier"] for r in rows}
+
+    def upsert_kpi_tier_config(self, configs: list[dict]) -> None:
+        """Bulk upsert [{kpi_id, required_tier}]. Replaces all existing entries."""
+        if not configs:
+            return
+        sql = """
+        INSERT INTO kirana_oltp.kpi_tier_config (kpi_id, required_tier, updated_at)
+        VALUES (:kpi_id, :required_tier, NOW())
+        ON CONFLICT (kpi_id) DO UPDATE
+            SET required_tier = EXCLUDED.required_tier,
+                updated_at    = NOW()
+        """
+        with self._conn() as conn:
+            conn.execute(text(sql), configs)
+            conn.commit()

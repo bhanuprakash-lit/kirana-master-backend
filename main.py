@@ -81,6 +81,10 @@ async def lifespan(app: FastAPI):
     KiranaRepository(engine)
     logger.info("kirana_oltp schema bootstrapped")
 
+    # ── FCM push notifications ────────────────────────────────────────────────
+    from kirana.fcm_sender import _ensure_init as _fcm_init
+    _fcm_init()
+
     # ── WhatsApp services ─────────────────────────────────────────────────────
     from whatsapp.client import WhatsAppClient
     from whatsapp.session_store import WhatsAppSessionStore
@@ -102,6 +106,11 @@ async def lifespan(app: FastAPI):
         kirana_service=kirana_svc,
     )
 
+    # ── Intelligence engine (scheduled notifications) ─────────────────────────
+    from kirana.intelligence.engine import IntelligenceEngine
+    intelligence = IntelligenceEngine(engine)
+    intelligence.start()
+
     # ── Attach to app state ───────────────────────────────────────────────────
     app.state.settings       = s
     app.state.engine         = engine
@@ -110,10 +119,12 @@ async def lifespan(app: FastAPI):
     app.state.wa_client      = wa_client
     app.state.wa_sessions    = wa_sessions
     app.state.wa_handler     = wa_handler
+    app.state.intelligence   = intelligence
 
     logger.info("All services ready — http://%s:%d", s.host, s.port)
     yield
 
+    intelligence.stop()
     engine.dispose()
     logger.info("Master backend shut down cleanly")
 

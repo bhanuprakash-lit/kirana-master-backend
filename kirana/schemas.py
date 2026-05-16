@@ -241,6 +241,21 @@ class UserPrefsUpdate(BaseModel):
     quiet_hours_end: Optional[int] = None
     allow_social_marketing: Optional[bool] = None
     alert_expiry_days: Optional[int] = None
+    subscribed_kpis: Optional[str] = None  # comma-separated KPI IDs
+
+
+class SubscriptionUpgradeRequest(BaseModel):
+    tier: str  # 'basic' | 'pro'
+
+
+class PaymentOrderRequest(BaseModel):
+    tier: str  # 'basic' | 'pro'
+
+class PaymentVerifyRequest(BaseModel):
+    tier: str
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
 
 
 # ── Finance ───────────────────────────────────────────────────────────────────

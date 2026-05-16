@@ -39,6 +39,19 @@ class Settings:
     mistral_api_key: str
     mistral_model: str
 
+    # ── Razorpay ──────────────────────────────────────────────────────────────
+    razorpay_key_id: str
+    razorpay_key_secret: str
+
+    # ── Subscription tiers ────────────────────────────────────────────────────
+    trial_days: int          # free trial duration after admin approval
+    basic_price_inr: int     # monthly price for Basic tier
+    pro_price_inr: int       # monthly price for Pro tier
+
+    # ── Google Play IAP verification ──────────────────────────────────────────
+    google_play_package_name: str     # e.g. com.yourcompany.kirana_ai
+    google_play_credentials_json: str # path to service account JSON; empty = skip verification
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -79,4 +92,14 @@ def get_settings() -> Settings:
 
         mistral_api_key=os.getenv("MISTRAL_API_KEY", ""),
         mistral_model=os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
+
+        razorpay_key_id=os.getenv("RAZORPAY_KEY_ID", ""),
+        razorpay_key_secret=os.getenv("RAZORPAY_KEY_SECRET", ""),
+
+        trial_days=int(os.getenv("TRIAL_DAYS", "14")),
+        basic_price_inr=int(os.getenv("BASIC_PRICE_INR", "200")),
+        pro_price_inr=int(os.getenv("PRO_PRICE_INR", "500")),
+
+        google_play_package_name=os.getenv("GOOGLE_PLAY_PACKAGE_NAME", ""),
+        google_play_credentials_json=os.getenv("GOOGLE_PLAY_CREDENTIALS_JSON", ""),
     )
