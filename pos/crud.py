@@ -93,9 +93,10 @@ def _enrich(db: Session, product: KiranaProduct, store_id: int) -> dict:
         "barcode":       product.barcode,
         "is_perishable": product.is_perishable,
         "is_loose":      product.is_loose,
+        "image_url":     product.image_url,
         "category_id":   product.category_id,
-        "price":         float(pricing.selling_price) if pricing else 0.0,
-        "mrp":           float(pricing.mrp) if pricing else None,
+        "price":         float(pricing.selling_price) if pricing and pricing.selling_price is not None else 0.0,
+        "mrp":           float(pricing.mrp) if pricing and pricing.mrp is not None else None,
         "stock_quantity": inv.quantity if inv else 0,
         "expiry_date":   expiry,
     }

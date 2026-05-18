@@ -66,6 +66,12 @@ class ProfileUpdateRequest(BaseModel):
     password: Optional[str] = None
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: Optional[str] = None  # required only when user already has a password
+    new_password: str
+    confirm_password: str
+
+
 class UserCreateRequest(BaseModel):
     username: str
     password: str

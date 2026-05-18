@@ -53,6 +53,7 @@ class KiranaProduct(POSBase):
     is_perishable = Column(Boolean, default=False)
     sku           = Column(String)
     barcode       = Column(String)
+    image_url     = Column(String)
     created_at    = Column(DateTime)
 
     category    = relationship("KiranaCategory", back_populates="products")

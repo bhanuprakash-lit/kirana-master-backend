@@ -618,9 +618,9 @@ class KiranaService:
         from kirana.repository import KiranaRepository
         return KiranaRepository(self._db).get_active_subscription(store_id)
 
-    def request_trial(self, store_id: int) -> dict:
+    def request_trial(self, store_id: int, requested_tier: str = "basic") -> dict:
         from kirana.repository import KiranaRepository
-        return KiranaRepository(self._db).request_trial(store_id)
+        return KiranaRepository(self._db).request_trial(store_id, requested_tier)
 
     def approve_trial(self, store_id: int, trial_days: int) -> dict:
         from kirana.repository import KiranaRepository

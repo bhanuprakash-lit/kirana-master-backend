@@ -39,11 +39,13 @@ class ProductOut(BaseModel):
     name: str
     brand: Optional[str] = None
     unit: Optional[str] = None
+    weight: Optional[float] = None
     sku: Optional[str] = None
     barcode: Optional[str] = None
     is_perishable: bool = False
     is_loose: bool = False
     category_id: int
+    image_url: Optional[str] = None
     # joined from pricing
     price: Optional[float] = None
     mrp: Optional[float] = None

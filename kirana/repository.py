@@ -338,6 +338,74 @@ class KiranaRepository:
 
     # ── Auth ──────────────────────────────────────────────────────────────────
 
+    def get_password_status(self, user_id: int) -> dict:
+        from datetime import datetime, timezone
+        sql = """
+        SELECT password_changed_at
+        FROM kirana_oltp.users
+        WHERE user_id = :uid AND COALESCE(is_deleted, FALSE) = FALSE
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"uid": user_id}).mappings().first()
+        if not row:
+            return {"has_password": False, "last_changed_at": None, "can_change": True}
+        last_changed = row["password_changed_at"]
+        has_password = last_changed is not None
+        can_change = True
+        days_left = 0
+        if last_changed:
+            last_changed_utc = last_changed.replace(tzinfo=timezone.utc) if last_changed.tzinfo is None else last_changed.astimezone(timezone.utc)
+            days_since = (datetime.now(timezone.utc) - last_changed_utc).days
+            can_change = days_since >= 14
+            days_left = max(0, 14 - days_since)
+        return {
+            "has_password": has_password,
+            "last_changed_at": last_changed.isoformat() if last_changed else None,
+            "can_change": can_change,
+            "days_until_change": days_left,
+        }
+
+    def change_password(self, user_id: int, old_password: str | None, new_password: str) -> None:
+        from datetime import datetime, timezone
+        sql = """
+        SELECT password_hash, password_salt, password_changed_at
+        FROM kirana_oltp.users
+        WHERE user_id = :uid AND COALESCE(is_deleted, FALSE) = FALSE
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"uid": user_id}).mappings().first()
+        if not row:
+            raise ValueError("User not found")
+        has_password = row["password_changed_at"] is not None
+        # Cooldown check
+        if row["password_changed_at"]:
+            last_changed = row["password_changed_at"]
+            last_changed_utc = last_changed.replace(tzinfo=timezone.utc) if last_changed.tzinfo is None else last_changed.astimezone(timezone.utc)
+            days_since = (datetime.now(timezone.utc) - last_changed_utc).days
+            if days_since < 14:
+                days_left = 14 - days_since
+                raise ValueError(f"Password can only be changed once every 14 days. Try again in {days_left} day(s).")
+        # Verify old password when user already has one
+        if has_password:
+            if not old_password:
+                raise ValueError("Current password is required")
+            if not secrets.compare_digest(
+                self._hash(old_password, row["password_salt"] or ""),
+                row["password_hash"] or "",
+            ):
+                raise ValueError("Current password is incorrect")
+        if len(new_password) < 6:
+            raise ValueError("Password must be at least 6 characters")
+        salt = secrets.token_hex(16)
+        ph = self._hash(new_password, salt)
+        with self._conn() as conn:
+            conn.execute(text("""
+            UPDATE kirana_oltp.users
+            SET password_hash = :ph, password_salt = :salt, password_changed_at = NOW()
+            WHERE user_id = :uid
+            """), {"ph": ph, "salt": salt, "uid": user_id})
+            conn.commit()
+
     def authenticate_user(self, username: str, password: str) -> dict | None:
         sql = """
         SELECT user_id, username, full_name, role, store_id, password_salt, password_hash
@@ -374,7 +442,7 @@ class KiranaRepository:
 
     def create_session(self, user_id: int) -> str:
         token = secrets.token_hex(32)
-        sql   = "INSERT INTO kirana_oltp.user_sessions(user_id, access_token) VALUES(:uid, :tok)"
+        sql   = "INSERT INTO kirana_oltp.user_sessions(user_id, access_token, created_at) VALUES(:uid, :tok, NOW())"
         with self._conn() as conn:
             conn.execute(text(sql), {"uid": user_id, "tok": token})
             conn.commit()
@@ -842,19 +910,29 @@ class KiranaRepository:
             d["ended_at"] = d["ended_at"].isoformat()
         return d
 
-    def request_trial(self, store_id: int) -> dict:
-        """Create a pending_trial subscription if no subscription exists."""
+    def request_trial(self, store_id: int, requested_tier: str = "basic") -> dict:
+        """Create a pending_trial subscription if no active subscription exists."""
+        if requested_tier not in ("basic", "pro"):
+            requested_tier = "basic"
         existing = self.get_active_subscription(store_id)
         if existing:
+            # Allow changing requested_tier on an existing pending_trial
+            if existing.get("tier") == "pending_trial":
+                with self._conn() as conn:
+                    conn.execute(text(
+                        "UPDATE kirana_oltp.subscription SET requested_tier = :rt WHERE store_id = :sid AND tier = 'pending_trial'"
+                    ), {"rt": requested_tier, "sid": store_id})
+                    conn.commit()
+                existing["requested_tier"] = requested_tier
             return existing
         sql = """
         INSERT INTO kirana_oltp.subscription
-            (store_id, tier, monthly_price, started_at, is_trial)
-        VALUES (:sid, 'pending_trial', 0, NOW(), TRUE)
+            (store_id, tier, monthly_price, started_at, is_trial, requested_tier)
+        VALUES (:sid, 'pending_trial', 0, NOW(), TRUE, :rt)
         RETURNING *
         """
         with self._conn() as conn:
-            row = conn.execute(text(sql), {"sid": store_id}).mappings().first()
+            row = conn.execute(text(sql), {"sid": store_id, "rt": requested_tier}).mappings().first()
             conn.commit()
         d = dict(row)
         d["started_at"] = d["started_at"].isoformat()
@@ -864,12 +942,21 @@ class KiranaRepository:
         return d
 
     def approve_trial(self, store_id: int, trial_days: int) -> dict:
-        """Promote pending_trial → trial for the given store."""
+        """Promote pending_trial → trial, preserving the requested tier."""
         from datetime import datetime, timedelta
         trial_ends_at = datetime.now() + timedelta(days=trial_days)
+        # Read requested_tier before updating
+        with self._conn() as conn:
+            pending = conn.execute(text(
+                "SELECT requested_tier FROM kirana_oltp.subscription WHERE store_id = :sid AND tier = 'pending_trial'"
+            ), {"sid": store_id}).mappings().first()
+        if not pending:
+            raise ValueError(f"No pending trial found for store {store_id}")
+        trial_tier = pending["requested_tier"] or "basic"
         sql = """
         UPDATE kirana_oltp.subscription
         SET tier = 'trial',
+            trial_tier = :tt,
             trial_ends_at = :te,
             ended_at = NULL
         WHERE store_id = :sid
@@ -877,7 +964,7 @@ class KiranaRepository:
         RETURNING *
         """
         with self._conn() as conn:
-            row = conn.execute(text(sql), {"sid": store_id, "te": trial_ends_at}).mappings().first()
+            row = conn.execute(text(sql), {"sid": store_id, "te": trial_ends_at, "tt": trial_tier}).mappings().first()
             conn.commit()
         if not row:
             raise ValueError(f"No pending trial found for store {store_id}")

@@ -19,6 +19,7 @@ from kirana.schemas import (
     ReferralCampaignCreate, ReferralTokenRequest, ReferralScanRequest, VoucherUseRequest,
     SubscriptionUpgradeRequest,
     PaymentOrderRequest, PaymentVerifyRequest,
+    ChangePasswordRequest,
 )
 from kirana.service import KiranaService
 
@@ -96,6 +97,73 @@ async def check_username(username: str, request: Request):
 @router.get("/auth/me")
 async def me(user: dict = Depends(_auth)):
     return user
+
+
+@router.get("/catalog/search")
+async def catalog_search(
+    request: Request,
+    q: str = "",
+    barcode: str = "",
+    limit: int = 20,
+    user: dict = Depends(_auth),
+):
+    """Search global product catalog by name (ILIKE) or barcode (exact)."""
+    from sqlalchemy import text as _text
+    engine = request.app.state.engine
+    params: dict = {"limit": limit}
+
+    q = q.strip()
+    barcode = barcode.strip()
+
+    if barcode:
+        where = "p.barcode = :barcode"
+        params["barcode"] = barcode
+    elif len(q) >= 2:
+        where = "p.name ILIKE :q OR p.brand ILIKE :q"
+        params["q"] = f"%{q}%"
+    else:
+        return {"products": []}
+
+    sql = f"""
+    SELECT p.product_id, p.name, p.brand, p.unit, p.weight,
+           p.barcode, p.is_perishable, p.is_loose, p.image_url, p.sku,
+           p.category_id,
+           c.name AS category_name,
+           pc.name AS parent_category_name
+    FROM kirana_oltp.product p
+    JOIN kirana_oltp.category c ON p.category_id = c.category_id
+    LEFT JOIN kirana_oltp.category pc ON c.parent_category_id = pc.category_id
+    WHERE {where}
+    ORDER BY p.name
+    LIMIT :limit
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(_text(sql), params).mappings().all()
+    return {"products": [dict(r) for r in rows]}
+
+
+@router.get("/auth/password-status")
+async def password_status(request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    repo = KiranaRepository(request.app.state.engine)
+    return repo.get_password_status(user["user_id"])
+
+
+@router.post("/auth/change-password")
+async def change_password(
+    request: Request,
+    body: ChangePasswordRequest,
+    user: dict = Depends(_auth),
+):
+    from kirana.repository import KiranaRepository
+    if body.new_password != body.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+    repo = KiranaRepository(request.app.state.engine)
+    try:
+        repo.change_password(user["user_id"], body.old_password, body.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True}
 
 
 @router.post("/auth/fcm-token")
@@ -270,12 +338,16 @@ async def get_subscription(request: Request, user: dict = Depends(_auth)):
     return {"has_active": True, **sub}
 
 
+class _TrialRequest(BaseModel):
+    tier: str = "basic"   # "basic" or "pro"
+
 @router.post("/subscription/request-trial")
-async def request_trial(request: Request, user: dict = Depends(_auth)):
+async def request_trial(request: Request, body: _TrialRequest = _TrialRequest(), user: dict = Depends(_auth)):
     sid = user.get("store_id")
     if sid is None:
         raise HTTPException(status_code=403, detail="Store owner login required")
-    return _svc(request).request_trial(int(sid))
+    tier = body.tier if body.tier in ("basic", "pro") else "basic"
+    return _svc(request).request_trial(int(sid), tier)
 
 
 @router.post("/subscription/cancel")
@@ -337,10 +409,12 @@ async def approve_trial(store_id: int, request: Request, user: dict = Depends(_a
                 {"sid": store_id}
             ).mappings().first()
         if row:
+            trial_tier = result.get("trial_tier", "basic")
+            tier_label = "Pro" if trial_tier == "pro" else "Basic"
             sent = _svc(request).send_fcm_to_user(
                 row["user_id"],
-                "Your Kirana AI Trial is Active! 🎉",
-                f"Your free trial has been activated. You have {trial_days} days to explore all features.",
+                f"Your Kirana AI {tier_label} Trial is Active!",
+                f"Your {tier_label} trial has been activated. You have {trial_days} days to explore {tier_label} features.",
                 data={"action": "open_subscription"},
             )
             import logging as _log
@@ -364,7 +438,8 @@ async def list_pending_trials(request: Request, user: dict = Depends(_auth)):
     from sqlalchemy import text as _text
     with request.app.state.engine.connect() as conn:
         rows = conn.execute(_text("""
-            SELECT s.store_id, s.started_at, st.name AS store_name
+            SELECT s.store_id, s.started_at, st.name AS store_name,
+                   COALESCE(s.requested_tier, 'basic') AS requested_tier
             FROM kirana_oltp.subscription s
             JOIN kirana_oltp.store st ON st.store_id = s.store_id
             WHERE s.tier = 'pending_trial'
@@ -451,6 +526,110 @@ def _get_kpi_tier_config(request: Request) -> dict[str, str]:
     return KiranaRepository(request.app.state.engine).get_kpi_tier_config()
 
 
+@router.get("/admin/stats")
+async def admin_stats(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from sqlalchemy import text as _text
+    with request.app.state.engine.connect() as conn:
+        row = conn.execute(_text("""
+            SELECT
+                (SELECT COUNT(*) FROM kirana_oltp.store WHERE NOT is_deleted) AS total_stores,
+                (SELECT COUNT(*) FROM kirana_oltp.users WHERE role = 'store_owner' AND NOT COALESCE(is_deleted, FALSE)) AS total_users,
+                (SELECT COUNT(*) FROM kirana_oltp.subscription
+                 WHERE tier = 'pending_trial' AND (ended_at IS NULL OR ended_at > NOW())) AS pending_trials,
+                (SELECT COUNT(*) FROM kirana_oltp.subscription
+                 WHERE tier = 'trial' AND (ended_at IS NULL OR ended_at > NOW())) AS active_trials,
+                (SELECT COUNT(*) FROM kirana_oltp.subscription
+                 WHERE tier = 'basic' AND (ended_at IS NULL OR ended_at > NOW())) AS basic_count,
+                (SELECT COUNT(*) FROM kirana_oltp.subscription
+                 WHERE tier = 'pro' AND (ended_at IS NULL OR ended_at > NOW())) AS pro_count
+        """)).mappings().first()
+    return dict(row)
+
+
+@router.get("/admin/stores")
+async def admin_list_stores(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from sqlalchemy import text as _text
+    with request.app.state.engine.connect() as conn:
+        rows = conn.execute(_text("""
+            SELECT s.store_id, s.name AS store_name, s.location, s.created_at,
+                   u.user_id, u.username,
+                   COALESCE(u.full_name, u.username) AS owner_name,
+                   sub.tier, sub.trial_tier,
+                   sub.trial_ends_at, sub.ended_at
+            FROM kirana_oltp.store s
+            LEFT JOIN kirana_oltp.users u
+                ON u.store_id = s.store_id AND NOT COALESCE(u.is_deleted, FALSE)
+            LEFT JOIN kirana_oltp.subscription sub ON sub.store_id = s.store_id
+            WHERE NOT s.is_deleted
+            ORDER BY s.created_at DESC
+        """)).mappings().all()
+    return {"stores": [dict(r) for r in rows]}
+
+
+@router.post("/admin/notify")
+async def admin_notify(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    body = await request.json()
+    title   = body.get("title", "Kirana AI")
+    message = body.get("body", "")
+    store_id = body.get("store_id")  # null = broadcast to all
+    svc = _svc(request)
+    from sqlalchemy import text as _text
+    with request.app.state.engine.connect() as conn:
+        if store_id:
+            row = conn.execute(_text(
+                "SELECT user_id FROM kirana_oltp.users WHERE store_id = :sid AND NOT COALESCE(is_deleted, FALSE) LIMIT 1"
+            ), {"sid": store_id}).mappings().first()
+            if not row:
+                raise HTTPException(status_code=404, detail="No user found for this store")
+            user_ids = [row["user_id"]]
+        else:
+            rows = conn.execute(_text(
+                "SELECT user_id FROM kirana_oltp.users WHERE role = 'store_owner' AND NOT COALESCE(is_deleted, FALSE)"
+            )).mappings().all()
+            user_ids = [r["user_id"] for r in rows]
+    sent = sum(1 for uid in user_ids if svc.send_fcm_to_user(uid, title, message, data={"action": "admin_notify"}))
+    return {"sent": sent, "total": len(user_ids)}
+
+
+@router.post("/admin/payment/mock-confirm")
+async def admin_mock_payment(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    body = await request.json()
+    store_id = body.get("store_id")
+    tier = body.get("tier", "basic")
+    if tier not in ("basic", "pro"):
+        raise HTTPException(status_code=400, detail="tier must be basic or pro")
+    from sqlalchemy import text as _text
+    with request.app.state.engine.connect() as conn:
+        conn.execute(_text("""
+            INSERT INTO kirana_oltp.subscription (store_id, tier, started_at)
+            VALUES (:sid, :tier, NOW())
+            ON CONFLICT (store_id) DO UPDATE
+              SET tier = :tier, started_at = NOW(), ended_at = NULL,
+                  is_trial = FALSE, trial_ends_at = NULL
+        """), {"sid": store_id, "tier": tier})
+        conn.commit()
+        owner = conn.execute(_text(
+            "SELECT user_id FROM kirana_oltp.users WHERE store_id = :sid AND NOT COALESCE(is_deleted, FALSE) LIMIT 1"
+        ), {"sid": store_id}).mappings().first()
+    if owner:
+        tier_label = "Pro" if tier == "pro" else "Basic"
+        _svc(request).send_fcm_to_user(
+            owner["user_id"],
+            f"Your Kirana AI {tier_label} plan is active!",
+            f"Admin activated your {tier_label} plan.",
+            data={"action": "open_subscription"},
+        )
+    return {"success": True}
+
+
 @router.get("/admin/all-subscriptions")
 async def list_all_subscriptions(request: Request, user: dict = Depends(_auth)):
     if user.get("role") != "admin":
@@ -471,8 +650,10 @@ async def list_all_subscriptions(request: Request, user: dict = Depends(_auth)):
 async def admin_cancel_subscription(store_id: int, request: Request, user: dict = Depends(_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
-    result = _svc(request).cancel_subscription(store_id)
-    return result
+    try:
+        return _svc(request).cancel_subscription(store_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ── Store Associations ────────────────────────────────────────────────────────

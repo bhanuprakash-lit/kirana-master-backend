@@ -246,10 +246,7 @@ class IntelligenceRepository:
             COALESCE(SUM(CASE WHEN DATE(o.order_date AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
                               THEN o.total_amount END), 0)   AS today_revenue,
             COUNT(CASE WHEN DATE(o.order_date AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-                       THEN 1 END)                            AS today_orders,
-            COALESCE(SUM(CASE WHEN DATE(o.order_date AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-                               AND o.payment_method = 'credit'
-                              THEN o.total_amount END), 0)   AS today_credit
+                       THEN 1 END)                            AS today_orders
         FROM kirana_oltp.store s
         LEFT JOIN kirana_oltp.orders o ON o.store_id = s.store_id
         WHERE s.store_id = :sid
@@ -283,7 +280,7 @@ class IntelligenceRepository:
         FROM kirana_oltp.khata k
         WHERE k.store_id = :sid
           AND (k.amount - COALESCE(k.amount_paid, 0)) > 0
-          AND k.created_at < NOW() - (:days || ' days')::interval
+          AND k.issue_date < CURRENT_DATE - (:days || ' days')::interval
         """
         with self._conn() as conn:
             row = conn.execute(text(sql), {"sid": store_id, "days": days}).mappings().first()
