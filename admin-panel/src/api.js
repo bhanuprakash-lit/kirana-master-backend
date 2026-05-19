@@ -45,4 +45,5 @@ export const api = {
   // KPI config
   getKpiTiers:     ()                     => request('GET',  '/kirana/admin/kpi-tiers'),
   saveKpiTiers:    (configs)              => request('PUT',  '/kirana/admin/kpi-tiers', { configs }),
+  userActivity:    ()                     => request('GET',  '/kirana/admin/user-activity'),
 };

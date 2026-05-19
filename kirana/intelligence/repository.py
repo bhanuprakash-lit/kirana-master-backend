@@ -48,6 +48,18 @@ class IntelligenceRepository:
             rows = conn.execute(text(sql)).mappings().all()
         return [dict(r) for r in rows]
 
+    def purge_fcm_token(self, token: str) -> None:
+        """Delete a stale/unregistered FCM token from all tables so it's never retried."""
+        with self._conn() as conn:
+            conn.execute(text(
+                "DELETE FROM kirana_oltp.user_fcm_tokens WHERE fcm_token = :tok"
+            ), {"tok": token})
+            conn.execute(text(
+                "UPDATE kirana_oltp.users SET fcm_token = NULL WHERE fcm_token = :tok"
+            ), {"tok": token})
+            conn.commit()
+        logger.info("Purged stale FCM token ...%s", token[-8:] if token else "?")
+
     # ── Deduplication ────────────────────────────────────────────────────────
 
     def was_sent_today(self, store_id: int, trigger_type: str) -> bool:

@@ -17,11 +17,18 @@ from sqlalchemy import inspect as sa_inspect, text
 
 logger = logging.getLogger("kirana.repository")
 
+# Per-process flag — _ensure_schema runs at most once per gunicorn worker.
+# The PG advisory lock below handles the cross-process race on first start.
+_schema_initialized: bool = False
+
 
 class KiranaRepository:
     def __init__(self, engine):
         self._engine = engine
-        self._ensure_schema()
+        global _schema_initialized
+        if not _schema_initialized:
+            self._ensure_schema()
+            _schema_initialized = True
 
     def _conn(self):
         return self._engine.connect()
@@ -29,8 +36,17 @@ class KiranaRepository:
     # ── Schema bootstrap ──────────────────────────────────────────────────────
 
     def _ensure_schema(self) -> None:
-        """Idempotently extend kirana_oltp with auth + app columns, then migrate."""
+        """Idempotently extend kirana_oltp with auth + app columns, then migrate.
+
+        Uses a PG advisory lock (session-level) so concurrent gunicorn workers
+        queue rather than deadlock on the ALTER TABLE statements.
+        """
         with self._conn() as conn:
+            # Transaction-level advisory lock — blocks concurrent workers, auto-releases on commit.
+            # This prevents the deadlocks caused by multiple gunicorn workers ALTER-ing the same
+            # tables simultaneously on startup.
+            conn.execute(text("SELECT pg_advisory_xact_lock(1919191919)"))
+
             # kirana_oltp.users — add auth/app columns
             for ddl in [
                 "ALTER TABLE kirana_oltp.users ADD COLUMN IF NOT EXISTS full_name     VARCHAR(255) NOT NULL DEFAULT ''",
@@ -58,9 +74,13 @@ class KiranaRepository:
                                      REFERENCES kirana_oltp.users(user_id) ON DELETE CASCADE,
                     access_token VARCHAR(128) UNIQUE NOT NULL,
                     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    revoked_at   TIMESTAMPTZ
+                    revoked_at   TIMESTAMPTZ,
+                    login_method VARCHAR(20) DEFAULT 'password'
                 )
             """))
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.user_sessions ADD COLUMN IF NOT EXISTS login_method VARCHAR(20) DEFAULT 'password'"
+            ))
 
             # kirana_oltp.issue_report
             conn.execute(text("""
@@ -73,6 +93,74 @@ class KiranaRepository:
                     description TEXT NOT NULL,
                     status      VARCHAR(20) DEFAULT 'open',
                     created_at  TIMESTAMPTZ DEFAULT NOW()
+                )
+            """))
+
+            # kirana_oltp.user_fcm_tokens — multi-device FCM token storage
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.user_fcm_tokens (
+                    token_id    BIGSERIAL PRIMARY KEY,
+                    user_id     BIGINT NOT NULL REFERENCES kirana_oltp.users(user_id) ON DELETE CASCADE,
+                    fcm_token   VARCHAR(255) NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_user_fcm_tokens_token UNIQUE (fcm_token)
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_user_fcm_tokens_user_id ON kirana_oltp.user_fcm_tokens(user_id)"
+            ))
+
+            # kirana_oltp.app_activity — foreground/background lifecycle events
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.app_activity (
+                    id              BIGSERIAL PRIMARY KEY,
+                    user_id         BIGINT NOT NULL REFERENCES kirana_oltp.users(user_id) ON DELETE CASCADE,
+                    event           VARCHAR(20) NOT NULL,   -- 'foreground' | 'background'
+                    duration_sec    INT,                    -- seconds in foreground (set on background event)
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_app_activity_user_id ON kirana_oltp.app_activity(user_id, created_at)"
+            ))
+
+            # kirana_oltp.khata_payments — recovery history log
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.khata_payments (
+                    payment_id  BIGSERIAL PRIMARY KEY,
+                    khata_id    BIGINT NOT NULL REFERENCES kirana_oltp.khata(khata_id) ON DELETE CASCADE,
+                    store_id    BIGINT NOT NULL,
+                    amount      NUMERIC NOT NULL,
+                    paid_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    notes       TEXT
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_khata_payments_khata_id ON kirana_oltp.khata_payments(khata_id)"
+            ))
+
+            # kirana_oltp.basket — product bundles / combo deals
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.basket (
+                    basket_id   BIGSERIAL PRIMARY KEY,
+                    store_id    BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+                    name        VARCHAR(200) NOT NULL,
+                    description TEXT,
+                    price       NUMERIC,
+                    valid_from  DATE,
+                    valid_to    DATE,
+                    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.basket_item (
+                    id          BIGSERIAL PRIMARY KEY,
+                    basket_id   BIGINT NOT NULL REFERENCES kirana_oltp.basket(basket_id) ON DELETE CASCADE,
+                    product_id  BIGINT NOT NULL,
+                    product_name VARCHAR(255),
+                    qty         NUMERIC NOT NULL DEFAULT 1
                 )
             """))
 
@@ -440,11 +528,14 @@ class KiranaRepository:
             row = conn.execute(text(sql), {"u": username}).first()
         return row is None
 
-    def create_session(self, user_id: int) -> str:
+    def create_session(self, user_id: int, login_method: str = "password") -> str:
         token = secrets.token_hex(32)
-        sql   = "INSERT INTO kirana_oltp.user_sessions(user_id, access_token, created_at) VALUES(:uid, :tok, NOW())"
+        sql = """
+            INSERT INTO kirana_oltp.user_sessions(user_id, access_token, created_at, login_method)
+            VALUES(:uid, :tok, NOW(), :method)
+        """
         with self._conn() as conn:
-            conn.execute(text(sql), {"uid": user_id, "tok": token})
+            conn.execute(text(sql), {"uid": user_id, "tok": token, "method": login_method})
             conn.commit()
         return token
 
@@ -884,6 +975,7 @@ class KiranaRepository:
         sql = """
         SELECT * FROM kirana_oltp.subscription
         WHERE store_id = :sid
+          AND (ended_at IS NULL OR ended_at > NOW())
         ORDER BY started_at DESC
         LIMIT 1
         """
@@ -911,28 +1003,56 @@ class KiranaRepository:
         return d
 
     def request_trial(self, store_id: int, requested_tier: str = "basic") -> dict:
-        """Create a pending_trial subscription if no active subscription exists."""
+        """Create or reset to pending_trial. Updates the most recent cancelled row, or inserts a fresh one."""
         if requested_tier not in ("basic", "pro"):
             requested_tier = "basic"
+
         existing = self.get_active_subscription(store_id)
         if existing:
-            # Allow changing requested_tier on an existing pending_trial
+            # Active (non-cancelled) subscription exists
             if existing.get("tier") == "pending_trial":
+                # Allow updating requested_tier on an existing pending request
                 with self._conn() as conn:
                     conn.execute(text(
-                        "UPDATE kirana_oltp.subscription SET requested_tier = :rt WHERE store_id = :sid AND tier = 'pending_trial'"
+                        "UPDATE kirana_oltp.subscription SET requested_tier = :rt "
+                        "WHERE store_id = :sid AND tier = 'pending_trial'"
                     ), {"rt": requested_tier, "sid": store_id})
                     conn.commit()
                 existing["requested_tier"] = requested_tier
             return existing
-        sql = """
-        INSERT INTO kirana_oltp.subscription
-            (store_id, tier, monthly_price, started_at, is_trial, requested_tier)
-        VALUES (:sid, 'pending_trial', 0, NOW(), TRUE, :rt)
-        RETURNING *
-        """
+
+        # No active subscription (first-time or previously cancelled).
+        # Try to UPDATE the most recent cancelled row back to pending_trial.
+        # If no row exists at all, INSERT a fresh one.
         with self._conn() as conn:
-            row = conn.execute(text(sql), {"sid": store_id, "rt": requested_tier}).mappings().first()
+            updated = conn.execute(text("""
+                UPDATE kirana_oltp.subscription
+                SET tier           = 'pending_trial',
+                    monthly_price  = 0,
+                    started_at     = NOW(),
+                    is_trial       = TRUE,
+                    requested_tier = :rt,
+                    ended_at       = NULL,
+                    trial_ends_at  = NULL
+                WHERE store_id = :sid
+                  AND subscription_id = (
+                      SELECT subscription_id FROM kirana_oltp.subscription
+                      WHERE store_id = :sid
+                      ORDER BY started_at DESC
+                      LIMIT 1
+                  )
+                RETURNING *
+            """), {"sid": store_id, "rt": requested_tier}).mappings().first()
+
+            if updated:
+                row = updated
+            else:
+                row = conn.execute(text("""
+                    INSERT INTO kirana_oltp.subscription
+                        (store_id, tier, monthly_price, started_at, is_trial, requested_tier)
+                    VALUES (:sid, 'pending_trial', 0, NOW(), TRUE, :rt)
+                    RETURNING *
+                """), {"sid": store_id, "rt": requested_tier}).mappings().first()
             conn.commit()
         d = dict(row)
         d["started_at"] = d["started_at"].isoformat()
@@ -1167,8 +1287,12 @@ class KiranaRepository:
             WHERE khata_id = :kid AND store_id = :sid
             """
             conn.execute(text(sql_update), {"p": new_paid, "s": status, "kid": khata_id, "sid": store_id})
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.khata_payments(khata_id, store_id, amount, paid_at)
+                VALUES (:kid, :sid, :amt, NOW())
+            """), {"kid": khata_id, "sid": store_id, "amt": recovery_amount})
             conn.commit()
-            
+
             # 2. Return the updated record with customer info
             sql_final = """
             SELECT
@@ -1186,6 +1310,17 @@ class KiranaRepository:
             result = conn.execute(text(sql_final), {"kid": khata_id}).mappings().first()
             
         return dict(result)
+
+    def get_khata_payments(self, store_id: int, khata_id: int) -> list[dict]:
+        sql = """
+            SELECT payment_id, amount, paid_at::text AS paid_at, notes
+            FROM kirana_oltp.khata_payments
+            WHERE khata_id = :kid AND store_id = :sid
+            ORDER BY paid_at DESC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"kid": khata_id, "sid": store_id}).mappings().all()
+        return [dict(r) for r in rows]
 
     def add_udhaar(self, store_id: int, customer_name: str, phone: str, amount: float) -> dict:
         with self._conn() as conn:
@@ -1615,3 +1750,55 @@ class KiranaRepository:
         with self._conn() as conn:
             conn.execute(text(sql), configs)
             conn.commit()
+
+    # ── Baskets ───────────────────────────────────────────────────────────────
+
+    def get_baskets(self, store_id: int) -> list[dict]:
+        sql = """
+            SELECT b.basket_id, b.name, b.description, b.price,
+                   b.valid_from::text, b.valid_to::text, b.is_active, b.created_at::text,
+                   COALESCE(
+                     json_agg(json_build_object(
+                       'id', bi.id, 'product_id', bi.product_id,
+                       'product_name', bi.product_name, 'qty', bi.qty
+                     )) FILTER (WHERE bi.id IS NOT NULL), '[]'
+                   ) AS items
+            FROM kirana_oltp.basket b
+            LEFT JOIN kirana_oltp.basket_item bi ON bi.basket_id = b.basket_id
+            WHERE b.store_id = :sid AND b.is_active = TRUE
+            GROUP BY b.basket_id
+            ORDER BY b.created_at DESC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
+        return [dict(r) for r in rows]
+
+    def create_basket(self, store_id: int, data: dict) -> dict:
+        with self._conn() as conn:
+            row = conn.execute(text("""
+                INSERT INTO kirana_oltp.basket(store_id, name, description, price, valid_from, valid_to)
+                VALUES(:sid, :name, :desc, :price, :vf, :vt)
+                RETURNING basket_id, name, description, price,
+                          valid_from::text, valid_to::text, is_active, created_at::text
+            """), {
+                "sid": store_id, "name": data["name"],
+                "desc": data.get("description"), "price": data.get("price"),
+                "vf": data.get("valid_from"), "vt": data.get("valid_to"),
+            }).mappings().first()
+            basket_id = row["basket_id"]
+            for item in data.get("items", []):
+                conn.execute(text("""
+                    INSERT INTO kirana_oltp.basket_item(basket_id, product_id, product_name, qty)
+                    VALUES(:bid, :pid, :pname, :qty)
+                """), {"bid": basket_id, "pid": item["product_id"],
+                       "pname": item.get("product_name"), "qty": item.get("qty", 1)})
+            conn.commit()
+        return dict(row)
+
+    def delete_basket(self, store_id: int, basket_id: int) -> bool:
+        with self._conn() as conn:
+            conn.execute(text(
+                "UPDATE kirana_oltp.basket SET is_active = FALSE WHERE basket_id = :bid AND store_id = :sid"
+            ), {"bid": basket_id, "sid": store_id})
+            conn.commit()
+        return True

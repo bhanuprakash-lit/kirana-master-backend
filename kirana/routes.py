@@ -105,12 +105,13 @@ async def catalog_search(
     q: str = "",
     barcode: str = "",
     limit: int = 20,
+    offset: int = 0,
     user: dict = Depends(_auth),
 ):
     """Search global product catalog by name (ILIKE) or barcode (exact)."""
     from sqlalchemy import text as _text
     engine = request.app.state.engine
-    params: dict = {"limit": limit}
+    params: dict = {"limit": limit, "offset": offset}
 
     q = q.strip()
     barcode = barcode.strip()
@@ -135,7 +136,7 @@ async def catalog_search(
     LEFT JOIN kirana_oltp.category pc ON c.parent_category_id = pc.category_id
     WHERE {where}
     ORDER BY p.name
-    LIMIT :limit
+    LIMIT :limit OFFSET :offset
     """
     with engine.connect() as conn:
         rows = conn.execute(_text(sql), params).mappings().all()
@@ -170,6 +171,27 @@ async def change_password(
 async def update_fcm_token(request: Request, body: FcmTokenUpdate, user: dict = Depends(_auth)):
     ok = _svc(request).update_fcm_token(user["user_id"], body.fcm_token)
     return {"success": ok}
+
+
+# ── App activity tracking ─────────────────────────────────────────────────────
+
+@router.post("/tracking/app-event")
+async def track_app_event(request: Request, user: dict = Depends(_auth)):
+    """Called by the Flutter app on foreground/background lifecycle transitions."""
+    from sqlalchemy import text as _text
+    body = await request.json()
+    event = body.get("event", "foreground")          # 'foreground' or 'background'
+    duration_sec = body.get("duration_sec")           # int seconds, sent on background
+    uid = user.get("user_id")
+    if not uid:
+        return {"ok": False}
+    with request.app.state.engine.connect() as conn:
+        conn.execute(_text("""
+            INSERT INTO kirana_oltp.app_activity(user_id, event, duration_sec)
+            VALUES(:uid, :event, :dur)
+        """), {"uid": uid, "event": event, "dur": duration_sec})
+        conn.commit()
+    return {"ok": True}
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -315,6 +337,15 @@ async def record_recovery(request: Request, body: UdhaarRecoveryRequest, user: d
     if sid is None:
         raise HTTPException(status_code=403, detail="Store owner login required")
     return _svc(request).record_udhaar_recovery(int(sid), body.khata_id, body.amount)
+
+
+@router.get("/finance/udhaar/{khata_id}/history")
+async def get_udhaar_history(khata_id: int, request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = request.headers.get("X-Store-Id") or (user.get("store_id") or 0)
+    repo = KiranaRepository(request.app.state.engine)
+    payments = repo.get_khata_payments(int(sid), khata_id)
+    return {"payments": payments}
 
 
 @router.post("/finance/udhaar/add")
@@ -646,14 +677,178 @@ async def list_all_subscriptions(request: Request, user: dict = Depends(_auth)):
     return {"subscriptions": [dict(r) for r in rows]}
 
 
+@router.get("/admin/user-activity")
+async def admin_user_activity(request: Request, user: dict = Depends(_auth)):
+    """Per-user app activity: last seen, opens today, time in app, last login, login method, sales."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from sqlalchemy import text as _text
+    with request.app.state.engine.connect() as conn:
+        rows = conn.execute(_text("""
+            SELECT
+                u.user_id,
+                u.username,
+                COALESCE(u.full_name, u.username) AS full_name,
+                s.name AS store_name,
+                -- Last foreground event (actual app open), fall back to last session
+                COALESCE(
+                    (SELECT MAX(a.created_at) FROM kirana_oltp.app_activity a
+                     WHERE a.user_id = u.user_id AND a.event = 'foreground'),
+                    (SELECT MAX(sess.created_at) FROM kirana_oltp.user_sessions sess
+                     WHERE sess.user_id = u.user_id)
+                ) AS last_seen,
+                -- Last login timestamp
+                (SELECT MAX(sess.created_at) FROM kirana_oltp.user_sessions sess
+                 WHERE sess.user_id = u.user_id) AS last_login,
+                -- Login method of the most recent session
+                (SELECT sess.login_method FROM kirana_oltp.user_sessions sess
+                 WHERE sess.user_id = u.user_id
+                 ORDER BY sess.created_at DESC LIMIT 1) AS last_login_method,
+                -- App opens today (foreground events)
+                COALESCE((
+                    SELECT COUNT(*)::int FROM kirana_oltp.app_activity a
+                    WHERE a.user_id = u.user_id AND a.event = 'foreground'
+                      AND DATE(a.created_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
+                ), 0) AS opens_today,
+                -- Total foreground seconds today (from background events that carry duration)
+                COALESCE((
+                    SELECT SUM(a.duration_sec)::int FROM kirana_oltp.app_activity a
+                    WHERE a.user_id = u.user_id AND a.event = 'background'
+                      AND DATE(a.created_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
+                      AND a.duration_sec IS NOT NULL
+                ), 0) AS foreground_sec_today,
+                -- Total login sessions (historical)
+                COALESCE((
+                    SELECT COUNT(*)::int FROM kirana_oltp.user_sessions sess
+                    WHERE sess.user_id = u.user_id
+                ), 0) AS total_sessions,
+                -- Sales today
+                COALESCE((
+                    SELECT COUNT(*)::int FROM kirana_oltp.orders o
+                    WHERE o.store_id = u.store_id
+                      AND DATE(o.order_date AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
+                ), 0) AS sales_today
+            FROM kirana_oltp.users u
+            LEFT JOIN kirana_oltp.store s
+                ON s.store_id = u.store_id AND NOT s.is_deleted
+            WHERE u.role = 'store_owner' AND NOT COALESCE(u.is_deleted, FALSE)
+            ORDER BY last_seen DESC NULLS LAST
+        """)).mappings().all()
+    return {"users": [dict(r) for r in rows]}
+
+
+# ── Baskets ───────────────────────────────────────────────────────────────────
+
+@router.get("/baskets")
+async def list_baskets(request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    return {"baskets": repo.get_baskets(int(sid))}
+
+
+@router.post("/baskets")
+async def create_basket(request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    from kirana.schemas import BasketCreate
+    body = BasketCreate(**(await request.json()))
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    basket = repo.create_basket(int(sid), body.model_dump())
+    return basket
+
+
+@router.delete("/baskets/{basket_id}")
+async def delete_basket(basket_id: int, request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    repo.delete_basket(int(sid), basket_id)
+    return {"deleted": True}
+
+
+@router.post("/baskets/{basket_id}/alert")
+async def alert_basket_customers(basket_id: int, request: Request, user: dict = Depends(_auth)):
+    """Send WhatsApp message to all store customers about this basket deal."""
+    from kirana.repository import KiranaRepository
+    from sqlalchemy import text as _text
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+
+    # Get basket details
+    baskets = repo.get_baskets(int(sid))
+    basket = next((b for b in baskets if b["basket_id"] == basket_id), None)
+    if not basket:
+        raise HTTPException(status_code=404, detail="Basket not found")
+
+    # Build WhatsApp message
+    name = basket["name"]
+    price = f"₹{basket['price']}" if basket.get("price") else ""
+    desc = basket.get("description") or ""
+    valid_to = basket.get("valid_to") or ""
+    items_list = basket.get("items") or []
+    item_lines = "\n".join(
+        f"  • {it.get('product_name', 'Item')} × {it.get('qty', 1)}"
+        for it in (items_list if isinstance(items_list, list) else [])
+    )
+    msg = f"🛒 *{name}*"
+    if price: msg += f" — *{price}*"
+    if desc:  msg += f"\n{desc}"
+    if item_lines: msg += f"\n\nIncludes:\n{item_lines}"
+    if valid_to: msg += f"\n\n⏰ Valid until: {valid_to}"
+    msg += "\n\nContact us to order!"
+
+    # Fetch all customers with phone numbers
+    with request.app.state.engine.connect() as conn:
+        rows = conn.execute(_text(
+            "SELECT phone FROM kirana_oltp.customer WHERE store_id = :sid AND phone IS NOT NULL AND phone != ''"
+        ), {"sid": sid}).mappings().all()
+    phones = [r["phone"] for r in rows]
+
+    wa_client = getattr(request.app.state, "wa_client", None)
+    sent = 0
+    if wa_client and wa_client.is_configured:
+        for phone in phones:
+            try:
+                wa_client.send_text(phone, msg)
+                sent += 1
+            except Exception:
+                pass
+
+    return {"sent": sent, "total": len(phones), "message": msg}
+
+
 @router.post("/admin/cancel-subscription/{store_id}")
 async def admin_cancel_subscription(store_id: int, request: Request, user: dict = Depends(_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     try:
-        return _svc(request).cancel_subscription(store_id)
+        result = _svc(request).cancel_subscription(store_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Notify the user so the app refreshes and gates features immediately
+    _svc(request).send_fcm_to_user(
+        user_id=_get_store_owner_id(request, store_id),
+        title="Subscription Cancelled",
+        body="Your Kirana AI subscription has been cancelled. Please renew to continue.",
+        data={
+            "action": "subscription_cancelled",
+            "route": "/profile/subscription",
+        },
+    )
+    return result
+
+
+def _get_store_owner_id(request: Request, store_id: int) -> int:
+    """Return user_id of the store owner, or 0 if not found."""
+    from sqlalchemy import text as _text
+    with request.app.state.engine.connect() as conn:
+        row = conn.execute(_text(
+            "SELECT user_id FROM kirana_oltp.users WHERE store_id = :sid "
+            "AND role = 'store_owner' AND NOT COALESCE(is_deleted, FALSE) LIMIT 1"
+        ), {"sid": store_id}).mappings().first()
+    return row["user_id"] if row else 0
 
 
 # ── Store Associations ────────────────────────────────────────────────────────

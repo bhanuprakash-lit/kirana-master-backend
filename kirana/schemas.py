@@ -351,3 +351,17 @@ class ReferralScanRequest(BaseModel):
 class VoucherUseRequest(BaseModel):
     voucher_id: int
     order_id: Optional[int] = None
+
+
+class BasketItemInput(BaseModel):
+    product_id: int
+    product_name: str | None = None
+    qty: float = 1.0
+
+class BasketCreate(BaseModel):
+    name: str
+    description: str | None = None
+    price: float | None = None
+    valid_from: str | None = None  # YYYY-MM-DD
+    valid_to: str | None = None
+    items: list[BasketItemInput] = []

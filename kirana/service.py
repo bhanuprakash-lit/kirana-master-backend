@@ -239,7 +239,7 @@ class KiranaService:
             raise ValueError("Invalid username or password")
         
         try:
-            token = repo.create_session(user["user_id"])
+            token = repo.create_session(user["user_id"], login_method="password")
             logger.info(f"Session created for user_id: {user['user_id']}")
             res = LoginResponse(access_token=token, user=AuthUser(**user))
             return res
@@ -258,7 +258,7 @@ class KiranaService:
         user = repo.authenticate_by_phone(req.phone_number, req.firebase_uid)
         if not user:
             raise ValueError(f"No account found for phone number {req.phone_number}")
-        token = repo.create_session(user["user_id"])
+        token = repo.create_session(user["user_id"], login_method="phone")
         logger.info(f"Phone login for user_id={user['user_id']} phone={req.phone_number}")
         return LoginResponse(access_token=token, user=AuthUser(**user))
 
@@ -292,7 +292,7 @@ class KiranaService:
             if "unique" in msg.lower() and "phone" in msg.lower():
                 raise ValueError("An account with this phone number already exists")
             raise
-        token = repo.create_session(user["user_id"])
+        token = repo.create_session(user["user_id"], login_method="register")
         return RegisterStoreOwnerResponse(access_token=token, user=AuthUser(**user), store=store)
 
     def create_user(self, req: UserCreateRequest) -> UserCreateResponse:
@@ -573,34 +573,74 @@ class KiranaService:
         from kirana.repository import KiranaRepository
         repo = KiranaRepository(self._db)
         with repo._conn() as conn:
-            sql = "UPDATE kirana_oltp.users SET fcm_token = :tok WHERE user_id = :uid"
-            conn.execute(text(sql), {"tok": fcm_token, "uid": user_id})
+            # Update legacy single-token column for backward compat with intelligence engine
+            conn.execute(text(
+                "UPDATE kirana_oltp.users SET fcm_token = :tok WHERE user_id = :uid"
+            ), {"tok": fcm_token, "uid": user_id})
+            # Upsert into multi-device token table
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.user_fcm_tokens (user_id, fcm_token, last_seen)
+                VALUES (:uid, :tok, NOW())
+                ON CONFLICT (fcm_token)
+                DO UPDATE SET user_id = :uid, last_seen = NOW()
+            """), {"tok": fcm_token, "uid": user_id})
             conn.commit()
         return True
 
     def send_fcm_to_user(self, user_id: int, title: str, body: str, data: dict | None = None) -> bool:
-        """Fetch FCM token for user then send push notification."""
+        """Send push notification to all registered devices for this user.
+        Automatically removes stale/unregistered tokens from the DB.
+        """
         import logging as _log
         _logger = _log.getLogger("kirana.fcm")
         from kirana.repository import KiranaRepository
-        from kirana.fcm_sender import send_to_token
+        from kirana.fcm_sender import send_to_token, UNREGISTERED
         repo = KiranaRepository(self._db)
         with repo._conn() as conn:
-            row = conn.execute(
-                text("SELECT fcm_token FROM kirana_oltp.users WHERE user_id = :uid"),
+            rows = conn.execute(
+                text("SELECT fcm_token FROM kirana_oltp.user_fcm_tokens WHERE user_id = :uid ORDER BY last_seen DESC"),
                 {"uid": user_id},
-            ).mappings().first()
-        if not row:
-            _logger.warning("send_fcm_to_user: user_id=%s not found in DB", user_id)
-            return False
-        token = row["fcm_token"]
-        if not token:
+            ).mappings().all()
+            tokens = [r["fcm_token"] for r in rows if r["fcm_token"]]
+
+            if not tokens:
+                row = conn.execute(
+                    text("SELECT fcm_token FROM kirana_oltp.users WHERE user_id = :uid"),
+                    {"uid": user_id},
+                ).mappings().first()
+                if row and row["fcm_token"]:
+                    tokens = [row["fcm_token"]]
+
+        if not tokens:
             _logger.warning("send_fcm_to_user: user_id=%s has no FCM token stored", user_id)
             return False
-        _logger.info("send_fcm_to_user: sending to user_id=%s token=...%s", user_id, token[-8:])
-        result = send_to_token(token, title, body, data)
-        _logger.info("send_fcm_to_user: send_to_token returned %s", result)
-        return result
+
+        _logger.info("send_fcm_to_user: sending to user_id=%s, %d device(s)", user_id, len(tokens))
+        any_ok = False
+        stale_tokens = []
+        for token in tokens:
+            result = send_to_token(token, title, body, data)
+            if result is True:
+                any_ok = True
+            elif result == UNREGISTERED:
+                stale_tokens.append(token)
+
+        # Purge stale tokens so the intelligence engine stops hitting them
+        if stale_tokens:
+            from kirana.repository import KiranaRepository
+            repo2 = KiranaRepository(self._db)
+            with repo2._conn() as conn:
+                for t in stale_tokens:
+                    conn.execute(text(
+                        "DELETE FROM kirana_oltp.user_fcm_tokens WHERE fcm_token = :tok"
+                    ), {"tok": t})
+                    conn.execute(text(
+                        "UPDATE kirana_oltp.users SET fcm_token = NULL WHERE fcm_token = :tok"
+                    ), {"tok": t})
+                conn.commit()
+            _logger.info("send_fcm_to_user: purged %d stale token(s) for user_id=%s", len(stale_tokens), user_id)
+
+        return any_ok
 
     def refresh_ml(self) -> dict:
         self.ml.refresh()

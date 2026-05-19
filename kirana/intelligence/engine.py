@@ -19,7 +19,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from kirana.fcm_sender import send_to_token
+from kirana.fcm_sender import send_to_token, UNREGISTERED
 from kirana.intelligence.repository import IntelligenceRepository
 from kirana.intelligence import triggers as T
 
@@ -127,8 +127,12 @@ class IntelligenceEngine:
                 )
                 payload["log_id"] = str(log_id)
 
-                ok = send_to_token(token, title, body, payload)
-                if not ok:
+                result = send_to_token(token, title, body, payload)
+                if result == UNREGISTERED:
+                    # Token is dead — purge it so it's never tried again
+                    repo.purge_fcm_token(token)
+                    failed += 1
+                elif not result:
                     repo.log_notification(
                         store_id=store_id, user_id=user_id,
                         trigger_type=trigger_name, title=title, body=body,

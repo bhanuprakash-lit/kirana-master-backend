@@ -1,7 +1,9 @@
+import csv
+import io
 from math import ceil
 
 import psycopg2
-from flask import Flask, abort, render_template, request, url_for
+from flask import Flask, Response, abort, render_template, request, url_for
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
@@ -389,6 +391,44 @@ def table_view(schema, table):
         selected_store=get_selected_store(stores, store_id),
         selected_store_id=store_id,
     )
+
+
+@app.route("/download/<schema>/<table>")
+def download_table(schema, table):
+    if not is_valid_table(schema, table):
+        abort(404)
+
+    store_id = parse_store_id()
+    columns = get_table_columns(schema, table)
+    if not columns:
+        abort(404)
+
+    col_names = [col["column_name"] for col in columns]
+    where_clause, params = get_store_filter(schema, table, store_id)
+    order_column = col_names[0]
+    query = sql.SQL("SELECT * FROM {}.{} AS t{} ORDER BY {}").format(
+        sql.Identifier(schema),
+        sql.Identifier(table),
+        where_clause,
+        sql.Identifier("t", order_column),
+    )
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(col_names)
+        yield buf.getvalue()
+        with get_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, params)
+            for row in cur:
+                buf.seek(0)
+                buf.truncate(0)
+                writer.writerow([row[c] for c in col_names])
+                yield buf.getvalue()
+
+    filename = f"{schema}_{table}.csv"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return Response(generate(), mimetype="text/csv", headers=headers)
 
 
 if __name__ == "__main__":

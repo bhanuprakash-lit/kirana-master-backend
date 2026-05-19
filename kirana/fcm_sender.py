@@ -54,12 +54,22 @@ def _ensure_init() -> bool:
         return False
 
 
+UNREGISTERED = "UNREGISTERED"  # sentinel returned when token is stale/invalid
+
+
 def send_to_token(
     fcm_token: str,
     title: str,
     body: str,
     data: Optional[dict] = None,
-) -> bool:
+) -> bool | str:
+    """Send a push notification.
+
+    Returns:
+      True         — sent successfully
+      False        — transient failure (network, server error)
+      UNREGISTERED — token is stale (device uninstalled app); caller should delete it
+    """
     if not fcm_token or not _ensure_init():
         return False
     try:
@@ -84,5 +94,10 @@ def send_to_token(
         logger.info("FCM: push sent → message_id=%s token=...%s", response, fcm_token[-8:])
         return True
     except Exception as exc:
+        exc_name = type(exc).__name__
+        # UnregisteredError / SenderIdMismatch mean the token is permanently invalid
+        if "Unregistered" in exc_name or "SenderIdMismatch" in exc_name or "NOT_FOUND" in str(exc):
+            logger.warning("FCM: stale token removed (token=...%s): %s", fcm_token[-8:], exc)
+            return UNREGISTERED
         logger.warning("FCM: send failed (token=...%s): %s", fcm_token[-8:] if fcm_token else "?", exc, exc_info=True)
         return False
