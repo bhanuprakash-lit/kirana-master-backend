@@ -37,7 +37,7 @@ export const api = {
   mockPayment:     (storeId, tier)        => request('POST', '/kirana/admin/payment/mock-confirm', { store_id: storeId, tier }),
   // Trials & subscriptions
   pendingTrials:   ()                     => request('GET',  '/kirana/admin/pending-trials'),
-  approveTrial:    (storeId)              => request('POST', `/kirana/admin/approve-trial/${storeId}`),
+  approveTrial:    (storeId, tier='basic') => request('POST', `/kirana/admin/approve-trial/${storeId}?tier=${tier}`),
   allSubs:         ()                     => request('GET',  '/kirana/admin/all-subscriptions'),
   cancelSub:       (storeId)              => request('POST', `/kirana/admin/cancel-subscription/${storeId}`),
   // Notifications
@@ -46,4 +46,15 @@ export const api = {
   getKpiTiers:     ()                     => request('GET',  '/kirana/admin/kpi-tiers'),
   saveKpiTiers:    (configs)              => request('PUT',  '/kirana/admin/kpi-tiers', { configs }),
   userActivity:    ()                     => request('GET',  '/kirana/admin/user-activity'),
+  // Support / Issue reports
+  listIssues:      (limit=200)            => request('GET',  `/oltp/issue_report?limit=${limit}`),
+  updateIssue:     (reportId, data)       => request('PATCH', '/oltp/issue_report/record', { keys: { report_id: reportId }, data }),
+  // Cashflow requests
+  listCashflow:    (limit=200)            => request('GET',  `/oltp/cashflow_requests?limit=${limit}`),
+  // WhatsApp
+  waHealth:        ()                     => request('GET',  '/whatsapp/health'),
+  waSession:       (phone)               => request('GET',  `/whatsapp/session/${encodeURIComponent(phone)}`),
+  waResetSession:  (phone)               => request('DELETE', `/whatsapp/session/${encodeURIComponent(phone)}`),
+  waSend:          (phone, message)      => request('POST', '/whatsapp/send/text', { phone_number: phone, message }),
+  waLinkStore:     (phone, storeId)      => request('POST', '/whatsapp/session/link-store', { phone, store_id: parseInt(storeId) }),
 };

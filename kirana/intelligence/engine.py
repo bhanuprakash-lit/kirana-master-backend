@@ -29,8 +29,9 @@ _IST = "Asia/Kolkata"
 
 
 class IntelligenceEngine:
-    def __init__(self, engine):
+    def __init__(self, engine, kirana_svc=None):
         self._db = engine
+        self._kirana_svc = kirana_svc
         self._scheduler = AsyncIOScheduler(timezone=_IST)
         self._setup_jobs()
 
@@ -68,6 +69,12 @@ class IntelligenceEngine:
 
         # Abandoned cart — checked every 5 minutes
         s.add_job(self._run_abandoned_cart, IntervalTrigger(minutes=5), id="abandoned_cart", replace_existing=True)
+
+        # Nightly inventory snapshot (2am IST) — keeps ML predictions fresh
+        s.add_job(self._run_snapshot_refresh, CronTrigger(hour=2, minute=0, timezone=_IST), id="snapshot_refresh", replace_existing=True)
+
+        # ML prediction refresh every 6 hours — reloads CSVs after any retraining
+        s.add_job(self._run_ml_refresh, IntervalTrigger(hours=6), id="ml_refresh", replace_existing=True)
 
         logger.info("Intelligence engine: %d jobs registered", len(s.get_jobs()))
 
@@ -232,6 +239,79 @@ class IntelligenceEngine:
         if sent or skipped:
             logger.info("Trigger abandoned_cart sent=%d skipped=%d", sent, skipped)
 
+    # ── Snapshot refresh ─────────────────────────────────────────────────────
+
+    async def _run_snapshot_refresh(self) -> None:
+        """Write daily inventory snapshots from live orders + inventory tables."""
+        from datetime import date
+        from sqlalchemy import text
+        from kirana.repository import KiranaRepository
+
+        today = date.today().isoformat()
+        repo  = KiranaRepository(self._db)
+        total = 0
+
+        try:
+            with self._db.connect() as conn:
+                store_ids = conn.execute(text(
+                    "SELECT DISTINCT store_id FROM kirana_oltp.inventory"
+                )).scalars().all()
+
+            for sid in store_ids:
+                with self._db.connect() as conn:
+                    rows = conn.execute(text("""
+                        SELECT
+                            i.product_id                             AS sku_id,
+                            i.quantity                               AS stock,
+                            COALESCE(s30.units_sold, 0)              AS units_sold,
+                            COALESCE(s30.revenue, 0)                 AS revenue,
+                            COALESCE(s30.profit, 0)                  AS profit,
+                            COALESCE(pr.price, 0)                    AS price,
+                            FALSE                                    AS promo_flag
+                        FROM kirana_oltp.inventory i
+                        LEFT JOIN LATERAL (
+                            SELECT
+                                SUM(oi.quantity)                                     AS units_sold,
+                                SUM(oi.quantity * COALESCE(pr2.price, oi.unit_price, 0)) AS revenue,
+                                SUM(oi.quantity * COALESCE(pr2.price, oi.unit_price, 0) * 0.25) AS profit
+                            FROM kirana_oltp.orders o
+                            JOIN kirana_oltp.order_item oi ON o.order_id = oi.order_id
+                            LEFT JOIN kirana_oltp.pricing pr2
+                                ON pr2.product_id = i.product_id AND pr2.store_id = i.store_id
+                            WHERE oi.product_id = i.product_id
+                              AND o.store_id = i.store_id
+                              AND o.order_date >= NOW() - INTERVAL '30 days'
+                        ) s30 ON TRUE
+                        LEFT JOIN LATERAL (
+                            SELECT price FROM kirana_oltp.pricing pr
+                            WHERE pr.product_id = i.product_id AND pr.store_id = i.store_id
+                            ORDER BY pr.valid_from DESC LIMIT 1
+                        ) pr ON TRUE
+                        WHERE i.store_id = :sid
+                    """), {"sid": sid}).mappings().all()
+
+                items = [dict(r) for r in rows]
+                if items:
+                    n = repo.upsert_inventory_snapshot(int(sid), today, items)
+                    total += n
+
+            logger.info("Snapshot refresh: wrote %d rows across %d stores", total, len(store_ids))
+        except Exception:
+            logger.exception("Snapshot refresh failed")
+
+    # ── ML prediction refresh ─────────────────────────────────────────────────
+
+    async def _run_ml_refresh(self) -> None:
+        """Reload ML prediction CSVs from disk (picks up any newly generated files)."""
+        if self._kirana_svc is None:
+            return
+        try:
+            self._kirana_svc.ml.refresh()
+            rows = self._kirana_svc.ml.get_frame().shape[0]
+            logger.info("ML predictions refreshed: %d rows loaded", rows)
+        except Exception:
+            logger.exception("ML refresh failed")
+
     # ── Manual trigger (for testing/admin) ───────────────────────────────────
 
     async def fire(self, trigger_name: str, store_id: int | None = None) -> dict:
@@ -250,6 +330,8 @@ class IntelligenceEngine:
             "inactive_customer": self._run_inactive_customer,
             "feature_discovery": self._run_feature_discovery,
             "abandoned_cart":    self._run_abandoned_cart,
+            "snapshot_refresh":  self._run_snapshot_refresh,
+            "ml_refresh":        self._run_ml_refresh,
         }
         handler = handlers.get(trigger_name)
         if not handler:

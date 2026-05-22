@@ -224,10 +224,27 @@ class KiranaRepository:
             ]:
                 conn.execute(text(ddl))
 
-            # kirana_oltp.customer — add store_id for multi-tenancy
+            # kirana_oltp.customer — add store_id for multi-tenancy + unique constraint + indexes
             conn.execute(text(
                 "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS store_id BIGINT "
                 "REFERENCES kirana_oltp.store(store_id)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_customer_store_id "
+                "ON kirana_oltp.customer(store_id)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_customer_store_phone "
+                "ON kirana_oltp.customer(store_id, phone)"
+            ))
+            # Performance indexes for high-frequency queries
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_orders_store_date "
+                "ON kirana_oltp.orders(store_id, order_date DESC)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_inventory_store_product "
+                "ON kirana_oltp.inventory_snapshots(store_id, product_id)"
             ))
 
             # ── Referral System tables ────────────────────────────────────────
@@ -293,6 +310,29 @@ class KiranaRepository:
                 "ALTER TABLE kirana_oltp.order_item ALTER COLUMN quantity TYPE NUMERIC USING quantity::NUMERIC",
             ]:
                 conn.execute(text(ddl))
+
+            # ── AI usage tracking (server-side, replaces SharedPreferences) ─────
+
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.ai_usage (
+                    id          BIGSERIAL PRIMARY KEY,
+                    user_id     BIGINT NOT NULL REFERENCES kirana_oltp.users(user_id) ON DELETE CASCADE,
+                    feature     VARCHAR(20) NOT NULL,
+                    usage_date  DATE NOT NULL DEFAULT CURRENT_DATE,
+                    count       INT NOT NULL DEFAULT 0,
+                    UNIQUE (user_id, feature, usage_date)
+                )
+            """))
+
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.ai_credits (
+                    id       BIGSERIAL PRIMARY KEY,
+                    user_id  BIGINT NOT NULL REFERENCES kirana_oltp.users(user_id) ON DELETE CASCADE,
+                    feature  VARCHAR(20) NOT NULL,
+                    balance  INT NOT NULL DEFAULT 0 CHECK (balance >= 0),
+                    UNIQUE (user_id, feature)
+                )
+            """))
 
             conn.commit()
 
@@ -574,6 +614,17 @@ class KiranaRepository:
             conn.commit()
         return dict(row)
 
+    def get_user_by_username(self, username: str) -> dict | None:
+        sql = """
+        SELECT user_id, username, full_name, role, store_id, is_active
+        FROM kirana_oltp.users
+        WHERE username = :username AND is_active = TRUE
+        LIMIT 1
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"username": username}).mappings().first()
+        return dict(row) if row else None
+
     def list_users(self) -> list[dict]:
         sql = """
         SELECT user_id, username, full_name, role, store_id, is_active
@@ -785,19 +836,22 @@ class KiranaRepository:
             promo_flag  = EXCLUDED.promo_flag,
             upserted_at = NOW()
         """
-        count = 0
+        if not items:
+            return 0
+        params = [
+            {
+                "d": snapshot_date, "sid": store_id,
+                "skuid": item.get("sku_id"),   "us": item.get("units_sold"),
+                "st": item.get("stock"),        "rev": item.get("revenue"),
+                "prof": item.get("profit"),     "price": item.get("price"),
+                "pf": item.get("promo_flag"),
+            }
+            for item in items
+        ]
         with self._conn() as conn:
-            for item in items:
-                conn.execute(text(sql), {
-                    "d": snapshot_date, "sid": store_id,
-                    "skuid": item.get("sku_id"),   "us": item.get("units_sold"),
-                    "st": item.get("stock"),        "rev": item.get("revenue"),
-                    "prof": item.get("profit"),     "price": item.get("price"),
-                    "pf": item.get("promo_flag"),
-                })
-                count += 1
+            conn.execute(text(sql), params)
             conn.commit()
-        return count
+        return len(params)
 
     def get_store_snapshot(self, store_id: int) -> dict:
         latest_sql = """
@@ -821,7 +875,7 @@ class KiranaRepository:
         FROM kirana_oltp.inventory_snapshots s
         LEFT JOIN kirana_oltp.product p ON p.product_id = s.product_id
         LEFT JOIN kirana_oltp.category c ON c.category_id = p.category_id
-        WHERE s.store_id = :sid AND s.snapshot_date = :snap_date::date
+        WHERE s.store_id = :sid AND s.snapshot_date = CAST(:snap_date AS date)
         ORDER BY s.product_id
         """
         fallback_sql = """
@@ -877,6 +931,116 @@ class KiranaRepository:
             return {"store_id": store_id, "snapshot_count": len(rows),
                     "snapshot_date": rows[0]["snapshot_date"] if rows else None,
                     "items": items}
+
+    # ── AI Usage & Credits ────────────────────────────────────────────────────
+
+    _AI_DAILY_LIMITS: dict[str, int] = {
+        "voice":     3,
+        "handwrite": 5,
+        "invoice":   2,
+    }
+
+    def check_and_record_ai_use(self, user_id: int, feature: str) -> None:
+        """
+        Atomically checks whether the user may use this AI feature and records
+        one use.  Raises HTTPException 429 when the daily quota is exhausted
+        AND no credits remain.
+        """
+        import datetime
+        today      = datetime.date.today().isoformat()
+        daily_lim  = self._AI_DAILY_LIMITS.get(feature, 0)
+
+        with self._conn() as conn:
+            # Ensure a today-row exists, then lock it
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.ai_usage (user_id, feature, usage_date, count)
+                VALUES (:uid, :feat, :today, 0)
+                ON CONFLICT (user_id, feature, usage_date) DO NOTHING
+            """), {"uid": user_id, "feat": feature, "today": today})
+
+            used = conn.execute(text("""
+                SELECT count FROM kirana_oltp.ai_usage
+                WHERE user_id = :uid AND feature = :feat AND usage_date = :today
+                FOR UPDATE
+            """), {"uid": user_id, "feat": feature, "today": today}).scalar() or 0
+
+            if used < daily_lim:
+                conn.execute(text("""
+                    UPDATE kirana_oltp.ai_usage
+                    SET count = count + 1
+                    WHERE user_id = :uid AND feature = :feat AND usage_date = :today
+                """), {"uid": user_id, "feat": feature, "today": today})
+            else:
+                # Try credits — lock the row first
+                conn.execute(text("""
+                    INSERT INTO kirana_oltp.ai_credits (user_id, feature, balance)
+                    VALUES (:uid, :feat, 0)
+                    ON CONFLICT (user_id, feature) DO NOTHING
+                """), {"uid": user_id, "feat": feature})
+
+                balance = conn.execute(text("""
+                    SELECT balance FROM kirana_oltp.ai_credits
+                    WHERE user_id = :uid AND feature = :feat
+                    FOR UPDATE
+                """), {"uid": user_id, "feat": feature}).scalar() or 0
+
+                if balance <= 0:
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Daily limit reached for {feature}. Purchase credits to continue.",
+                    )
+                conn.execute(text("""
+                    UPDATE kirana_oltp.ai_credits
+                    SET balance = balance - 1
+                    WHERE user_id = :uid AND feature = :feat
+                """), {"uid": user_id, "feat": feature})
+
+            conn.commit()
+
+    def get_ai_status(self, user_id: int) -> dict:
+        """Return current usage + credits for all AI features."""
+        import datetime
+        today = datetime.date.today().isoformat()
+
+        with self._conn() as conn:
+            usage_rows = conn.execute(text("""
+                SELECT feature, count FROM kirana_oltp.ai_usage
+                WHERE user_id = :uid AND usage_date = :today
+            """), {"uid": user_id, "today": today}).mappings().all()
+
+            credit_rows = conn.execute(text("""
+                SELECT feature, balance FROM kirana_oltp.ai_credits
+                WHERE user_id = :uid
+            """), {"uid": user_id}).mappings().all()
+
+        used_map    = {r["feature"]: r["count"]   for r in usage_rows}
+        credits_map = {r["feature"]: r["balance"] for r in credit_rows}
+
+        result = {}
+        for feat, lim in self._AI_DAILY_LIMITS.items():
+            used      = used_map.get(feat, 0)
+            credits   = credits_map.get(feat, 0)
+            free_left = max(0, lim - used)
+            remaining = free_left if free_left > 0 else credits
+            result[feat] = {
+                "used":      used,
+                "limit":     lim,
+                "credits":   credits,
+                "remaining": remaining,
+            }
+        return result
+
+    def add_ai_credits(self, user_id: int, feature: str, count: int) -> dict:
+        """Add purchased credits for a feature and return updated status."""
+        with self._conn() as conn:
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.ai_credits (user_id, feature, balance)
+                VALUES (:uid, :feat, :count)
+                ON CONFLICT (user_id, feature)
+                DO UPDATE SET balance = ai_credits.balance + :count
+            """), {"uid": user_id, "feat": feature, "count": count})
+            conn.commit()
+        return self.get_ai_status(user_id)
 
     # ── User preferences ──────────────────────────────────────────────────────
 
@@ -1356,23 +1520,21 @@ class KiranaRepository:
         return res
 
     def sync_customers(self, store_id: int, contacts: list[dict]) -> int:
-        count = 0
+        if not contacts:
+            return 0
+        insert_sql = """
+        INSERT INTO kirana_oltp.customer (name, phone, store_id)
+        SELECT :n, :p, :sid
+        WHERE NOT EXISTS (
+            SELECT 1 FROM kirana_oltp.customer
+            WHERE store_id = :sid AND phone = :p
+        )
+        """
+        params = [{"n": c["name"], "p": c["phone"], "sid": store_id} for c in contacts]
         with self._conn() as conn:
-            for contact in contacts:
-                name = contact["name"]
-                phone = contact["phone"]
-                
-                # 1. Ensure customer exists (scoped to store_id)
-                cust_sql = "SELECT customer_id FROM kirana_oltp.customer WHERE phone = :p AND store_id = :sid"
-                cust_row = conn.execute(text(cust_sql), {"p": phone, "sid": store_id}).mappings().first()
-                
-                if not cust_row:
-                    ins_cust = "INSERT INTO kirana_oltp.customer(name, phone, store_id) VALUES(:n, :p, :sid) RETURNING customer_id"
-                    conn.execute(text(ins_cust), {"n": name, "p": phone, "sid": store_id})
-
-                count += 1
+            conn.execute(text(insert_sql), params)
             conn.commit()
-        return count
+        return len(params)
 
     # ── Cashflow Requests ─────────────────────────────────────────────────────
 
@@ -1443,12 +1605,23 @@ class KiranaRepository:
 
     def list_referral_campaigns(self, store_id: int) -> list[dict]:
         sql = """
-        SELECT c.*,
-            (SELECT COUNT(*) FROM kirana_oltp.referral_tokens t WHERE t.campaign_id = c.campaign_id) AS token_count,
-            (SELECT COUNT(*) FROM kirana_oltp.referrals r
-                JOIN kirana_oltp.referral_tokens t ON r.token_id = t.token_id
-                WHERE t.campaign_id = c.campaign_id AND r.status = 'rewarded') AS total_referrals
+        SELECT
+            c.*,
+            COALESCE(tok.token_count, 0)  AS token_count,
+            COALESCE(ref.total_referrals, 0) AS total_referrals
         FROM kirana_oltp.referral_campaigns c
+        LEFT JOIN (
+            SELECT campaign_id, COUNT(*) AS token_count
+            FROM kirana_oltp.referral_tokens
+            GROUP BY campaign_id
+        ) tok ON tok.campaign_id = c.campaign_id
+        LEFT JOIN (
+            SELECT t.campaign_id, COUNT(*) AS total_referrals
+            FROM kirana_oltp.referrals r
+            JOIN kirana_oltp.referral_tokens t ON r.token_id = t.token_id
+            WHERE r.status = 'rewarded'
+            GROUP BY t.campaign_id
+        ) ref ON ref.campaign_id = c.campaign_id
         WHERE c.store_id = :sid
         ORDER BY c.created_at DESC
         """
@@ -1786,12 +1959,14 @@ class KiranaRepository:
                 "vf": data.get("valid_from"), "vt": data.get("valid_to"),
             }).mappings().first()
             basket_id = row["basket_id"]
-            for item in data.get("items", []):
+            items = data.get("items", [])
+            if items:
                 conn.execute(text("""
                     INSERT INTO kirana_oltp.basket_item(basket_id, product_id, product_name, qty)
                     VALUES(:bid, :pid, :pname, :qty)
-                """), {"bid": basket_id, "pid": item["product_id"],
-                       "pname": item.get("product_name"), "qty": item.get("qty", 1)})
+                """), [{"bid": basket_id, "pid": item["product_id"],
+                        "pname": item.get("product_name"), "qty": item.get("qty", 1)}
+                       for item in items])
             conn.commit()
         return dict(row)
 

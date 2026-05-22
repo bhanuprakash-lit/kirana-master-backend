@@ -219,8 +219,10 @@ def calc_category_mix(engine, store_id: int, days: int = 30) -> dict:
     overall_margin = float(rows[0].get("overall_margin") or 0)
 
     # BCG quadrant: high share + high margin = star, etc.
-    median_share  = sorted(float(r.get("revenue_share_pct") or 0) for r in rows)[len(rows)//2]
-    median_margin = sorted(float(r.get("margin_pct") or 0) for r in rows)[len(rows)//2]
+    _shares  = sorted(float(r.get("revenue_share_pct") or 0) for r in rows)
+    _margins = sorted(float(r.get("margin_pct") or 0) for r in rows)
+    median_share  = _shares[len(_shares) // 2]  if _shares  else 0.0
+    median_margin = _margins[len(_margins) // 2] if _margins else 0.0
 
     def _bcg(rev_share, margin):
         hs = float(rev_share) >= median_share
@@ -384,8 +386,9 @@ def calc_new_product_trial(engine, store_id: int, trial_days: int = 30) -> dict:
 
     # Label success: top 33% units = hit, bottom 33% = slow
     all_units = sorted(int(r["units_30d"]) for r in rows)
-    p33 = all_units[len(all_units)//3] if all_units else 0
-    p67 = all_units[2*len(all_units)//3] if all_units else 0
+    n = len(all_units)
+    p33 = all_units[max(0, n // 3 - 1)]     if n >= 3 else (all_units[0] if n else 0)
+    p67 = all_units[max(0, 2 * n // 3 - 1)] if n >= 3 else (all_units[-1] if n else 0)
 
     products = []
     for r in rows:

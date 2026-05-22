@@ -362,82 +362,122 @@ class KiranaService:
         return df
 
     def _get_patched_items(self, store_id: int) -> list[RecommendationItem]:
-        """Get all recommendations for a store, including inventory-based fallbacks."""
+        """Get recommendations: ML CSV results first, then SQL-scored fallbacks for missing SKUs."""
+        from sqlalchemy import text
+
         # 1. Base results from ML CSVs
         df = self.ml.get_frame()
         if not df.empty:
             df = df[df["store_id"] == store_id]
-        
         items = [_build_item(r) for r in df.to_dict("records")]
-        
-        # 2. Add fallbacks for products in inventory but missing from ML
-        from sqlalchemy import text
+        existing_skus = {i.sku_id for i in items}
+
+        # 2. SQL-scored fallbacks — real velocity + risk signals, no fake cycling
         try:
             with self._db.connect() as conn:
-                # Join with product and pricing to get names/categories/prices
                 sql = """
-                SELECT i.product_id, i.quantity, p.name, c.name as category, pr.price
+                SELECT
+                    i.product_id,
+                    i.quantity,
+                    p.name,
+                    c.name AS category,
+                    COALESCE(pr.price, 100)            AS price,
+                    COALESCE(sales.avg_daily_sales, 0) AS avg_daily_sales,
+                    COALESCE(sales.last_sale_days_ago, 999) AS last_sale_days_ago
                 FROM kirana_oltp.inventory i
-                JOIN kirana_oltp.product p ON i.product_id = p.product_id
+                JOIN kirana_oltp.product  p ON i.product_id  = p.product_id
                 JOIN kirana_oltp.category c ON p.category_id = c.category_id
                 LEFT JOIN LATERAL (
-                    SELECT price FROM kirana_oltp.pricing pr
+                    SELECT price
+                    FROM kirana_oltp.pricing pr
                     WHERE pr.product_id = i.product_id AND pr.store_id = i.store_id
-                      AND pr.valid_from <= NOW() AND (pr.valid_to IS NULL OR pr.valid_to >= NOW())
+                      AND pr.valid_from <= NOW()
+                      AND (pr.valid_to IS NULL OR pr.valid_to >= NOW())
                     ORDER BY pr.valid_from DESC LIMIT 1
                 ) pr ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT
+                        ROUND(SUM(oi.quantity)::numeric / 30.0, 4)              AS avg_daily_sales,
+                        EXTRACT(DAY FROM NOW() - MAX(o.order_date))::int         AS last_sale_days_ago
+                    FROM kirana_oltp.orders o
+                    JOIN kirana_oltp.order_item oi ON o.order_id = oi.order_id
+                    WHERE oi.product_id = i.product_id
+                      AND o.store_id   = i.store_id
+                      AND o.order_date >= NOW() - INTERVAL '30 days'
+                ) sales ON TRUE
                 WHERE i.store_id = :sid
                 """
                 inv_rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
 
-            existing_skus = {i.sku_id for i in items}
-            for idx, row in enumerate(inv_rows):
+            for row in inv_rows:
                 sku = row["product_id"]
-                qty = float(row["quantity"] or 0)
-                if sku not in existing_skus:
-                    # Deterministic but varied types for testing
-                    types = ["reorder_now", "fast_moving", "stockout_risk", "profit_opportunity"]
-                    rtype = types[idx % len(types)]
-                    
-                    if qty > 50 and rtype == "reorder_now":
-                        rtype = "fast_moving"
-                    if qty < 2 and rtype == "fast_moving":
-                        rtype = "stockout_risk"
-                    
-                    price = float(row["price"] or 100)
-                    # Estimate cost if missing (80% of price)
-                    cost = price * 0.8
-                    margin = ((price - cost) / price * 100) if price > 0 else 20
-                    
-                    msg = f"Stock is {qty:.0f} units. "
-                    if rtype == "reorder_now":
-                        msg += "Below safe threshold. Restock 20 units."
-                    elif rtype == "stockout_risk":
-                        msg += "Running out in ~2 days. High risk."
-                    elif rtype == "fast_moving":
-                        msg += "Top seller in category. Ensure shelf is full."
-                    else:
-                        msg += f"High margin of {margin:.1f}%. Cross-sell opportunity."
-                    
-                    mock = RecommendationItem(
-                        store_id=store_id,
-                        sku_id=sku,
-                        product_name=row["name"],
-                        category_name=row["category"],
-                        recommendation_type=rtype,
-                        priority="high" if rtype == "stockout_risk" else "medium",
-                        current_stock=qty,
-                        current_price=price,
-                        effective_margin=margin,
-                        expected_profit_impact=margin * 5 if rtype == "profit_opportunity" else 0.0,
-                        stockout_probability=0.85 if rtype == "stockout_risk" else 0.1,
-                        forecast_demand=5.0 if rtype == "fast_moving" else 1.2,
-                        message=msg
-                    )
-                    items.append(mock)
-        except Exception as e:
-            logger.error(f"Failed to patch recommendations for store {store_id}: {e}")
-            
+                if sku in existing_skus:
+                    continue
+
+                qty          = max(float(row["quantity"] or 0), 0)
+                avg_daily    = max(float(row["avg_daily_sales"] or 0), 0.01)
+                last_sale_ago = int(row["last_sale_days_ago"] or 999)
+                price        = float(row["price"] or 100)
+                margin       = 25.0  # kirana typical gross margin ~25%
+
+                days_left   = qty / avg_daily
+                reorder_qty = max(round(avg_daily * 14), 5)  # 2 weeks of stock
+
+                # Assign type from real signals (priority order matters)
+                if qty <= 0:
+                    rtype, priority, stockout_prob = "stockout_risk", "high", 1.0
+                elif days_left <= 3:
+                    rtype, priority = "stockout_risk", "high"
+                    stockout_prob = round(min(0.70 + (3 - days_left) * 0.10, 0.99), 2)
+                elif days_left <= 7:
+                    rtype, priority = "reorder_now", "high"
+                    stockout_prob = round(0.30 + (7 - days_left) * 0.08, 2)
+                elif last_sale_ago > 45:
+                    rtype, priority, stockout_prob = "dead_stock", "low", 0.0
+                elif avg_daily >= 2.0:
+                    rtype, priority, stockout_prob = "fast_moving", "medium", 0.15
+                elif margin > 28:
+                    rtype, priority, stockout_prob = "profit_opportunity", "medium", 0.10
+                else:
+                    rtype, priority, stockout_prob = "reorder_now", "low", 0.20
+
+                # Contextual message based on real numbers
+                if rtype == "stockout_risk":
+                    msg = (f"Only {qty:.0f} units left — runs out in ~{days_left:.0f} days at "
+                           f"current rate of {avg_daily:.1f}/day. Restock {reorder_qty} units urgently.")
+                elif rtype == "reorder_now":
+                    msg = (f"{qty:.0f} units in stock (~{days_left:.0f} days). "
+                           f"Reorder {reorder_qty} units to stay covered for 2 weeks.")
+                elif rtype == "dead_stock":
+                    msg = (f"No sales in {last_sale_ago} days. {qty:.0f} units sitting idle. "
+                           f"Consider a promotion or return to supplier.")
+                elif rtype == "fast_moving":
+                    msg = (f"Selling {avg_daily:.1f} units/day. {qty:.0f} units left "
+                           f"(~{days_left:.0f} days). Keep shelf stocked.")
+                else:
+                    msg = (f"{margin:.0f}% gross margin. {qty:.0f} units in stock. "
+                           f"Cross-sell with complementary products to boost basket value.")
+
+                items.append(RecommendationItem(
+                    store_id=store_id,
+                    sku_id=sku,
+                    product_name=str(row["name"]),
+                    category_name=str(row["category"]),
+                    recommendation_type=rtype,
+                    priority=priority,
+                    current_stock=qty,
+                    current_price=price,
+                    effective_margin=margin,
+                    days_to_stockout=round(days_left, 1),
+                    reorder_qty=float(reorder_qty),
+                    stockout_probability=stockout_prob,
+                    forecast_demand=round(avg_daily, 2),
+                    expected_profit_impact=(margin * avg_daily * 7) if rtype == "profit_opportunity" else 0.0,
+                    message=msg,
+                ))
+        except Exception:
+            logger.exception("Failed to build recommendation fallbacks for store %s", store_id)
+
         return items
 
     def query_recommendations(self, q: RecommendationQueryRequest) -> RecommendationListResponse:

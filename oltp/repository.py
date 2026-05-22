@@ -5,7 +5,9 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import MetaData, Table, and_, delete, exists, inspect, insert, literal, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 
 GLOBAL_READ_TABLES = {"calendar", "category", "product"}
@@ -131,6 +133,10 @@ class OltpRepository:
             raise HTTPException(status_code=404, detail=f"{table_name} record not found")
         return {"table": table_name, "row": dict(row)}
 
+    # Tables where (store_id, product_id) is the natural unique key and a
+    # duplicate insert should update instead of raising.
+    _UPSERT_ON_CONFLICT = {"inventory"}
+
     def create_row(self, table_name: str, user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         table = self._table(table_name)
         self._check_write_permission(table_name, user, action="create")
@@ -138,7 +144,22 @@ class OltpRepository:
         with self._engine.begin() as conn:
             clean = self._enforce_write_scope(conn, table_name, user, clean)
             self._validate_required_create_fields(table_name, clean)
-            stmt = insert(table).values(**clean)
+            if table_name in self._UPSERT_ON_CONFLICT:
+                # pg_insert supports on_conflict_do_update (PostgreSQL-specific)
+                stmt = pg_insert(table).values(**clean)
+                update_cols = {
+                    k: v for k, v in clean.items()
+                    if k not in ("store_id", "product_id", "inventory_id", "batch_id")
+                }
+                if update_cols:
+                    stmt = stmt.on_conflict_do_update(
+                        constraint=f"{table_name}_store_id_product_id_key",
+                        set_=update_cols,
+                    )
+                else:
+                    stmt = stmt.on_conflict_do_nothing()
+            else:
+                stmt = insert(table).values(**clean)
             result = conn.execute(stmt)
             keys = self._normalize_pk_values(table_name, result.inserted_primary_key, clean)
             row = self._fetch_created_row(conn, table_name, user, keys)
@@ -179,7 +200,16 @@ class OltpRepository:
             # Identity check before delete
             existing = self._fetch_row(conn, table_name, user, keys)
             stmt = delete(table).where(self._row_filter(table_name, table, keys))
-            result = conn.execute(stmt)
+            try:
+                result = conn.execute(stmt)
+            except SAIntegrityError as exc:
+                orig = str(getattr(exc, "orig", exc))
+                if "ForeignKeyViolation" in orig or "foreign key" in orig.lower():
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Cannot delete this {table_name}: it is still referenced by other records (e.g. orders or transactions). Remove those first.",
+                    )
+                raise
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail=f"{table_name} record not found")
         return {"table": table_name, "deleted": True, "keys": keys}

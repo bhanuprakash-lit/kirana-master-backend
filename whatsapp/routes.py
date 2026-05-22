@@ -4,6 +4,7 @@ Mounted at /whatsapp in the master app.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -115,7 +116,8 @@ async def receive_webhook(request: Request):
 
                 if phone:
                     try:
-                        handler.handle(phone, message, msg_id)
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(None, handler.handle, phone, message, msg_id)
                         processed += 1
                     except Exception as exc:
                         logger.exception("Error handling message from %s: %s", phone, exc)

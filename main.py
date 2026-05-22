@@ -108,7 +108,7 @@ async def lifespan(app: FastAPI):
 
     # ── Intelligence engine (scheduled notifications) ─────────────────────────
     from kirana.intelligence.engine import IntelligenceEngine
-    intelligence = IntelligenceEngine(engine)
+    intelligence = IntelligenceEngine(engine, kirana_svc=kirana_svc)
     intelligence.start()
 
     # ── Attach to app state ───────────────────────────────────────────────────
@@ -126,6 +126,8 @@ async def lifespan(app: FastAPI):
 
     intelligence.stop()
     engine.dispose()
+    from ai.routes import close_gemini_client
+    await close_gemini_client()
     logger.info("Master backend shut down cleanly")
 
 
@@ -165,8 +167,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ValueError)
     async def value_error(request: Request, exc: ValueError):
-        logger.error("Bad Request: %s", exc)
-        return JSONResponse(status_code=400, content={"success": False, "error": str(exc)})
+        logger.warning("Bad request on %s: %s", request.url.path, exc)
+        return JSONResponse(status_code=400, content={"success": False, "error": "Invalid request"})
 
     @app.exception_handler(PermissionError)
     async def perm_error(request: Request, exc: PermissionError):
@@ -183,12 +185,14 @@ def create_app() -> FastAPI:
     from oltp.routes     import router as oltp_router
     from whatsapp.routes import router as wa_router
     from kpis.routes     import router as kpi_router
+    from ai.routes       import router as ai_router
 
     app.include_router(kirana_router)
     app.include_router(pos_router)
     app.include_router(oltp_router)
     app.include_router(wa_router)
     app.include_router(kpi_router)
+    app.include_router(ai_router)
 
     # ── Root ──────────────────────────────────────────────────────────────────
     @app.get("/", tags=["Root"], include_in_schema=False)

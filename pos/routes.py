@@ -37,8 +37,7 @@ async def _current_user(
     username = payload.get("sub")
     from kirana.repository import KiranaRepository
     repo = KiranaRepository(request.app.state.engine)
-    users = repo.list_users()
-    user = next((u for u in users if u["username"] == username), None)
+    user = repo.get_user_by_username(username)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user

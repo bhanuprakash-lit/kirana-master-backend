@@ -1,6 +1,9 @@
+import logging
 from typing import Optional, List, TYPE_CHECKING
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from kirana.intelligence.engine import IntelligenceEngine
@@ -70,8 +73,9 @@ async def health(request: Request):
 async def login(request: Request, body: LoginRequest):
     try:
         return _svc(request).login(body)
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+    except ValueError:
+        logger.warning("Failed login attempt for user: %s", body.username)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @router.post("/auth/register")
 async def register(request: Request, body: RegisterStoreOwnerRequest):
@@ -80,11 +84,12 @@ async def register(request: Request, body: RegisterStoreOwnerRequest):
 
 @router.post("/auth/phone-login")
 async def phone_login(request: Request, body: PhoneLoginRequest):
-    """Log in using a Firebase-verified phone number. Returns 404 if no account exists."""
+    """Log in using a Firebase-verified phone number. Returns 401 if no account exists."""
     try:
         return _svc(request).phone_login(body)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError:
+        logger.warning("Phone login failed for phone: %s", body.phone[:4] + "****")
+        raise HTTPException(status_code=401, detail="No account found for this phone number")
 
 
 @router.get("/auth/check-username/{username}")
@@ -162,8 +167,8 @@ async def change_password(
     repo = KiranaRepository(request.app.state.engine)
     try:
         repo.change_password(user["user_id"], body.old_password, body.new_password)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
     return {"success": True}
 
 
@@ -388,8 +393,8 @@ async def cancel_subscription(request: Request, user: dict = Depends(_auth)):
         raise HTTPException(status_code=403, detail="Store owner login required")
     try:
         return _svc(request).cancel_subscription(int(sid))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cannot cancel subscription")
 
 
 @router.post("/subscription/upgrade")
@@ -399,8 +404,8 @@ async def upgrade_subscription(request: Request, body: SubscriptionUpgradeReques
         raise HTTPException(status_code=403, detail="Store owner login required")
     try:
         return _svc(request).upgrade_subscription(int(sid), body.tier)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cannot upgrade subscription")
 
 
 @router.post("/subscription/send-reminder")
@@ -448,18 +453,12 @@ async def approve_trial(store_id: int, request: Request, user: dict = Depends(_a
                 f"Your {tier_label} trial has been activated. You have {trial_days} days to explore {tier_label} features.",
                 data={"action": "open_subscription"},
             )
-            import logging as _log
-            _log.getLogger("kirana.routes").info(
-                "approve_trial: FCM to user_id=%s sent=%s", row["user_id"], sent
-            )
+            logger.info("approve_trial: FCM to user_id=%s sent=%s", row["user_id"], sent)
         else:
-            import logging as _log
-            _log.getLogger("kirana.routes").warning(
-                "approve_trial: no store_owner found for store_id=%s — FCM skipped", store_id
-            )
+            logger.warning("approve_trial: no store_owner found for store_id=%s — FCM skipped", store_id)
         return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cannot approve trial")
 
 
 @router.get("/admin/pending-trials")
@@ -824,8 +823,8 @@ async def admin_cancel_subscription(store_id: int, request: Request, user: dict 
         raise HTTPException(status_code=403, detail="Admin access required")
     try:
         result = _svc(request).cancel_subscription(store_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cannot cancel subscription")
 
     # Notify the user so the app refreshes and gates features immediately
     _svc(request).send_fcm_to_user(
@@ -978,9 +977,15 @@ async def create_payment_order(request: Request, body: PaymentOrderRequest, user
             "tier": body.tier,
         }
     try:
-        return {**_svc(request).create_razorpay_order(int(sid), body.tier), "mode": "live"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        import asyncio
+        loop = asyncio.get_event_loop()
+        order = await loop.run_in_executor(
+            None, lambda: _svc(request).create_razorpay_order(int(sid), body.tier)
+        )
+        return {**order, "mode": "live"}
+    except Exception:
+        logger.exception("Razorpay order creation failed for store %s tier %s", sid, body.tier)
+        raise HTTPException(status_code=400, detail="Failed to create payment order")
 
 
 @router.post("/payment/mock-confirm")
@@ -1004,8 +1009,8 @@ async def mock_confirm_payment(request: Request, body: PaymentOrderRequest, user
                 data={"action": "open_subscription"},
             )
         return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Payment confirmation failed")
 
 
 @router.post("/payment/verify-iap")
@@ -1110,8 +1115,8 @@ async def verify_payment(request: Request, body: PaymentVerifyRequest, user: dic
                 data={"action": "open_subscription"},
             )
         return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Payment verification failed")
 
 
 @router.get("/customers")
@@ -1215,8 +1220,8 @@ async def token_info(request: Request, token: str, user: dict = Depends(_auth)):
 async def process_referral(request: Request, body: ReferralScanRequest, user: dict = Depends(_auth)):
     try:
         return _svc(request).process_referral(body.token_hash, body.new_customer_phone, body.new_customer_name, body.order_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid referral token")
 
 @router.get("/referral/vouchers")
 async def get_vouchers(request: Request, customer_id: int, store_id: int, user: dict = Depends(_auth)):

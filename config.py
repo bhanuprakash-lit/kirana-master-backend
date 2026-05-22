@@ -35,6 +35,9 @@ class Settings:
     whatsapp_business_account_id: str
     whatsapp_verify_token: str
 
+    # ── Gemini AI (proxy — key stays on server, never in the app) ───────────
+    gemini_api_key: str
+
     # ── Mistral AI ───────────────────────────────────────────────────────────
     mistral_api_key: str
     mistral_model: str
@@ -89,6 +92,8 @@ def get_settings() -> Settings:
         whatsapp_phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID", ""),
         whatsapp_business_account_id=os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID", ""),
         whatsapp_verify_token=os.getenv("WHATSAPP_VERIFY_TOKEN", "kirana_verify_token"),
+
+        gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
 
         mistral_api_key=os.getenv("MISTRAL_API_KEY", ""),
         mistral_model=os.getenv("MISTRAL_MODEL", "mistral-small-latest"),

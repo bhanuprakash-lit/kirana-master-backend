@@ -1,5 +1,6 @@
 import './style.css';
 import { configure, isConfigured, api } from './api.js';
+import Chart from 'chart.js/auto';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -20,9 +21,20 @@ function el(tag, cls, inner) {
   return e;
 }
 
+const _IST = 'Asia/Kolkata';
+
 function formatDate(val) {
   if (!val) return '—';
-  return new Date(val).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Date(val).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: _IST });
+}
+
+function formatDateTime(val) {
+  if (!val) return '—';
+  return new Date(val).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+    timeZone: _IST,
+  }) + ' IST';
 }
 
 function tierBadge(tier) {
@@ -52,6 +64,15 @@ function statCard(label, value, color, icon) {
       </div>
       <p class="text-3xl font-black ${color}">${value}</p>
     </div>`;
+}
+
+// ── Chart lifecycle ───────────────────────────────────────────────────────────
+
+let _activeCharts = {};
+
+function destroyCharts() {
+  Object.values(_activeCharts).forEach(c => { try { c.destroy(); } catch (_) {} });
+  _activeCharts = {};
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
@@ -144,7 +165,10 @@ const NAV_ITEMS = [
   { id: 'stores',        icon: '🏪', label: 'Stores' },
   { id: 'pending',       icon: '⏳', label: 'Pending Trials' },
   { id: 'subscriptions', icon: '💳', label: 'Subscriptions' },
+  { id: 'support',       icon: '🎫', label: 'Support' },
+  { id: 'cashflow',      icon: '💰', label: 'Cashflow' },
   { id: 'notifications', icon: '🔔', label: 'Notifications' },
+  { id: 'whatsapp',      icon: '💬', label: 'WhatsApp' },
   { id: 'kpi-packages',  icon: '📈', label: 'KPI Config' },
   { id: 'user-activity', icon: '👁️', label: 'User Activity' },
 ];
@@ -204,6 +228,7 @@ function renderApp() {
 
   nav.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => {
+      destroyCharts();
       setActiveTab(btn.dataset.tab);
       renderApp();
     });
@@ -220,12 +245,15 @@ function renderApp() {
 
   // Route to tab
   const loaders = {
-    dashboard:     loadDashboard,
-    stores:        loadStores,
-    pending:       loadPendingTrials,
-    subscriptions: loadAllSubscriptions,
-    notifications: loadNotifications,
-    'kpi-packages': loadKpiPackages,
+    dashboard:       loadDashboard,
+    stores:          loadStores,
+    pending:         loadPendingTrials,
+    subscriptions:   loadAllSubscriptions,
+    support:         loadSupport,
+    cashflow:        loadCashflow,
+    notifications:   loadNotifications,
+    whatsapp:        loadWhatsApp,
+    'kpi-packages':  loadKpiPackages,
     'user-activity': loadUserActivity,
   };
   const loader = loaders[_activeTab] ?? loadDashboard;
@@ -242,9 +270,11 @@ async function loadDashboard() {
     const [stats, pending] = await Promise.all([api.stats(), api.pendingTrials()]);
     const pendingRows = (pending.pending ?? []).slice(0, 5);
 
+    const noneCount = Math.max(0, stats.total_stores - (stats.pending_trials||0) - (stats.active_trials||0) - (stats.basic_count||0) - (stats.pro_count||0));
+
     content.innerHTML = `
       <!-- Stat cards -->
-      <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+      <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         ${statCard('Total Stores',   stats.total_stores,   'text-slate-900', '🏪')}
         ${statCard('Store Owners',   stats.total_users,    'text-slate-900', '👤')}
         ${statCard('Pending Trials', stats.pending_trials, stats.pending_trials > 0 ? 'text-amber-600' : 'text-slate-900', '⏳')}
@@ -253,42 +283,69 @@ async function loadDashboard() {
         ${statCard('Pro Plan',       stats.pro_count,      'text-purple-600', '💎')}
       </div>
 
-      <!-- Pending trials preview -->
-      <div class="bg-white rounded-xl border border-slate-200">
-        <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-          <h3 class="font-bold text-slate-900">Pending Trial Requests</h3>
-          <button id="goto-pending" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">View all →</button>
+      <!-- Chart + pending preview row -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <!-- Subscription breakdown chart -->
+        <div class="bg-white rounded-xl border border-slate-200 p-5">
+          <h3 class="font-bold text-slate-900 text-sm mb-4">Subscription Breakdown</h3>
+          <div class="flex justify-center" style="height:200px">
+            <canvas id="sub-chart"></canvas>
+          </div>
         </div>
-        ${pendingRows.length === 0
-          ? '<div class="p-8 text-center text-slate-400 text-sm">No pending requests ✅</div>'
-          : `<table class="w-full text-sm">
-              <thead class="bg-slate-50 border-b border-slate-100">
-                <tr>
-                  <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Store</th>
-                  <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Plan</th>
-                  <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</th>
-                  <th class="px-5 py-3"></th>
-                </tr>
-              </thead>
-              <tbody>${pendingRows.map(r => {
-                const tierPill = (r.requested_tier || 'basic') === 'pro'
-                  ? '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800">Pro Trial</span>'
-                  : '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800">Basic Trial</span>';
-                return `<tr class="border-b border-slate-50 last:border-0">
-                  <td class="px-5 py-3 font-medium text-slate-900">${escHtml(r.store_name)} <span class="text-slate-400 text-xs">#${r.store_id}</span></td>
-                  <td class="px-5 py-3">${tierPill}</td>
-                  <td class="px-5 py-3 text-slate-400">${formatDate(r.started_at)}</td>
-                  <td class="px-5 py-3 text-right">
-                    <button data-store="${r.store_id}" data-name="${escHtml(r.store_name)}"
-                      class="quick-approve bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
-                      Approve
-                    </button>
-                  </td>
-                </tr>`;
-              }).join('')}</tbody>
-            </table>`
-        }
+
+        <!-- Pending trials preview (2/3 width) -->
+        <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200">
+          <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="font-bold text-slate-900">Pending Trial Requests</h3>
+            <button id="goto-pending" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">View all →</button>
+          </div>
+          ${pendingRows.length === 0
+            ? '<div class="p-8 text-center text-slate-400 text-sm">No pending requests ✅</div>'
+            : `<table class="w-full text-sm">
+                <thead class="bg-slate-50 border-b border-slate-100">
+                  <tr>
+                    <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Store</th>
+                    <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Plan</th>
+                    <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</th>
+                    <th class="px-5 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody>${pendingRows.map(r => {
+                  const tierPill = (r.requested_tier || 'basic') === 'pro'
+                    ? '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800">Pro Trial</span>'
+                    : '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800">Basic Trial</span>';
+                  return `<tr class="border-b border-slate-50 last:border-0">
+                    <td class="px-5 py-3 font-medium text-slate-900">${escHtml(r.store_name)} <span class="text-slate-400 text-xs">#${r.store_id}</span></td>
+                    <td class="px-5 py-3">${tierPill}</td>
+                    <td class="px-5 py-3 text-slate-400">${formatDate(r.started_at)}</td>
+                    <td class="px-5 py-3 text-right">
+                      <button data-store="${r.store_id}" data-name="${escHtml(r.store_name)}"
+                        class="quick-approve bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+                        Approve
+                      </button>
+                    </td>
+                  </tr>`;
+                }).join('')}</tbody>
+              </table>`
+          }
+        </div>
       </div>`;
+
+    // Subscription donut chart
+    const canvas = document.getElementById('sub-chart');
+    if (canvas) {
+      destroyCharts();
+      _activeCharts.sub = new Chart(canvas, {
+        type: 'doughnut',
+        data: {
+          labels: ['No Plan', 'Pending Trial', 'Trial', 'Basic', 'Pro'],
+          datasets: [{ data: [noneCount, stats.pending_trials||0, stats.active_trials||0, stats.basic_count||0, stats.pro_count||0],
+            backgroundColor: ['#e2e8f0','#fbbf24','#60a5fa','#6366f1','#a855f7'], borderWidth: 0 }],
+        },
+        options: { plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10 } } },
+          cutout: '62%', maintainAspectRatio: false },
+      });
+    }
 
     document.getElementById('goto-pending')?.addEventListener('click', () => {
       setActiveTab('pending'); renderApp();
@@ -481,24 +538,34 @@ async function loadPendingTrials() {
         <td class="px-4 py-3">${tierPill}</td>
         <td class="px-4 py-3 text-slate-400">${formatDate(row.started_at)}</td>
         <td class="px-4 py-3 text-right">
-          <button data-store="${row.store_id}" data-name="${escHtml(row.store_name)}"
-            class="approve-btn bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
-            Approve
-          </button>
+          <div class="flex items-center justify-end gap-2">
+            <button data-store="${row.store_id}" data-name="${escHtml(row.store_name)}" data-tier="basic"
+              class="approve-btn bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+              ✓ Basic
+            </button>
+            <button data-store="${row.store_id}" data-name="${escHtml(row.store_name)}" data-tier="pro"
+              class="approve-btn bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+              ✓ Pro
+            </button>
+          </div>
         </td>`;
       tbody.appendChild(tr);
     });
 
     tbody.querySelectorAll('.approve-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
-        btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+        const tier = btn.dataset.tier;
+        const row = btn.closest('tr');
+        row.querySelectorAll('.approve-btn').forEach(b => { b.disabled = true; });
+        btn.innerHTML = '<span class="spinner"></span>';
         try {
-          await api.approveTrial(btn.dataset.store);
-          toast(`Trial approved for ${btn.dataset.name}!`);
+          await api.approveTrial(btn.dataset.store, tier);
+          toast(`${tier === 'pro' ? 'Pro' : 'Basic'} trial approved for ${btn.dataset.name}!`);
           loadPendingTrials();
         } catch (err) {
           toast(`Failed: ${err.message}`, 'error');
-          btn.disabled = false; btn.textContent = 'Approve';
+          row.querySelectorAll('.approve-btn').forEach(b => { b.disabled = false; });
+          btn.textContent = tier === 'pro' ? '✓ Pro' : '✓ Basic';
         }
       });
     });
@@ -926,6 +993,415 @@ async function loadUserActivity() {
   } catch (err) {
     content.innerHTML = `<div class="bg-red-50 text-red-700 rounded-xl p-4 text-sm">Error: ${escHtml(err.message)}</div>`;
   }
+}
+
+// ── Support / Issue Reports ───────────────────────────────────────────────────
+
+async function loadSupport() {
+  const content = document.getElementById('tab-content');
+  content.innerHTML = '<div class="text-slate-400 text-sm">Loading…</div>';
+  try {
+    const data = await api.listIssues();
+    const rows = data.rows ?? data.data ?? data ?? [];
+
+    const statusColors = {
+      open:     'bg-red-100 text-red-700',
+      resolved: 'bg-emerald-100 text-emerald-700',
+      pending:  'bg-amber-100 text-amber-700',
+    };
+
+    content.innerHTML = `
+      <div class="mb-4 flex items-center gap-3">
+        <input id="support-search" type="text" placeholder="Search title or category…"
+          class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-72" />
+        <select id="support-filter"
+          class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="">All Status</option>
+          <option value="open">Open</option>
+          <option value="resolved">Resolved</option>
+        </select>
+        <span class="text-xs text-slate-400">${rows.length} issues total</span>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">#</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Store</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Category</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Title</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Created</th>
+              <th class="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody id="support-tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- Issue detail modal -->
+      <div id="issue-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+          <div class="flex items-start justify-between mb-4">
+            <h3 id="modal-title" class="font-bold text-slate-900 text-lg pr-4"></h3>
+            <button id="modal-close" class="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
+          </div>
+          <div id="modal-body" class="text-sm text-slate-700 space-y-3"></div>
+        </div>
+      </div>`;
+
+    document.getElementById('modal-close').addEventListener('click', () => {
+      document.getElementById('issue-modal').classList.add('hidden');
+    });
+
+    function renderSupportRows(q = '', statusFilter = '') {
+      const tbody = document.getElementById('support-tbody');
+      tbody.innerHTML = '';
+      const ql = q.toLowerCase();
+      const filtered = rows.filter(r => {
+        const matchQ = !ql || (r.title ?? '').toLowerCase().includes(ql) || (r.category ?? '').toLowerCase().includes(ql);
+        const matchS = !statusFilter || r.status === statusFilter;
+        return matchQ && matchS;
+      });
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400">No issues found.</td></tr>';
+        return;
+      }
+      filtered.forEach(r => {
+        const statusCls = statusColors[r.status] ?? 'bg-slate-100 text-slate-600';
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors';
+        tr.innerHTML = `
+          <td class="px-4 py-3 text-slate-400 text-xs">${r.report_id}</td>
+          <td class="px-4 py-3 text-slate-600 text-xs">#${r.store_id}</td>
+          <td class="px-4 py-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">${escHtml(r.category ?? '—')}</span>
+          </td>
+          <td class="px-4 py-3 font-medium text-slate-900 max-w-xs truncate">${escHtml(r.title ?? '—')}</td>
+          <td class="px-4 py-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${statusCls}">${r.status ?? 'open'}</span>
+          </td>
+          <td class="px-4 py-3 text-slate-400 text-xs">${formatDate(r.created_at)}</td>
+          <td class="px-4 py-3 text-right">
+            <div class="flex items-center justify-end gap-2">
+              <button data-id="${r.report_id}" data-title="${escHtml(r.title)}"
+                data-body="${escHtml(JSON.stringify({category: r.category, store_id: r.store_id, user_id: r.user_id, description: r.description, created_at: r.created_at}))}"
+                class="view-btn text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                View
+              </button>
+              ${r.status !== 'resolved' ? `
+              <button data-id="${r.report_id}"
+                class="resolve-btn text-xs px-2.5 py-1.5 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 transition-colors">
+                Resolve
+              </button>` : ''}
+            </div>
+          </td>`;
+        tbody.appendChild(tr);
+      });
+
+      tbody.querySelectorAll('.view-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const info = JSON.parse(btn.dataset.body || '{}');
+          document.getElementById('modal-title').textContent = btn.dataset.title;
+          document.getElementById('modal-body').innerHTML = `
+            <div class="grid grid-cols-2 gap-2 text-xs text-slate-500 mb-3">
+              <div>Store ID: <span class="font-semibold text-slate-700">#${info.store_id ?? '—'}</span></div>
+              <div>User ID: <span class="font-semibold text-slate-700">#${info.user_id ?? '—'}</span></div>
+              <div>Category: <span class="font-semibold text-slate-700">${escHtml(info.category ?? '—')}</span></div>
+              <div>Created: <span class="font-semibold text-slate-700">${formatDate(info.created_at)}</span></div>
+            </div>
+            <div class="bg-slate-50 rounded-lg p-4 text-slate-800 leading-relaxed whitespace-pre-wrap">${escHtml(info.description ?? 'No description.')}</div>`;
+          document.getElementById('issue-modal').classList.remove('hidden');
+        });
+      });
+
+      tbody.querySelectorAll('.resolve-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:10px;height:10px;border-width:2px"></span>';
+          try {
+            await api.updateIssue(parseInt(btn.dataset.id), { status: 'resolved' });
+            toast('Issue marked as resolved.');
+            loadSupport();
+          } catch (err) {
+            toast(`Failed: ${err.message}`, 'error');
+            btn.disabled = false; btn.textContent = 'Resolve';
+          }
+        });
+      });
+    }
+
+    renderSupportRows();
+    document.getElementById('support-search').addEventListener('input', e =>
+      renderSupportRows(e.target.value, document.getElementById('support-filter').value));
+    document.getElementById('support-filter').addEventListener('change', e =>
+      renderSupportRows(document.getElementById('support-search').value, e.target.value));
+
+  } catch (err) {
+    content.innerHTML = `<div class="bg-red-50 text-red-700 rounded-xl p-4 text-sm">Error: ${escHtml(err.message)}</div>`;
+  }
+}
+
+// ── Cashflow Requests ─────────────────────────────────────────────────────────
+
+async function loadCashflow() {
+  const content = document.getElementById('tab-content');
+  content.innerHTML = '<div class="text-slate-400 text-sm">Loading…</div>';
+  try {
+    const data = await api.listCashflow();
+    const rows = data.rows ?? data.data ?? data ?? [];
+
+    const statusColors = {
+      pending:  'bg-amber-100 text-amber-800',
+      approved: 'bg-emerald-100 text-emerald-700',
+      rejected: 'bg-red-100 text-red-700',
+    };
+
+    const totalAmount = rows.reduce((s, r) => s + parseFloat(r.amount_requested ?? 0), 0);
+
+    content.innerHTML = `
+      <div class="grid grid-cols-3 gap-4 mb-6">
+        ${statCard('Total Requests', rows.length, 'text-slate-900', '📋')}
+        ${statCard('Pending', rows.filter(r => r.status === 'pending').length, 'text-amber-600', '⏳')}
+        ${statCard('Total Amount', '₹' + totalAmount.toLocaleString('en-IN'), 'text-indigo-600', '💰')}
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-100">
+          <h3 class="font-bold text-slate-900">Cashflow Support Requests</h3>
+        </div>
+        ${rows.length === 0
+          ? '<div class="p-10 text-center text-slate-400">No cashflow requests yet.</div>'
+          : `<table class="w-full text-sm">
+              <thead class="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Store</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Amount</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Bank</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Footfall</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</th>
+                  <th class="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(r => {
+                  const statusCls = statusColors[r.status] ?? 'bg-slate-100 text-slate-600';
+                  return `<tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
+                    <td class="px-4 py-3">
+                      <div class="font-semibold text-slate-900">${escHtml(r.store_name ?? '—')}</div>
+                      <div class="text-xs text-slate-400">#${r.store_id} · ${escHtml(r.location ?? '—')}</div>
+                    </td>
+                    <td class="px-4 py-3 font-semibold text-slate-900">₹${parseFloat(r.amount_requested ?? 0).toLocaleString('en-IN')}</td>
+                    <td class="px-4 py-3 text-slate-600">${escHtml(r.selected_bank ?? '—')}</td>
+                    <td class="px-4 py-3 text-slate-600">${r.avg_footfall ?? '—'}/day</td>
+                    <td class="px-4 py-3">
+                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${statusCls}">${r.status ?? 'pending'}</span>
+                    </td>
+                    <td class="px-4 py-3 text-slate-400 text-xs">${formatDate(r.created_at)}</td>
+                    <td class="px-4 py-3 text-right">
+                      ${r.status === 'pending' ? `
+                      <div class="flex gap-1 justify-end">
+                        <button data-id="${r.request_id}" data-action="approved"
+                          class="cf-action-btn text-xs px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-colors">
+                          Approve
+                        </button>
+                        <button data-id="${r.request_id}" data-action="rejected"
+                          class="cf-action-btn text-xs px-2.5 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
+                          Reject
+                        </button>
+                      </div>` : ''}
+                    </td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>`
+        }
+      </div>`;
+
+    content.querySelectorAll('.cf-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const orig = btn.textContent;
+        btn.innerHTML = '<span class="spinner" style="width:10px;height:10px;border-width:2px"></span>';
+        try {
+          await api.updateIssue; // placeholder — use OLTP patch for cashflow_requests
+          await fetch(`${sessionStorage.getItem('kirana_url')}/oltp/cashflow_requests/record`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-API-Key': sessionStorage.getItem('kirana_key') },
+            body: JSON.stringify({ keys: { request_id: parseInt(btn.dataset.id) }, data: { status: btn.dataset.action } }),
+          });
+          toast(`Request ${btn.dataset.action}.`);
+          loadCashflow();
+        } catch (err) {
+          toast(`Failed: ${err.message}`, 'error');
+          btn.disabled = false; btn.textContent = orig;
+        }
+      });
+    });
+
+  } catch (err) {
+    content.innerHTML = `<div class="bg-red-50 text-red-700 rounded-xl p-4 text-sm">Error: ${escHtml(err.message)}</div>`;
+  }
+}
+
+// ── WhatsApp ──────────────────────────────────────────────────────────────────
+
+async function loadWhatsApp() {
+  const content = document.getElementById('tab-content');
+  content.innerHTML = '<div class="text-slate-400 text-sm">Loading…</div>';
+
+  let health = null;
+  try { health = await api.waHealth(); } catch (_) {}
+
+  const configured = health?.is_configured ?? health?.send_enabled ?? false;
+  const healthBanner = configured
+    ? '<div class="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium mb-6">✅ WhatsApp is connected and ready</div>'
+    : '<div class="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-medium mb-6">⚠️ WhatsApp not fully configured — check WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID in .env</div>';
+
+  content.innerHTML = `
+    ${healthBanner}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+      <!-- Send test message -->
+      <div class="bg-white rounded-xl border border-slate-200 p-6">
+        <h3 class="font-bold text-slate-900 mb-4">Send Test Message</h3>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Phone Number (with country code)</label>
+            <input id="wa-send-phone" type="tel" placeholder="919876543210"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Message</label>
+            <textarea id="wa-send-msg" rows="3" placeholder="Hello from Kirana Admin!"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"></textarea>
+          </div>
+          <button id="wa-send-btn"
+            class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg text-sm transition-colors">
+            Send Message
+          </button>
+          <div id="wa-send-result" class="hidden text-xs mt-1"></div>
+        </div>
+      </div>
+
+      <!-- Session lookup -->
+      <div class="bg-white rounded-xl border border-slate-200 p-6">
+        <h3 class="font-bold text-slate-900 mb-4">Session Lookup</h3>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Phone Number</label>
+            <input id="wa-lookup-phone" type="tel" placeholder="919876543210"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div class="flex gap-2">
+            <button id="wa-lookup-btn"
+              class="flex-1 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-semibold py-2 rounded-lg text-sm transition-colors">
+              Lookup
+            </button>
+            <button id="wa-reset-btn"
+              class="flex-1 border border-red-200 text-red-600 hover:bg-red-50 font-semibold py-2 rounded-lg text-sm transition-colors">
+              Reset Session
+            </button>
+          </div>
+          <pre id="wa-session-result" class="hidden bg-slate-50 rounded-lg p-3 text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap"></pre>
+        </div>
+      </div>
+
+      <!-- Link store -->
+      <div class="bg-white rounded-xl border border-slate-200 p-6">
+        <h3 class="font-bold text-slate-900 mb-4">Link Phone to Store</h3>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Phone Number</label>
+            <input id="wa-link-phone" type="tel" placeholder="919876543210"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Store ID</label>
+            <input id="wa-link-store" type="number" placeholder="Store #"
+              class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <button id="wa-link-btn"
+            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-sm transition-colors">
+            Link Store
+          </button>
+        </div>
+      </div>
+
+      <!-- Health details -->
+      <div class="bg-white rounded-xl border border-slate-200 p-6">
+        <h3 class="font-bold text-slate-900 mb-4">Service Status</h3>
+        <div class="space-y-2 text-sm">
+          ${health ? Object.entries(health).map(([k, v]) =>
+            `<div class="flex justify-between py-1.5 border-b border-slate-100 last:border-0">
+              <span class="text-slate-500">${escHtml(k)}</span>
+              <span class="font-medium ${v === true ? 'text-emerald-600' : v === false ? 'text-red-500' : 'text-slate-700'}">${escHtml(String(v ?? '—'))}</span>
+            </div>`
+          ).join('') : '<div class="text-slate-400">Health check failed.</div>'}
+        </div>
+      </div>
+    </div>`;
+
+  // Send message
+  document.getElementById('wa-send-btn').addEventListener('click', async () => {
+    const phone = document.getElementById('wa-send-phone').value.trim();
+    const msg   = document.getElementById('wa-send-msg').value.trim();
+    const res   = document.getElementById('wa-send-result');
+    if (!phone || !msg) { toast('Phone and message required.', 'error'); return; }
+    const btn = document.getElementById('wa-send-btn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Sending…';
+    try {
+      await api.waSend(phone, msg);
+      res.className = 'text-xs mt-1 text-emerald-600 font-medium';
+      res.textContent = '✓ Message sent successfully.';
+      res.classList.remove('hidden');
+      toast('WhatsApp message sent!');
+    } catch (err) {
+      res.className = 'text-xs mt-1 text-red-600';
+      res.textContent = `Error: ${err.message}`;
+      res.classList.remove('hidden');
+      toast(`Failed: ${err.message}`, 'error');
+    } finally { btn.disabled = false; btn.textContent = 'Send Message'; }
+  });
+
+  // Lookup
+  document.getElementById('wa-lookup-btn').addEventListener('click', async () => {
+    const phone = document.getElementById('wa-lookup-phone').value.trim();
+    if (!phone) { toast('Enter a phone number.', 'error'); return; }
+    const pre = document.getElementById('wa-session-result');
+    pre.textContent = 'Loading…'; pre.classList.remove('hidden');
+    try {
+      const data = await api.waSession(phone);
+      pre.textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+      pre.textContent = `Error: ${err.message}`;
+    }
+  });
+
+  // Reset
+  document.getElementById('wa-reset-btn').addEventListener('click', async () => {
+    const phone = document.getElementById('wa-lookup-phone').value.trim();
+    if (!phone) { toast('Enter a phone number first.', 'error'); return; }
+    if (!confirm(`Reset WhatsApp session for ${phone}?`)) return;
+    try {
+      await api.waResetSession(phone);
+      toast(`Session reset for ${phone}.`, 'info');
+      document.getElementById('wa-session-result').classList.add('hidden');
+    } catch (err) { toast(`Failed: ${err.message}`, 'error'); }
+  });
+
+  // Link store
+  document.getElementById('wa-link-btn').addEventListener('click', async () => {
+    const phone   = document.getElementById('wa-link-phone').value.trim();
+    const storeId = document.getElementById('wa-link-store').value.trim();
+    if (!phone || !storeId) { toast('Phone and Store ID required.', 'error'); return; }
+    const btn = document.getElementById('wa-link-btn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Linking…';
+    try {
+      await api.waLinkStore(phone, storeId);
+      toast(`Phone ${phone} linked to store #${storeId}!`);
+    } catch (err) { toast(`Failed: ${err.message}`, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Link Store'; }
+  });
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
