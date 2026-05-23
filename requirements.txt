@@ -33,3 +33,7 @@ requests>=2.32.0
 
 # Scheduling (intelligence engine)
 apscheduler>=3.10,<4.0
+
+# Testing (only needed for `pytest`; harmless in production)
+pytest>=8.0.0
+pytest-cov>=5.0.0

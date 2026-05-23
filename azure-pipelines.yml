@@ -1,0 +1,88 @@
+# Azure DevOps pipeline for kirana-master-backend
+# Mirrors the GitHub Actions workflow at .github/workflows/ci.yml.
+#
+# The pipeline starts a sidecar PostgreSQL container, installs the Python
+# deps, and runs the full pytest suite (unit + routes + DB-backed).
+
+trigger:
+  branches:
+    include:
+      - master
+      - main
+
+pr:
+  branches:
+    include:
+      - master
+      - main
+
+variables:
+  # Matches the kirana-ml conda env used in development.
+  pythonVersion: "3.11"
+  TEST_DATABASE_URL: "postgresql+psycopg2://postgres:postgres@localhost:5432/kirana_test"
+
+stages:
+  - stage: Test
+    displayName: Lint + Test
+    jobs:
+      - job: Test
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 20
+
+        # PostgreSQL service container — Azure DevOps' equivalent of GHA services.
+        # Available agents support sidecar Docker containers on Linux pools.
+        services:
+          postgres:
+            image: postgres:16
+            ports:
+              - 5432:5432
+            env:
+              POSTGRES_USER: postgres
+              POSTGRES_PASSWORD: postgres
+              POSTGRES_DB: kirana_test
+
+        steps:
+          - task: UsePythonVersion@0
+            displayName: Set up Python
+            inputs:
+              versionSpec: $(pythonVersion)
+              addToPath: true
+
+          - bash: |
+              set -euxo pipefail
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: Install dependencies
+
+          - bash: |
+              set -euxo pipefail
+              until pg_isready -h localhost -p 5432 -U postgres; do
+                echo "Postgres not ready, sleeping..."
+                sleep 1
+              done
+            displayName: Wait for Postgres
+
+          - bash: pytest --cov=. --cov-report=xml --cov-report=term --junitxml=junit.xml -ra
+            displayName: Run pytest
+
+          - task: PublishTestResults@2
+            displayName: Publish test results
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: junit.xml
+              failTaskOnFailedTests: true
+
+          - task: PublishCodeCoverageResults@2
+            displayName: Publish coverage
+            condition: always()
+            inputs:
+              summaryFileLocation: coverage.xml
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish coverage artifact
+            condition: always()
+            inputs:
+              targetPath: coverage.xml
+              artifact: coverage-xml
