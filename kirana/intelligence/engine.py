@@ -73,7 +73,11 @@ class IntelligenceEngine:
         # Nightly inventory snapshot (2am IST) — keeps ML predictions fresh
         s.add_job(self._run_snapshot_refresh, CronTrigger(hour=2, minute=0, timezone=_IST), id="snapshot_refresh", replace_existing=True)
 
-        # ML prediction refresh every 6 hours — reloads CSVs after any retraining
+        # Nightly ML retrain (3am IST) — runs train_all.py on latest DB data, then reloads CSVs
+        # Scheduled 1 hour after snapshot_refresh so fresh inventory is in DB first.
+        s.add_job(self._run_ml_retrain, CronTrigger(hour=3, minute=0, timezone=_IST), id="ml_retrain", replace_existing=True)
+
+        # ML prediction refresh every 6 hours — safety net reload of CSVs
         s.add_job(self._run_ml_refresh, IntervalTrigger(hours=6), id="ml_refresh", replace_existing=True)
 
         logger.info("Intelligence engine: %d jobs registered", len(s.get_jobs()))
@@ -263,6 +267,7 @@ class IntelligenceEngine:
                         SELECT
                             i.product_id                             AS sku_id,
                             i.quantity                               AS stock,
+                            i.quantity                               AS stock_on_hand,
                             COALESCE(s30.units_sold, 0)              AS units_sold,
                             COALESCE(s30.revenue, 0)                 AS revenue,
                             COALESCE(s30.profit, 0)                  AS profit,
@@ -299,6 +304,57 @@ class IntelligenceEngine:
         except Exception:
             logger.exception("Snapshot refresh failed")
 
+    # ── ML model retraining ───────────────────────────────────────────────────
+
+    async def _run_ml_retrain(self) -> None:
+        """
+        Retrain all ML models on the latest DB data, then reload CSVs into memory.
+
+        Runs ml_models/train_all.py as a subprocess using the same Python
+        interpreter as the server process (conda kirana-ml env).
+        Scheduled nightly at 3am IST — 1 hour after snapshot_refresh writes
+        the latest inventory data.
+        """
+        import asyncio
+        import sys
+        import os
+
+        train_script = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "ml_models", "train_all.py")
+        )
+
+        if not os.path.isfile(train_script):
+            logger.error("ML retrain: train_all.py not found at %s", train_script)
+            return
+
+        logger.info("ML retrain: starting %s", train_script)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, train_script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=os.path.dirname(train_script),
+            )
+            stdout, _ = await proc.communicate()
+
+            if stdout:
+                # Log last 4000 chars to avoid flooding logs with full training output
+                output = stdout.decode(errors="replace")
+                logger.info("ML retrain output (tail):\n%s", output[-4000:])
+
+            if proc.returncode != 0:
+                logger.error("ML retrain failed with exit code %d", proc.returncode)
+                return
+
+            logger.info("ML retrain completed — refreshing predictions in memory")
+            if self._kirana_svc is not None:
+                self._kirana_svc.ml.refresh()
+                rows = self._kirana_svc.ml.get_frame().shape[0]
+                logger.info("ML predictions refreshed: %d rows loaded", rows)
+
+        except Exception:
+            logger.exception("ML retrain failed unexpectedly")
+
     # ── ML prediction refresh ─────────────────────────────────────────────────
 
     async def _run_ml_refresh(self) -> None:
@@ -331,6 +387,7 @@ class IntelligenceEngine:
             "feature_discovery": self._run_feature_discovery,
             "abandoned_cart":    self._run_abandoned_cart,
             "snapshot_refresh":  self._run_snapshot_refresh,
+            "ml_retrain":        self._run_ml_retrain,
             "ml_refresh":        self._run_ml_refresh,
         }
         handler = handlers.get(trigger_name)

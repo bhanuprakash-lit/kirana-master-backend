@@ -823,28 +823,38 @@ class KiranaRepository:
     def upsert_inventory_snapshot(self, store_id: int, snapshot_date: str, items: list[dict]) -> int:
         sql = """
         INSERT INTO kirana_oltp.inventory_snapshots
-            (snapshot_date, store_id, product_id, units_sold, stock, revenue, profit, price, promo_flag)
+            (snapshot_date, store_id, product_id,
+             stock_on_hand, units_sold, stock, revenue, profit, price, promo_flag)
         VALUES
-            (:d, :sid, :skuid, :us, :st, :rev, :prof, :price, :pf)
+            (:d, :sid, :skuid,
+             :soh, :us, :st, :rev, :prof, :price, :pf)
         ON CONFLICT (snapshot_date, store_id, product_id)
         DO UPDATE SET
-            units_sold  = EXCLUDED.units_sold,
-            stock       = EXCLUDED.stock,
-            revenue     = EXCLUDED.revenue,
-            profit      = EXCLUDED.profit,
-            price       = EXCLUDED.price,
-            promo_flag  = EXCLUDED.promo_flag,
-            upserted_at = NOW()
+            stock_on_hand = EXCLUDED.stock_on_hand,
+            units_sold    = EXCLUDED.units_sold,
+            stock         = EXCLUDED.stock,
+            revenue       = EXCLUDED.revenue,
+            profit        = EXCLUDED.profit,
+            price         = EXCLUDED.price,
+            promo_flag    = EXCLUDED.promo_flag,
+            upserted_at   = NOW()
         """
         if not items:
             return 0
         params = [
             {
-                "d": snapshot_date, "sid": store_id,
-                "skuid": item.get("sku_id"),   "us": item.get("units_sold"),
-                "st": item.get("stock"),        "rev": item.get("revenue"),
-                "prof": item.get("profit"),     "price": item.get("price"),
-                "pf": item.get("promo_flag"),
+                "d":    snapshot_date,
+                "sid":  store_id,
+                "skuid": item.get("sku_id"),
+                # stock_on_hand is the authoritative live quantity — fall back to
+                # the "stock" key (used by the engine snapshot query) if absent.
+                "soh":  item.get("stock_on_hand", item.get("stock")),
+                "us":   item.get("units_sold"),
+                "st":   item.get("stock"),
+                "rev":  item.get("revenue"),
+                "prof": item.get("profit"),
+                "price": item.get("price"),
+                "pf":   item.get("promo_flag"),
             }
             for item in items
         ]
@@ -1414,10 +1424,14 @@ class KiranaRepository:
         SELECT
             k.khata_id,
             k.customer_id,
+            k.order_id,
             c.name AS customer_name,
             c.phone,
+            k.amount          AS original_amount,
+            k.amount_paid,
             (k.amount - k.amount_paid) AS balance,
             k.issue_date::text AS date_taken,
+            k.status,
             (CURRENT_DATE - k.issue_date) AS days_pending
         FROM kirana_oltp.khata k
         JOIN kirana_oltp.customer c ON k.customer_id = c.customer_id

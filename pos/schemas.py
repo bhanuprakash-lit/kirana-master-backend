@@ -69,6 +69,10 @@ class OrderCreate(BaseModel):
     customer_id: Optional[int] = None
     total_amount: Optional[float] = None
     payment_method: str = "cash"
+    # Split / partial-udhaar: cash collected now + amount put on credit.
+    # Only set when payment_method == "udhaar" and it's a partial split.
+    udhaar_amount: Optional[float] = None
+    cash_paid: Optional[float] = None
 
 
 class OrderItemOut(BaseModel):
@@ -92,6 +96,9 @@ class OrderOut(BaseModel):
     items: List[OrderItemOut] = []
     payment_method: Optional[str] = None
     customer_id: Optional[int] = None
+    # Split / partial-udhaar breakdown (null for pure cash or full-udhaar orders)
+    udhaar_amount: Optional[float] = None
+    cash_paid: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 
 

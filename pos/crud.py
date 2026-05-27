@@ -17,6 +17,15 @@ from pos.models import (
 from pos.schemas import OrderCreate, PaymentCreate
 
 
+# ── Store-level product table routing ────────────────────────────────────────
+# Stores listed here use product_catalog (barcoded + loose items only)
+# instead of the full product table.
+CATALOG_STORES: frozenset[int] = frozenset({27})
+
+def _product_tbl(store_id: int) -> str:
+    return "kirana_oltp.product_catalog" if store_id in CATALOG_STORES else "kirana_oltp.product"
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _current_price(db: Session, product_id: int, store_id: int) -> KiranaPricing | None:
@@ -103,6 +112,39 @@ def _enrich(db: Session, product: KiranaProduct, store_id: int) -> dict:
 
 
 def get_products(db: Session, store_id: int, skip: int = 0, limit: int = 100) -> list[dict]:
+    tbl = _product_tbl(store_id)
+    if store_id in CATALOG_STORES:
+        rows = db.execute(text(f"""
+            SELECT p.product_id, p.name, p.brand, p.unit,
+                   p.weight::float            AS weight,
+                   p.sku, p.barcode, p.is_perishable, p.is_loose, p.image_url, p.category_id,
+                   COALESCE(pr.price,    0.0)::float AS price,
+                   pr.mrp::float                     AS mrp,
+                   COALESCE(inv.quantity, 0)          AS stock_quantity,
+                   TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
+            FROM   {tbl} p
+            JOIN   kirana_oltp.inventory inv
+                       ON inv.product_id = p.product_id AND inv.store_id = :sid
+            LEFT   JOIN LATERAL (
+                       SELECT price, mrp
+                       FROM   kirana_oltp.pricing
+                       WHERE  product_id = p.product_id
+                         AND  store_id   = :sid
+                         AND  valid_from <= NOW()
+                       ORDER  BY valid_from DESC LIMIT 1
+                   ) pr ON TRUE
+            LEFT   JOIN kirana_oltp.inventory_batch ib
+                       ON ib.product_id = p.product_id
+                      AND ib.store_id   = :sid
+                      AND ib.qty_in_stock > 0
+            GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight,
+                      p.sku, p.barcode, p.is_perishable, p.is_loose,
+                      p.image_url, p.category_id, pr.price, pr.mrp, inv.quantity
+            ORDER  BY p.product_id
+            LIMIT  :limit OFFSET :skip
+        """), {"sid": store_id, "limit": limit, "skip": skip}).mappings().all()
+        return [dict(r) for r in rows]
+    # ── default: full product table (ORM path) ────────────────────────────────
     products = (
         db.query(KiranaProduct)
         .join(KiranaInventory, KiranaInventory.product_id == KiranaProduct.product_id)
@@ -116,6 +158,39 @@ def get_products(db: Session, store_id: int, skip: int = 0, limit: int = 100) ->
 
 
 def get_product(db: Session, product_id: int, store_id: int) -> dict | None:
+    tbl = _product_tbl(store_id)
+    if store_id in CATALOG_STORES:
+        row = db.execute(text(f"""
+            SELECT p.product_id, p.name, p.brand, p.unit,
+                   p.weight::float            AS weight,
+                   p.sku, p.barcode, p.is_perishable, p.is_loose, p.image_url, p.category_id,
+                   COALESCE(pr.price,    0.0)::float AS price,
+                   pr.mrp::float                     AS mrp,
+                   COALESCE(inv.quantity, 0)          AS stock_quantity,
+                   TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
+            FROM   {tbl} p
+            JOIN   kirana_oltp.inventory inv
+                       ON inv.product_id = p.product_id AND inv.store_id = :sid
+            LEFT   JOIN LATERAL (
+                       SELECT price, mrp
+                       FROM   kirana_oltp.pricing
+                       WHERE  product_id = p.product_id
+                         AND  store_id   = :sid
+                         AND  valid_from <= NOW()
+                       ORDER  BY valid_from DESC LIMIT 1
+                   ) pr ON TRUE
+            LEFT   JOIN kirana_oltp.inventory_batch ib
+                       ON ib.product_id = p.product_id
+                      AND ib.store_id   = :sid
+                      AND ib.qty_in_stock > 0
+            WHERE  p.product_id = :pid
+            GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight,
+                      p.sku, p.barcode, p.is_perishable, p.is_loose,
+                      p.image_url, p.category_id, pr.price, pr.mrp, inv.quantity
+            LIMIT  1
+        """), {"sid": store_id, "pid": product_id}).mappings().first()
+        return dict(row) if row else None
+    # ── default: full product table (ORM path) ────────────────────────────────
     p = (
         db.query(KiranaProduct)
         .join(KiranaInventory, KiranaInventory.product_id == KiranaProduct.product_id)
@@ -129,7 +204,8 @@ def get_product(db: Session, product_id: int, store_id: int) -> dict | None:
 
 
 def get_product_by_barcode(db: Session, barcode: str, store_id: int) -> dict | None:
-    sql = """
+    tbl = _product_tbl(store_id)
+    sql = f"""
         SELECT
             p.product_id, p.name, p.brand, p.unit,
             p.weight::float            AS weight,
@@ -138,27 +214,27 @@ def get_product_by_barcode(db: Session, barcode: str, store_id: int) -> dict | N
             pr.mrp::float                   AS mrp,
             COALESCE(inv.quantity, 0)        AS stock_quantity,
             TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
-        FROM kirana_oltp.product p
-        JOIN kirana_oltp.inventory inv
-            ON inv.product_id = p.product_id AND inv.store_id = :sid
-        LEFT JOIN LATERAL (
-            SELECT price, mrp
-            FROM kirana_oltp.pricing
-            WHERE product_id = p.product_id
-              AND store_id   = :sid
-              AND valid_from <= NOW()
-            ORDER BY valid_from DESC
-            LIMIT 1
-        ) pr ON TRUE
-        LEFT JOIN kirana_oltp.inventory_batch ib
-            ON ib.product_id = p.product_id
-           AND ib.store_id   = :sid
-           AND ib.qty_in_stock > 0
-        WHERE p.barcode = :barcode
-        GROUP BY p.product_id, p.name, p.brand, p.unit, p.weight, p.sku,
-                 p.barcode, p.is_perishable, p.is_loose, p.category_id,
-                 pr.price, pr.mrp, inv.quantity
-        LIMIT 1
+        FROM   {tbl} p
+        JOIN   kirana_oltp.inventory inv
+                   ON inv.product_id = p.product_id AND inv.store_id = :sid
+        LEFT   JOIN LATERAL (
+                   SELECT price, mrp
+                   FROM   kirana_oltp.pricing
+                   WHERE  product_id = p.product_id
+                     AND  store_id   = :sid
+                     AND  valid_from <= NOW()
+                   ORDER  BY valid_from DESC
+                   LIMIT  1
+               ) pr ON TRUE
+        LEFT   JOIN kirana_oltp.inventory_batch ib
+                   ON ib.product_id = p.product_id
+                  AND ib.store_id   = :sid
+                  AND ib.qty_in_stock > 0
+        WHERE  p.barcode = :barcode
+        GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight, p.sku,
+                  p.barcode, p.is_perishable, p.is_loose, p.category_id,
+                  pr.price, pr.mrp, inv.quantity
+        LIMIT  1
     """
     row = db.execute(text(sql), {"barcode": barcode, "sid": store_id}).mappings().first()
     return dict(row) if row else None
@@ -174,6 +250,8 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
         order_status="completed",
         order_date=datetime.utcnow(),
         total_amount=0,
+        udhaar_amount=order.udhaar_amount,
+        cash_paid=order.cash_paid,
     )
     db.add(db_order)
     db.flush()
@@ -226,6 +304,28 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
         status="paid",
         created_at=datetime.utcnow(),
     ))
+
+    # ── Auto-create khata (udhaar ledger) entry ────────────────────────────────
+    # For udhaar orders that have a customer, create a khata row so the Finance
+    # Udhaar tab reflects the credit immediately — no manual entry needed.
+    # Split orders: credit = udhaar_amount (what went on credit, not the cash part).
+    # Full udhaar:  credit = final_total.
+    if order.payment_method.lower() == 'udhaar' and db_order.customer_id is not None:
+        credit_amount = float(order.udhaar_amount) if order.udhaar_amount else final_total
+        db.execute(text("""
+            INSERT INTO kirana_oltp.khata
+                (customer_id, store_id, order_id, amount, amount_paid,
+                 issue_date, due_date, status)
+            VALUES
+                (:cid, :sid, :oid, :amt, 0,
+                 CURRENT_DATE, CURRENT_DATE + INTERVAL '30 days', 'pending')
+        """), {
+            "cid": db_order.customer_id,
+            "sid": store_id,
+            "oid": db_order.order_id,
+            "amt": credit_amount,
+        })
+
     db.commit()
     return get_order(db, db_order.order_id)
 

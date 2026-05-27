@@ -88,8 +88,8 @@ async def phone_login(request: Request, body: PhoneLoginRequest):
     try:
         return _svc(request).phone_login(body)
     except ValueError:
-        logger.warning("Phone login failed for phone: %s", body.phone[:4] + "****")
-        raise HTTPException(status_code=401, detail="No account found for this phone number")
+        logger.warning("Phone login: no account for %s", body.phone_number[:4] + "****")
+        raise HTTPException(status_code=404, detail="No account found for this phone number")
 
 
 @router.get("/auth/check-username/{username}")
@@ -130,15 +130,36 @@ async def catalog_search(
     else:
         return {"products": []}
 
+    # Pull the most-recent active pricing row for the caller's store so the
+    # Flutter "Add Product" sheet can pre-fill price + MRP. Falls back to NULL
+    # when this store has no pricing row (truly first-time use).
+    store_id = user.get("store_id") or 0
+    params["store_id"] = store_id
+
+    # Store 27 operates on the curated product_catalog (barcoded + loose only)
+    from pos.crud import CATALOG_STORES as _CATALOG_STORES
+    product_tbl = "kirana_oltp.product_catalog" if store_id in _CATALOG_STORES else "kirana_oltp.product"
+
     sql = f"""
     SELECT p.product_id, p.name, p.brand, p.unit, p.weight,
            p.barcode, p.is_perishable, p.is_loose, p.image_url, p.sku,
            p.category_id,
            c.name AS category_name,
-           pc.name AS parent_category_name
-    FROM kirana_oltp.product p
+           pc.name AS parent_category_name,
+           lp.price AS price,
+           lp.mrp   AS mrp
+    FROM {product_tbl} p
     JOIN kirana_oltp.category c ON p.category_id = c.category_id
     LEFT JOIN kirana_oltp.category pc ON c.parent_category_id = pc.category_id
+    LEFT JOIN LATERAL (
+        SELECT pr.price, pr.mrp
+        FROM kirana_oltp.pricing pr
+        WHERE pr.product_id = p.product_id
+          AND pr.store_id   = :store_id
+          AND pr.valid_from <= NOW()
+        ORDER BY pr.valid_from DESC
+        LIMIT 1
+    ) lp ON TRUE
     WHERE {where}
     ORDER BY p.name
     LIMIT :limit OFFSET :offset
@@ -734,6 +755,149 @@ async def admin_user_activity(request: Request, user: dict = Depends(_auth)):
             ORDER BY last_seen DESC NULLS LAST
         """)).mappings().all()
     return {"users": [dict(r) for r in rows]}
+
+
+# ── Admin — Product Inventory Management ──────────────────────────────────────
+
+@router.get("/admin/categories")
+async def admin_list_categories(request: Request, user: dict = Depends(_auth)):
+    """All product categories — used by the admin inventory editor."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from sqlalchemy import text as _text
+    with request.app.state.engine.connect() as conn:
+        rows = conn.execute(_text("""
+            SELECT category_id, name, parent_category_id
+            FROM   kirana_oltp.category
+            ORDER  BY name
+        """)).mappings().all()
+    return {"categories": [dict(r) for r in rows]}
+
+
+@router.get("/admin/products")
+async def admin_list_products(
+    request: Request,
+    q: str = "",
+    category_id: int = 0,
+    has_barcode: str = "",   # "yes" | "no" | ""
+    is_loose: str = "",      # "yes" | "no" | ""
+    limit: int = 50,
+    offset: int = 0,
+    user: dict = Depends(_auth),
+):
+    """Paginated product list with search + filters. Admin only."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from sqlalchemy import text as _text
+
+    limit = min(max(limit, 1), 100)
+    conditions: list[str] = []
+    base_params: dict = {}
+
+    if q.strip():
+        conditions.append(
+            "(p.name ILIKE :q OR p.brand ILIKE :q OR p.barcode ILIKE :q OR p.sku ILIKE :q)"
+        )
+        base_params["q"] = f"%{q.strip()}%"
+    if category_id:
+        conditions.append("p.category_id = :cat_id")
+        base_params["cat_id"] = category_id
+    if has_barcode == "yes":
+        conditions.append("p.barcode IS NOT NULL AND p.barcode <> ''")
+    elif has_barcode == "no":
+        conditions.append("(p.barcode IS NULL OR p.barcode = '')")
+    if is_loose == "yes":
+        conditions.append("p.is_loose = TRUE")
+    elif is_loose == "no":
+        conditions.append("(p.is_loose = FALSE OR p.is_loose IS NULL)")
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    with request.app.state.engine.connect() as conn:
+        total = conn.execute(
+            _text(f"SELECT COUNT(*) FROM kirana_oltp.product p {where}"),
+            base_params,
+        ).scalar()
+        rows = conn.execute(_text(f"""
+            SELECT p.product_id, p.name, p.brand, p.unit, p.weight,
+                   p.barcode, p.sku, p.image_url,
+                   p.is_loose, p.is_perishable, p.is_private_label,
+                   p.category_id, p.created_at,
+                   c.name AS category_name
+            FROM   kirana_oltp.product p
+            LEFT   JOIN kirana_oltp.category c ON p.category_id = c.category_id
+            {where}
+            ORDER  BY p.name
+            LIMIT  :limit OFFSET :offset
+        """), {**base_params, "limit": limit, "offset": offset}).mappings().all()
+
+    return {
+        "products": [dict(r) for r in rows],
+        "total":    total,
+        "limit":    limit,
+        "offset":   offset,
+    }
+
+
+@router.patch("/admin/products/{product_id}")
+async def admin_update_product(
+    product_id: int,
+    request: Request,
+    user: dict = Depends(_auth),
+):
+    """Update editable fields of a product. Admin only."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    body = await request.json()
+
+    ALLOWED = {
+        "name", "brand", "unit", "weight", "barcode", "sku",
+        "image_url", "is_loose", "is_perishable", "is_private_label", "category_id",
+    }
+    updates = {k: v for k, v in body.items() if k in ALLOWED}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    if "name" in updates and not str(updates.get("name") or "").strip():
+        raise HTTPException(status_code=400, detail="Product name cannot be empty")
+
+    # Normalise empty strings → NULL for nullable fields
+    for field in ("barcode", "sku", "brand", "unit", "image_url"):
+        if field in updates and updates[field] == "":
+            updates[field] = None
+
+    from sqlalchemy import text as _text
+    from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+    set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+    updates["_pid"] = product_id
+
+    try:
+        with request.app.state.engine.connect() as conn:
+            result = conn.execute(
+                _text(f"UPDATE kirana_oltp.product SET {set_clause} WHERE product_id = :_pid"),
+                updates,
+            )
+            if result.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Product not found")
+            conn.commit()
+    except HTTPException:
+        raise
+    except _IntegrityError as exc:
+        msg = str(exc.orig)
+        if "product_barcode_key" in msg:
+            raise HTTPException(status_code=409, detail="This barcode is already used by another product")
+        if "product_sku_key" in msg:
+            raise HTTPException(status_code=409, detail="This SKU is already assigned to another product")
+        if "product_category_id_fkey" in msg:
+            raise HTTPException(status_code=400, detail="Invalid category ID")
+        logger.warning("Product update constraint violation for product_id=%s: %s", product_id, exc)
+        raise HTTPException(status_code=409, detail="Database constraint violation")
+    except Exception:
+        logger.exception("Failed to update product %s", product_id)
+        raise HTTPException(status_code=500, detail="Failed to update product")
+
+    return {"success": True, "product_id": product_id}
 
 
 # ── Baskets ───────────────────────────────────────────────────────────────────

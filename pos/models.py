@@ -91,13 +91,17 @@ class KiranaOrder(POSBase):
     __tablename__ = "orders"
     __table_args__ = {"schema": "kirana_oltp"}
 
-    order_id     = Column(BigInteger, primary_key=True)
-    store_id     = Column(BigInteger)
-    user_id      = Column(BigInteger)
-    customer_id  = Column(BigInteger)
-    order_status = Column(String, default="completed")
-    order_date   = Column(DateTime, default=datetime.utcnow)
-    total_amount = Column(Numeric, default=0)
+    order_id      = Column(BigInteger, primary_key=True)
+    store_id      = Column(BigInteger)
+    user_id       = Column(BigInteger)
+    customer_id   = Column(BigInteger)
+    order_status  = Column(String, default="completed")
+    order_date    = Column(DateTime, default=datetime.utcnow)
+    total_amount  = Column(Numeric, default=0)
+    # Split / partial-udhaar support: how much was credited vs paid in cash.
+    # Both are NULL for pure-cash or full-udhaar orders.
+    udhaar_amount = Column(Numeric, nullable=True)
+    cash_paid     = Column(Numeric, nullable=True)
 
     items   = relationship("KiranaOrderItem", back_populates="order")
     payment = relationship("KiranaPayment",   back_populates="order", uselist=False)

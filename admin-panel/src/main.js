@@ -171,6 +171,7 @@ const NAV_ITEMS = [
   { id: 'whatsapp',      icon: '💬', label: 'WhatsApp' },
   { id: 'kpi-packages',  icon: '📈', label: 'KPI Config' },
   { id: 'user-activity', icon: '👁️', label: 'User Activity' },
+  { id: 'inventory',     icon: '📦', label: 'Inventory' },
 ];
 
 function renderApp() {
@@ -255,6 +256,7 @@ function renderApp() {
     whatsapp:        loadWhatsApp,
     'kpi-packages':  loadKpiPackages,
     'user-activity': loadUserActivity,
+    'inventory':     loadInventory,
   };
   const loader = loaders[_activeTab] ?? loadDashboard;
   document.getElementById('refresh-btn').addEventListener('click', loader);
@@ -1402,6 +1404,455 @@ async function loadWhatsApp() {
     } catch (err) { toast(`Failed: ${err.message}`, 'error'); }
     finally { btn.disabled = false; btn.textContent = 'Link Store'; }
   });
+}
+
+// ── Inventory ─────────────────────────────────────────────────────────────────
+
+let _inventoryState = {
+  q: '', category_id: 0, has_barcode: '', is_loose: '',
+  offset: 0, limit: 50, total: 0, categories: [],
+};
+let _productCache = new Map(); // product_id → product data
+
+async function loadInventory() {
+  const content = document.getElementById('tab-content');
+
+  // Load categories once per session
+  if (_inventoryState.categories.length === 0) {
+    content.innerHTML = '<div class="text-slate-400 text-sm p-4">Loading categories…</div>';
+    try {
+      const catData = await api.posCategories();
+      _inventoryState.categories = (catData.categories ?? [])
+        .sort((a, b) => a.name.localeCompare(b.name));
+    } catch (_) {}
+  }
+
+  const catOptions = _inventoryState.categories.map(c =>
+    `<option value="${c.category_id}" ${_inventoryState.category_id == c.category_id ? 'selected' : ''}>${escHtml(c.name)}</option>`
+  ).join('');
+
+  content.innerHTML = `
+    <!-- Filter bar -->
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+      <div class="relative flex-1 min-w-[220px]">
+        <span class="absolute left-3 top-2.5 text-slate-400 text-sm pointer-events-none">🔍</span>
+        <input id="inv-q" type="text" value="${escHtml(_inventoryState.q)}"
+          placeholder="Search name, brand, barcode or SKU…"
+          class="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+      <select id="inv-cat" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <option value="">All Categories</option>
+        ${catOptions}
+      </select>
+      <select id="inv-barcode" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <option value="">Barcode: All</option>
+        <option value="yes" ${_inventoryState.has_barcode === 'yes' ? 'selected' : ''}>Has Barcode</option>
+        <option value="no"  ${_inventoryState.has_barcode === 'no'  ? 'selected' : ''}>No Barcode</option>
+      </select>
+      <select id="inv-loose" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <option value="">Loose: All</option>
+        <option value="yes" ${_inventoryState.is_loose === 'yes' ? 'selected' : ''}>Loose Items Only</option>
+        <option value="no"  ${_inventoryState.is_loose === 'no'  ? 'selected' : ''}>Packaged Only</option>
+      </select>
+      <span id="inv-count" class="text-xs text-slate-400 whitespace-nowrap ml-auto"></span>
+    </div>
+
+    <!-- Table + pagination -->
+    <div id="inv-table-wrap"></div>
+    <div id="inv-pagination" class="mt-4"></div>
+
+    <!-- Edit modal -->
+    <div id="inv-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col" style="max-height:90vh">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
+          <h3 id="inv-modal-title" class="font-bold text-slate-900 text-base leading-snug pr-4 truncate"></h3>
+          <button id="inv-modal-close" class="text-slate-400 hover:text-slate-600 text-xl p-1 leading-none flex-shrink-0">✕</button>
+        </div>
+        <div id="inv-modal-body" class="p-6 overflow-y-auto flex-1"></div>
+      </div>
+    </div>`;
+
+  // ── Filter listeners (search debounced, dropdowns instant) ────────────────
+  let _searchTimer;
+  document.getElementById('inv-q').addEventListener('input', e => {
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => {
+      _inventoryState.q = e.target.value.trim();
+      _inventoryState.offset = 0;
+      fetchInventoryPage();
+    }, 350);
+  });
+  document.getElementById('inv-cat').addEventListener('change', e => {
+    _inventoryState.category_id = parseInt(e.target.value) || 0;
+    _inventoryState.offset = 0; fetchInventoryPage();
+  });
+  document.getElementById('inv-barcode').addEventListener('change', e => {
+    _inventoryState.has_barcode = e.target.value;
+    _inventoryState.offset = 0; fetchInventoryPage();
+  });
+  document.getElementById('inv-loose').addEventListener('change', e => {
+    _inventoryState.is_loose = e.target.value;
+    _inventoryState.offset = 0; fetchInventoryPage();
+  });
+
+  // ── Modal close ───────────────────────────────────────────────────────────
+  document.getElementById('inv-modal-close').addEventListener('click', () => {
+    document.getElementById('inv-modal').classList.add('hidden');
+  });
+  document.getElementById('inv-modal').addEventListener('click', e => {
+    if (e.target.id === 'inv-modal') document.getElementById('inv-modal').classList.add('hidden');
+  });
+
+  fetchInventoryPage();
+}
+
+async function fetchInventoryPage() {
+  const wrap  = document.getElementById('inv-table-wrap');
+  const pages = document.getElementById('inv-pagination');
+  const count = document.getElementById('inv-count');
+  if (!wrap) return;
+
+  wrap.innerHTML = '<div class="py-10 text-center text-slate-400 text-sm">Loading products…</div>';
+  if (pages) pages.innerHTML = '';
+
+  const s = _inventoryState;
+  try {
+    const data = await api.adminProducts({
+      q: s.q, category_id: s.category_id || 0,
+      has_barcode: s.has_barcode, is_loose: s.is_loose,
+      limit: s.limit, offset: s.offset,
+    });
+    const products = data.products ?? [];
+    const total    = data.total    ?? 0;
+    _inventoryState.total = total;
+    if (count) count.textContent = `${total.toLocaleString()} products`;
+
+    // Cache for edit modal
+    products.forEach(p => _productCache.set(p.product_id, p));
+
+    wrap.innerHTML = `
+      <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">ID</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Name / SKU</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Brand</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Category</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Barcode</th>
+              <th class="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Flags</th>
+              <th class="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Img</th>
+              <th class="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${products.length === 0
+              ? '<tr><td colspan="8" class="px-4 py-14 text-center text-slate-400 text-sm">No products match your filters.</td></tr>'
+              : products.map(p => renderProductRow(p)).join('')
+            }
+          </tbody>
+        </table>
+      </div>`;
+
+    // Pagination
+    if (pages && total > s.limit) {
+      const totalPages = Math.ceil(total / s.limit);
+      const curPage    = Math.floor(s.offset / s.limit) + 1;
+      pages.innerHTML = `
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-slate-400">
+            Showing ${(s.offset + 1).toLocaleString()}–${Math.min(s.offset + s.limit, total).toLocaleString()} of ${total.toLocaleString()}
+          </span>
+          <div class="flex items-center gap-1.5">
+            <button id="inv-prev" ${curPage <= 1 ? 'disabled' : ''}
+              class="px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              ← Prev
+            </button>
+            <span class="px-2 py-1 text-sm text-slate-600 font-medium">Page ${curPage} / ${totalPages}</span>
+            <button id="inv-next" ${curPage >= totalPages ? 'disabled' : ''}
+              class="px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              Next →
+            </button>
+          </div>
+        </div>`;
+      document.getElementById('inv-prev')?.addEventListener('click', () => {
+        _inventoryState.offset = Math.max(0, s.offset - s.limit);
+        fetchInventoryPage();
+      });
+      document.getElementById('inv-next')?.addEventListener('click', () => {
+        if (s.offset + s.limit < total) { _inventoryState.offset += s.limit; fetchInventoryPage(); }
+      });
+    }
+
+    // Edit button handlers
+    wrap.querySelectorAll('.inv-edit-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const p = _productCache.get(parseInt(btn.dataset.pid));
+        if (p) openProductEditModal(p);
+      });
+    });
+
+  } catch (err) {
+    wrap.innerHTML = `<div class="bg-red-50 text-red-700 rounded-xl p-4 text-sm">Error loading products: ${escHtml(err.message)}</div>`;
+  }
+}
+
+function renderProductRow(p) {
+  const flags = [
+    p.is_loose         ? '<span class="px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">Loose</span>' : '',
+    p.is_perishable    ? '<span class="px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-600">Peri.</span>' : '',
+    p.is_private_label ? '<span class="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">PL</span>' : '',
+  ].filter(Boolean).join(' ');
+
+  return `
+    <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
+      <td class="px-4 py-3 text-xs text-slate-400 font-mono">#${p.product_id}</td>
+      <td class="px-4 py-3">
+        <div class="font-medium text-slate-900 max-w-[200px] truncate" title="${escHtml(p.name)}">${escHtml(p.name)}</div>
+        ${p.sku ? `<div class="text-xs text-slate-400 font-mono">${escHtml(p.sku)}</div>` : ''}
+      </td>
+      <td class="px-4 py-3 text-xs text-slate-500">${escHtml(p.brand ?? '—')}</td>
+      <td class="px-4 py-3 text-xs text-slate-500 max-w-[120px] truncate">${escHtml(p.category_name ?? '—')}</td>
+      <td class="px-4 py-3">
+        ${p.barcode
+          ? `<span class="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded">${escHtml(p.barcode)}</span>`
+          : '<span class="text-slate-300 text-xs">—</span>'}
+      </td>
+      <td class="px-4 py-3 text-center">${flags || '<span class="text-slate-300 text-xs">—</span>'}</td>
+      <td class="px-4 py-2 text-center">
+        ${p.image_url
+          ? `<img src="${escHtml(p.image_url)}" alt="${escHtml(p.name)}"
+               onerror="this.style.display='none';this.nextElementSibling.style.display='inline'"
+               class="h-10 w-10 object-contain rounded border border-slate-200 bg-slate-50 inline-block" />
+             <span style="display:none" class="text-xs text-slate-300">✕</span>`
+          : '<span class="text-slate-300 text-xs">—</span>'}
+      </td>
+      <td class="px-4 py-3 text-right">
+        <button class="inv-edit-btn text-xs font-semibold px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition-colors"
+          data-pid="${p.product_id}">
+          ✏️ Edit
+        </button>
+      </td>
+    </tr>`;
+}
+
+function openProductEditModal(p) {
+  const modal = document.getElementById('inv-modal');
+  if (!modal) return;
+  document.getElementById('inv-modal-title').textContent = `#${p.product_id} — ${p.name}`;
+
+  const catOptions = _inventoryState.categories.map(c =>
+    `<option value="${c.category_id}" ${p.category_id == c.category_id ? 'selected' : ''}>${escHtml(c.name)}</option>`
+  ).join('');
+
+  document.getElementById('inv-modal-body').innerHTML = `
+    <div class="grid grid-cols-2 gap-4">
+
+      <!-- name -->
+      <div class="col-span-2">
+        <label class="block text-xs font-semibold text-slate-600 mb-1">
+          Product Name <span class="text-red-500">*</span>
+          <span class="font-normal text-slate-400 ml-1">(column: name)</span>
+        </label>
+        <input id="ef-name" type="text" value="${escHtml(p.name ?? '')}" maxlength="200"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+
+      <!-- brand -->
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">
+          Brand / Manufacturer
+          <span class="font-normal text-slate-400 ml-1">(brand)</span>
+        </label>
+        <input id="ef-brand" type="text" value="${escHtml(p.brand ?? '')}" maxlength="100"
+          placeholder="e.g. Amul, Parle, Tata…"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+
+      <!-- category_id -->
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">
+          Category
+          <span class="font-normal text-slate-400 ml-1">(category_id)</span>
+        </label>
+        <select id="ef-category"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          ${catOptions}
+        </select>
+      </div>
+
+      <!-- unit -->
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">
+          Unit of Measure
+          <span class="font-normal text-slate-400 ml-1">(unit)</span>
+        </label>
+        <input id="ef-unit" type="text" value="${escHtml(p.unit ?? '')}" maxlength="20"
+          placeholder="kg / g / L / ml / pcs / dozen…"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <p class="text-xs text-slate-400 mt-1">What the product is counted/sold in.</p>
+      </div>
+
+      <!-- weight -->
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">
+          Net Weight / Volume (numeric)
+          <span class="font-normal text-slate-400 ml-1">(weight)</span>
+        </label>
+        <input id="ef-weight" type="number" value="${p.weight ?? ''}" step="0.01" min="0.01"
+          placeholder="e.g. 500"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <p class="text-xs text-slate-400 mt-1">Number only — unit column says what it is (g, ml, etc.).</p>
+      </div>
+
+      <!-- barcode -->
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">
+          Barcode — EAN / UPC / QR
+          <span class="font-normal text-slate-400 ml-1">(barcode · unique)</span>
+        </label>
+        <input id="ef-barcode" type="text" value="${escHtml(p.barcode ?? '')}" maxlength="100"
+          placeholder="Leave blank to remove barcode"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+
+      <!-- sku -->
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">
+          Internal SKU Code
+          <span class="font-normal text-slate-400 ml-1">(sku · unique)</span>
+        </label>
+        <input id="ef-sku" type="text" value="${escHtml(p.sku ?? '')}" maxlength="100"
+          placeholder="Leave blank to remove SKU"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+
+      <!-- image_url -->
+      <div class="col-span-2">
+        <label class="block text-xs font-semibold text-slate-600 mb-1">
+          Product Image URL
+          <span class="font-normal text-slate-400 ml-1">(image_url)</span>
+        </label>
+        <div class="flex gap-2">
+          <input id="ef-image" type="url" value="${escHtml(p.image_url ?? '')}" maxlength="500"
+            placeholder="https://cdn.example.com/product.jpg"
+            class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <button id="ef-preview-btn" type="button"
+            class="px-3 py-2 text-xs font-medium border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+            Preview
+          </button>
+        </div>
+        <div id="ef-img-preview" class="${p.image_url ? '' : 'hidden'} mt-2 flex items-center gap-3">
+          <img id="ef-img-tag" src="${escHtml(p.image_url ?? '')}" alt="Preview"
+            onerror="this.style.opacity='0.25'"
+            class="h-20 w-20 object-contain rounded-lg border border-slate-200 bg-slate-50 p-1 flex-shrink-0" />
+          <span class="text-xs text-slate-400">If the image doesn't appear, the URL may be invalid or behind auth.</span>
+        </div>
+      </div>
+
+      <!-- boolean flags -->
+      <div class="col-span-2">
+        <p class="text-xs font-semibold text-slate-600 mb-2">Product Flags</p>
+        <div class="flex flex-wrap gap-6">
+          <label class="flex items-start gap-2 cursor-pointer select-none">
+            <input id="ef-loose" type="checkbox" ${p.is_loose ? 'checked' : ''}
+              class="w-4 h-4 mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            <span>
+              <span class="text-sm font-medium text-slate-700">Sold Loose</span>
+              <span class="block text-xs text-slate-400">(is_loose) — weighed/measured at counter</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer select-none">
+            <input id="ef-perishable" type="checkbox" ${p.is_perishable ? 'checked' : ''}
+              class="w-4 h-4 mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            <span>
+              <span class="text-sm font-medium text-slate-700">Perishable Item</span>
+              <span class="block text-xs text-slate-400">(is_perishable) — has expiry / short shelf life</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer select-none">
+            <input id="ef-pvt-label" type="checkbox" ${p.is_private_label ? 'checked' : ''}
+              class="w-4 h-4 mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            <span>
+              <span class="text-sm font-medium text-slate-700">Store Brand</span>
+              <span class="block text-xs text-slate-400">(is_private_label) — sold exclusively by this store</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div id="ef-error" class="col-span-2 hidden p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"></div>
+
+    </div>
+
+    <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
+      <button id="ef-cancel"
+        class="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+        Cancel
+      </button>
+      <button id="ef-save"
+        class="px-5 py-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors flex items-center gap-2">
+        Save Changes
+      </button>
+    </div>`;
+
+  modal.classList.remove('hidden');
+  document.getElementById('ef-name').focus();
+
+  // Image preview
+  document.getElementById('ef-preview-btn').addEventListener('click', () => {
+    const url     = document.getElementById('ef-image').value.trim();
+    const preview = document.getElementById('ef-img-preview');
+    const img     = document.getElementById('ef-img-tag');
+    if (url) { img.src = url; img.style.opacity = '1'; preview.classList.remove('hidden'); }
+    else       preview.classList.add('hidden');
+  });
+
+  document.getElementById('ef-cancel').addEventListener('click', () => modal.classList.add('hidden'));
+
+  document.getElementById('ef-save').addEventListener('click', async () => {
+    const name = document.getElementById('ef-name').value.trim();
+    if (!name) { showInvEditError('Product name is required.'); return; }
+
+    const weightRaw = document.getElementById('ef-weight').value.trim();
+    if (weightRaw && parseFloat(weightRaw) <= 0) {
+      showInvEditError('Weight must be greater than 0.'); return;
+    }
+
+    const saveBtn = document.getElementById('ef-save');
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle"></span><span class="ml-1.5">Saving…</span>';
+
+    const payload = {
+      name,
+      brand:            document.getElementById('ef-brand').value.trim()    || null,
+      category_id:      parseInt(document.getElementById('ef-category').value) || p.category_id,
+      unit:             document.getElementById('ef-unit').value.trim()     || null,
+      weight:           weightRaw ? parseFloat(weightRaw) : null,
+      barcode:          document.getElementById('ef-barcode').value.trim()  || null,
+      sku:              document.getElementById('ef-sku').value.trim()      || null,
+      image_url:        document.getElementById('ef-image').value.trim()    || null,
+      is_loose:         document.getElementById('ef-loose').checked,
+      is_perishable:    document.getElementById('ef-perishable').checked,
+      is_private_label: document.getElementById('ef-pvt-label').checked,
+    };
+
+    try {
+      await api.updateProduct(p.product_id, payload);
+      modal.classList.add('hidden');
+      toast(`"${name}" saved!`);
+      fetchInventoryPage();   // refresh table in place — filters/page preserved
+    } catch (err) {
+      showInvEditError(err.message);
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Changes';
+    }
+  });
+}
+
+function showInvEditError(msg) {
+  const el = document.getElementById('ef-error');
+  if (el) { el.textContent = msg; el.classList.remove('hidden'); }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────

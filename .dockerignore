@@ -1,0 +1,63 @@
+# VCS / IDE
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Python
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Virtual envs
+venv
+.venv
+env
+
+# Secrets — MUST NOT be baked into the image. Mount at runtime instead.
+.env
+.env.*
+!.env.example
+serviceAccountKey.json
+*.pem
+*.key
+
+# Local runtime data
+logs
+temp
+outputs
+*.log
+
+# Local docs / large dev assets
+docs
+misc
+database_schemas.xlsx
+database_schemas_token_efficient.xlsx
+README.md
+API_REFERENCE.md
+
+# Tests not needed in runtime image (uncomment to slim further)
+# tests
+# pytest.ini
+
+# Admin panel — separate frontend, not served by FastAPI
+admin-panel/node_modules
+admin-panel/.vite
+
+# Docker meta (avoid recursion)
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# OS junk
+.DS_Store
+Thumbs.db

@@ -51,6 +51,10 @@ export const api = {
   updateIssue:     (reportId, data)       => request('PATCH', '/oltp/issue_report/record', { keys: { report_id: reportId }, data }),
   // Cashflow requests
   listCashflow:    (limit=200)            => request('GET',  `/oltp/cashflow_requests?limit=${limit}`),
+  // Inventory / Product catalog
+  posCategories:  ()                      => request('GET',  '/kirana/admin/categories'),
+  adminProducts:  (params)                => request('GET',  `/kirana/admin/products?${new URLSearchParams(params)}`),
+  updateProduct:  (id, data)              => request('PATCH', `/kirana/admin/products/${id}`, data),
   // WhatsApp
   waHealth:        ()                     => request('GET',  '/whatsapp/health'),
   waSession:       (phone)               => request('GET',  `/whatsapp/session/${encodeURIComponent(phone)}`),

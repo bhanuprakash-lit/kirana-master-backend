@@ -61,7 +61,8 @@ class KPIMLModels:
         feats = self._churn["features"]
         scaler = self._churn["scaler"]
         model  = self._churn["model"]
-        X = np.array([[r.get(f, 0) for f in feats] for r in customer_features], dtype=np.float32)
+        X = pd.DataFrame([[r.get(f, 0) for f in feats] for r in customer_features],
+                         columns=feats).astype(np.float32)
         Xs = scaler.transform(X)
         probs = model.predict_proba(Xs)[:, 1]
         return [
@@ -85,7 +86,8 @@ class KPIMLModels:
         scaler = self._bcg["scaler"]
         km     = self._bcg["model"]
         labels = self._bcg["cluster_labels"]
-        X = np.array([[r.get(f, 0) for f in feats] for r in category_features], dtype=np.float64)
+        X = pd.DataFrame([[r.get(f, 0) for f in feats] for r in category_features],
+                         columns=feats).astype(np.float64)
         Xs = scaler.transform(X).astype(np.float64)
         clusters = km.predict(Xs)
         return [
@@ -103,7 +105,8 @@ class KPIMLModels:
         feats  = self._trial["features"]
         scaler = self._trial["scaler"]
         model  = self._trial["model"]
-        X = np.array([[r.get(f, 0) for f in feats] for r in product_features], dtype=np.float32)
+        X = pd.DataFrame([[r.get(f, 0) for f in feats] for r in product_features],
+                         columns=feats).astype(np.float32)
         Xs = scaler.transform(X)
         return [round(float(p), 4) for p in model.predict_proba(Xs)[:, 1]]
 
@@ -128,7 +131,8 @@ class KPIMLModels:
             rows.append({"shrinkage": su, "shrinkage_rate": su / max(1, 10),
                          "opening_pct": su / max(1, 30), "purchased_ratio": 0.5,
                          "purchased": 5, "sold": 20})
-        X = np.array([[r.get(f, 0) for f in feats] for r in rows], dtype=np.float32)
+        X = pd.DataFrame([[r.get(f, 0) for f in feats] for r in rows],
+                         columns=feats).astype(np.float32)
         Xs = scaler.transform(X)
         raw_scores = -iso.score_samples(Xs)
         # Normalise to 0-1
@@ -153,7 +157,8 @@ class KPIMLModels:
         feats  = self._supplier["features"]
         scaler = self._supplier["scaler"]
         model  = self._supplier["model"]
-        X = np.array([[r.get(f, 0) for f in feats] for r in supplier_features], dtype=np.float32)
+        X = pd.DataFrame([[r.get(f, 0) for f in feats] for r in supplier_features],
+                         columns=feats).astype(np.float32)
         Xs = scaler.transform(X)
         preds = model.predict(Xs)
         return [round(float(np.clip(p, 0, 1)), 4) for p in preds]

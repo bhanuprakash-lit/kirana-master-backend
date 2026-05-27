@@ -16,8 +16,9 @@ from contextlib import asynccontextmanager, contextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import ClientDisconnect
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -173,6 +174,14 @@ def create_app() -> FastAPI:
     @app.exception_handler(PermissionError)
     async def perm_error(request: Request, exc: PermissionError):
         return JSONResponse(status_code=403, content={"success": False, "error": str(exc)})
+
+    @app.exception_handler(ClientDisconnect)
+    async def client_disconnect(request: Request, exc: ClientDisconnect):
+        # Client closed the TCP socket before the body finished arriving.
+        # Routine on mobile lifecycle endpoints (/tracking/app-event). No client
+        # is listening for the response, so just close quietly.
+        logger.debug("Client disconnected mid-request on %s", request.url.path)
+        return Response(status_code=499)  # nginx-style "client closed request"
 
     @app.exception_handler(Exception)
     async def generic_error(request: Request, exc: Exception):
