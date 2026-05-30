@@ -1,11 +1,12 @@
+import os
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
-DB_NAME = "lit_db"
-DB_USER = "postgres"
-DB_PASSWORD = "123456"  # change
-DB_HOST = "localhost"
-DB_PORT = "5432"
+DB_NAME = os.environ.get("DB_NAME", "lit_db")
+DB_USER = os.environ.get("DB_USER", "postgres")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "123456")
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = os.environ.get("DB_PORT", "5432")
 
 
 def create_database():
