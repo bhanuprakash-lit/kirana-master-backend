@@ -13,8 +13,6 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 GLOBAL_READ_TABLES = {"calendar", "category", "product"}
 ADMIN_ONLY_WRITE_TABLES = {"calendar", "store"}
 DIRECT_STORE_TABLES = {
-    "ap_ar_aging",
-    "crm_deals",
     "customer",
     "footfall",
     "inventory",
@@ -26,7 +24,6 @@ DIRECT_STORE_TABLES = {
     "opex",
     "orders",
     "pricing",
-    "process_events",
     "promotion",
     "purchases",
     "return_to_vendor",

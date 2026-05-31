@@ -110,14 +110,11 @@ kirana-master-backend/
 │   ├── results/             *.csv prediction outputs consumed by ml_adapter
 │   └── kpi_models/          KPI-specific models + training script
 │
-├── db_generation/           Schema setup + seed scripts (one-off)
-│   ├── master_db_generation_script.py
-│   ├── seed_kirana_final.py
-│   ├── seed_blinkit_catalog.py
-│   ├── upgrade_lit_db.py
-│   ├── db_cleanup_and_upgrade.py
-│   ├── store27_sales_sim.py
-│   └── …
+├── db_generation/           Database operations toolbox
+│   ├── ensure_full_schema.py    Authoritative idempotent schema (run on schema changes)
+│   ├── migrate_to_azure.py      Copy local DB → Azure (full replace)
+│   ├── db_inspector.py          TUI browser for inspecting any Postgres DB
+│   └── _set_firebase_env.py     Rotate Firebase credentials in the Container App
 │
 ├── admin-panel/             Vite + Tailwind + Chart.js admin frontend
 │   ├── index.html
@@ -141,7 +138,30 @@ kirana-master-backend/
 
 ---
 
-## 4. Build, run, and tooling
+## 4. Deployment
+
+The backend runs as an Azure Container App. Credentials and full command sequences are in `RUNBOOK.md` (not committed — ask the team lead).
+
+**Standard deploy (code change):**
+```powershell
+.\deploy.ps1
+```
+Builds a dated Docker image, pushes to Azure Container Registry, and updates the Container App. Takes 3–5 minutes.
+
+**Schema change (new column, table, or view):**
+1. Add the DDL to `db_generation/ensure_full_schema.py` using `CREATE … IF NOT EXISTS` or `ADD COLUMN IF NOT EXISTS`.
+2. Run `python db_generation/ensure_full_schema.py` against the target DB (Azure creds from the team lead).
+3. Then run `.\deploy.ps1`.
+
+**Environment variables:**  
+Simple string values via `az containerapp update --set-env-vars`. JSON values (like Firebase credentials) must go through `db_generation/_set_firebase_env.py` — the Azure CLI cannot handle multiline JSON in `--set-env-vars`.
+
+**Logs:**  
+Admin Panel → Logs tab (real-time SSE stream). Or: `az containerapp logs show -n ca-lohiya-outlet -g rg-lohiya-outlet-dev --follow`.
+
+---
+
+## 5. Build, run, and tooling (local dev)
 
 ### Prerequisites
 
@@ -206,7 +226,7 @@ Anything missing falls back to the defaults declared inside
 
 ---
 
-## 5. Application bootstrap
+## 6. Application bootstrap
 
 `main.py` is the single entrypoint. Reading it top-to-bottom is the fastest
 way to understand the runtime.
@@ -251,7 +271,7 @@ client is closed.
 
 ---
 
-## 6. Routers and authentication
+## 7. Routers and authentication
 
 ### Mounted prefixes
 
@@ -296,7 +316,7 @@ copy the `_auth` block from `kirana/routes.py` — it's the canonical version.
 
 ---
 
-## 7. Database
+## 8. Database
 
 ### Connection model
 
@@ -348,7 +368,7 @@ and more.
 
 ---
 
-## 8. Module-by-module
+## 9. Module-by-module
 
 ### 8.1 `kirana/` — auth, recommendations, finance, subscription, admin
 
@@ -478,7 +498,7 @@ The Gemini API key never leaves the server.
 
 ---
 
-## 9. ML stack
+## 10. ML stack
 
 | Where | What |
 | --- | --- |
@@ -496,7 +516,7 @@ The adapter applies two guardrails:
 
 ---
 
-## 10. Conventions
+## 11. Conventions
 
 ### File and module layout
 
@@ -540,7 +560,7 @@ The adapter applies two guardrails:
 
 ---
 
-## 11. Adding a new endpoint — checklist
+## 12. Adding a new endpoint — checklist
 
 1. **Decide the prefix.** Auth / customer / KPI → `kirana/`. POS-only → `pos/`. Generic table CRUD → just add the table name to `oltp/routes.py:_ALLOWED_TABLES` and you're done.
 2. **Schema first.** Add Pydantic request/response models to the module's `schemas.py`.
@@ -552,7 +572,7 @@ The adapter applies two guardrails:
 
 ---
 
-## 12. Known gotchas
+## 13. Known gotchas
 
 - **Two uvicorn workers can race on schema bootstrap.** That's why `_ensure_schema()` takes a PG advisory lock (`pg_advisory_xact_lock(1919191919)`). Don't remove it.
 - **`KiranaRepository` is cheap to instantiate** because the schema bootstrap is gated by `_schema_initialized`. Don't try to "cache" the repo — just `KiranaRepository(engine)` every time.
@@ -567,7 +587,7 @@ The adapter applies two guardrails:
 
 ---
 
-## 13. Where to look first when something breaks
+## 14. Where to look first when something breaks
 
 | Symptom | Open first |
 | --- | --- |
@@ -584,10 +604,12 @@ The adapter applies two guardrails:
 
 ---
 
-## 14. Related documents
+## 15. Related documents
 
 - [`../README.md`](../README.md) — high-level overview
 - [`../API_REFERENCE.md`](../API_REFERENCE.md) — exhaustive HTTP contract (every endpoint, every payload)
 - [`../.env.example`](../.env.example) — full list of environment variables
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — infrastructure and system architecture diagram
+- `RUNBOOK.md` — personal ops guide with credentials and exact commands for every deployment scenario (not committed to git — ask the team lead)
 
-This document is the **mental map**. The two above are the **reference manuals**.
+This document is the **mental map**. The references above are the **reference manuals**.

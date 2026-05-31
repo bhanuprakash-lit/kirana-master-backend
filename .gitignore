@@ -65,3 +65,6 @@ htmlcov/
 # Scratch / dev utility scripts
 misc/
 serviceAccountKey.json
+
+# Personal ops runbook — contains credentials, never commit
+RUNBOOK.md

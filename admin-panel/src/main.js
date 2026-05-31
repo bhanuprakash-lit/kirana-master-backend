@@ -1,5 +1,5 @@
 import './style.css';
-import { configure, isConfigured, api } from './api.js';
+import { configure, isConfigured, api, startLogStream } from './api.js';
 import Chart from 'chart.js/auto';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -172,6 +172,7 @@ const NAV_ITEMS = [
   { id: 'kpi-packages',  icon: '📈', label: 'KPI Config' },
   { id: 'user-activity', icon: '👁️', label: 'User Activity' },
   { id: 'inventory',     icon: '📦', label: 'Inventory' },
+  { id: 'logs',          icon: '📋', label: 'Server Logs' },
 ];
 
 function renderApp() {
@@ -257,6 +258,7 @@ function renderApp() {
     'kpi-packages':  loadKpiPackages,
     'user-activity': loadUserActivity,
     'inventory':     loadInventory,
+    'logs':          loadLogs,
   };
   const loader = loaders[_activeTab] ?? loadDashboard;
   document.getElementById('refresh-btn').addEventListener('click', loader);
@@ -397,6 +399,7 @@ async function loadStores() {
               <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Store</th>
               <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Owner</th>
               <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Plan</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Marketing</th>
               <th class="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Registered</th>
               <th class="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Actions</th>
             </tr>
@@ -420,6 +423,9 @@ async function loadStores() {
         const tr = document.createElement('tr');
         tr.className = 'border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors';
         const trialEnds = s.trial_ends_at ? `<div class="text-xs text-slate-400">Trial ends ${formatDate(s.trial_ends_at)}</div>` : '';
+        const mkt = s.allow_social_marketing
+          ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">📣 Opted in</span>'
+          : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">Off</span>';
         tr.innerHTML = `
           <td class="px-4 py-3">
             <div class="font-semibold text-slate-900">${escHtml(s.store_name ?? '—')}</div>
@@ -430,6 +436,7 @@ async function loadStores() {
             ${s.owner_name && s.owner_name !== s.username ? `<div class="text-xs text-slate-400">${escHtml(s.owner_name)}</div>` : ''}
           </td>
           <td class="px-4 py-3">${tierBadge(s.tier)}${trialEnds}</td>
+          <td class="px-4 py-3">${mkt}</td>
           <td class="px-4 py-3 text-slate-400">${formatDate(s.created_at)}</td>
           <td class="px-4 py-3 text-right">
             <div class="flex items-center justify-end gap-2 flex-wrap">
@@ -1853,6 +1860,175 @@ function openProductEditModal(p) {
 function showInvEditError(msg) {
   const el = document.getElementById('ef-error');
   if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+}
+
+// ── Server Logs ───────────────────────────────────────────────────────────────
+
+let _logStop = null; // cancel fn for active SSE stream
+
+const _LOG_MAX = 500;
+const _LOG_BADGE = {
+  CRITICAL: 'bg-red-600 text-white',
+  ERROR:    'bg-red-100 text-red-700 ring-1 ring-inset ring-red-200',
+  WARNING:  'bg-amber-100 text-amber-700',
+  INFO:     'bg-sky-50 text-sky-600',
+  DEBUG:    'bg-slate-100 text-slate-500',
+};
+
+function _parseLogLine(raw) {
+  // "2026-05-30 11:54:01,319 [INFO] kirana.fcm — message"
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(\d{3}) \[(\w+)\] ([\w.]+) [—–-] (.+)$/);
+  if (!m) return { ts: null, level: 'INFO', logger: '', msg: raw };
+  return {
+    ts:     new Date(`${m[1].replace(' ', 'T')}.${m[2]}Z`),
+    level:  m[3],
+    logger: m[4],
+    msg:    m[5],
+  };
+}
+
+function _fmtIST(date) {
+  if (!date) return '—';
+  const t = date.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit',
+    second: '2-digit', hour12: false,
+  });
+  return `${t}.${String(date.getMilliseconds()).padStart(3, '0')}`;
+}
+
+function loadLogs() {
+  _logStop?.();
+  _logStop = null;
+
+  let _levelFilter = '';
+  let _searchFilter = '';
+  let _paused = false;
+  let _count = 0;
+  let _atBottom = true;
+  let _firstEvent = true;
+
+  const content = document.getElementById('tab-content');
+  content.innerHTML = `
+    <div class="flex flex-wrap items-center gap-2 mb-3 px-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm">
+      <span id="log-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0"></span>
+      <span id="log-status" class="text-xs font-semibold text-slate-500 w-24">Connecting…</span>
+      <span id="log-count" class="text-xs text-slate-400">0 lines</span>
+      <div class="h-4 border-l border-slate-200 mx-1 hidden sm:block"></div>
+      <select id="log-level" class="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        <option value="">All levels</option>
+        <option value="CRITICAL">CRITICAL</option>
+        <option value="ERROR">ERROR</option>
+        <option value="WARNING">WARNING</option>
+        <option value="INFO">INFO</option>
+        <option value="DEBUG">DEBUG</option>
+      </select>
+      <input id="log-search" type="text" placeholder="Search…"
+        class="border border-slate-200 rounded-lg px-2 py-1 text-xs w-36 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      <div class="flex items-center gap-1.5 ml-auto">
+        <button id="log-pause" class="px-2.5 py-1 text-xs font-medium border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">⏸ Pause</button>
+        <button id="log-clear" class="px-2.5 py-1 text-xs font-medium border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">Clear</button>
+        <button id="log-copy"  class="px-2.5 py-1 text-xs font-medium border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">Copy</button>
+      </div>
+    </div>
+    <div id="log-body" class="bg-white border border-slate-200 rounded-xl overflow-auto" style="height:calc(100vh - 250px);min-height:320px">
+      <div class="py-16 text-center text-slate-400 text-sm">Connecting to live log stream…</div>
+    </div>
+    <div class="mt-2 text-xs text-slate-400 flex gap-4">
+      <span>Timestamps: Asia/Kolkata (IST)</span>
+      <span id="log-foot"></span>
+    </div>`;
+
+  const dot     = document.getElementById('log-dot');
+  const statusEl= document.getElementById('log-status');
+  const body    = document.getElementById('log-body');
+  const countEl = document.getElementById('log-count');
+  const pauseBtn= document.getElementById('log-pause');
+
+  function setStatus(s) {
+    if (s === 'live') {
+      dot.className = 'w-2 h-2 rounded-full bg-green-400 animate-pulse shrink-0';
+      statusEl.textContent = 'Live';
+      statusEl.className = 'text-xs font-semibold text-green-600 w-24';
+    } else if (s === 'paused') {
+      dot.className = 'w-2 h-2 rounded-full bg-amber-400 shrink-0';
+      statusEl.textContent = 'Paused';
+      statusEl.className = 'text-xs font-semibold text-amber-600 w-24';
+    } else {
+      dot.className = 'w-2 h-2 rounded-full bg-red-400 shrink-0';
+      statusEl.textContent = 'Disconnected';
+      statusEl.className = 'text-xs font-semibold text-red-500 w-24';
+    }
+  }
+
+  function appendEntry(entry) {
+    if (_paused) return;
+    const { ts, level, logger, msg } = _parseLogLine(entry.raw);
+    if (_levelFilter && level !== _levelFilter) return;
+    if (_searchFilter && !entry.raw.toLowerCase().includes(_searchFilter.toLowerCase())) return;
+
+    if (_firstEvent) { body.innerHTML = ''; _firstEvent = false; }
+    if (body.children.length >= _LOG_MAX) body.removeChild(body.firstChild);
+
+    _count++;
+    countEl.textContent = `${_count.toLocaleString()} lines`;
+
+    const badgeCls = _LOG_BADGE[level] ?? _LOG_BADGE.INFO;
+    const row = document.createElement('div');
+    row.dataset.raw = entry.raw;
+    row.className = 'flex items-start gap-2 px-3 py-1 border-b border-slate-50 hover:bg-slate-50/60 transition-colors';
+    row.innerHTML =
+      `<span class="shrink-0 font-mono text-[10.5px] text-slate-400 w-24 pt-px tabular-nums select-all">${escHtml(_fmtIST(ts))}</span>` +
+      `<span class="shrink-0 w-16 pt-px"><span class="inline-block px-1.5 rounded text-[10px] font-bold leading-[18px] ${badgeCls}">${level}</span></span>` +
+      `<span class="shrink-0 font-mono text-[10.5px] text-slate-400 w-36 truncate pt-px" title="${escHtml(logger)}">${escHtml(logger)}</span>` +
+      `<span class="text-xs text-slate-700 break-words min-w-0 pt-px leading-5">${escHtml(msg || entry.raw)}</span>`;
+    body.appendChild(row);
+
+    if (_atBottom) body.scrollTop = body.scrollHeight;
+  }
+
+  // Scroll tracking — stop auto-scroll when user scrolls up
+  body.addEventListener('scroll', () => {
+    _atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 48;
+  }, { passive: true });
+
+  // Filters (client-side — no reconnect needed)
+  document.getElementById('log-level').addEventListener('change', e => { _levelFilter = e.target.value; });
+  document.getElementById('log-search').addEventListener('input',  e => { _searchFilter = e.target.value; });
+
+  // Pause / Resume
+  pauseBtn.addEventListener('click', () => {
+    _paused = !_paused;
+    pauseBtn.textContent = _paused ? '▶ Resume' : '⏸ Pause';
+    setStatus(_paused ? 'paused' : 'live');
+  });
+
+  // Clear
+  document.getElementById('log-clear').addEventListener('click', () => {
+    body.innerHTML = '';
+    _count = 0;
+    _firstEvent = true;
+    countEl.textContent = '0 lines';
+  });
+
+  // Copy all raw lines
+  document.getElementById('log-copy').addEventListener('click', () => {
+    const text = Array.from(body.querySelectorAll('[data-raw]')).map(el => el.dataset.raw).join('\n');
+    navigator.clipboard.writeText(text).then(
+      () => toast('Logs copied!'),
+      () => toast('Copy failed', 'error'),
+    );
+  });
+
+  // Start SSE stream
+  _logStop = startLogStream(100, entry => {
+    if (!document.getElementById('log-body')) { _logStop?.(); _logStop = null; return; }
+    if (entry.error) { setStatus('error'); document.getElementById('log-foot').textContent = entry.error; return; }
+    setStatus(_paused ? 'paused' : 'live');
+    appendEntry(entry);
+  }, err => {
+    setStatus('disconnected');
+    if (err) document.getElementById('log-foot').textContent = err.message;
+  });
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────

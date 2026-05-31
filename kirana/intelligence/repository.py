@@ -271,7 +271,7 @@ class IntelligenceRepository:
     def get_yesterday_top_product(self, store_id: int) -> str | None:
         sql = """
         SELECT p.name
-        FROM kirana_oltp.order_items oi
+        FROM kirana_oltp.order_item oi
         JOIN kirana_oltp.product p ON p.product_id = oi.product_id
         JOIN kirana_oltp.orders o ON o.order_id = oi.order_id
         WHERE o.store_id = :sid

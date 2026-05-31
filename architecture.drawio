@@ -1,0 +1,116 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="AFnz19btdGTG89qz30aR" name="Page-1">
+    <mxGraphModel dx="1471" dy="957" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="1">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="99" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontStyle=1;fontColor=#1F1F1F;" value="Kirana AI — Production Architecture" vertex="1">
+          <mxGeometry height="40" width="680" x="490" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="98" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontStyle=2;fontColor=#666666;" value="Prepared for Cloud4C · Production Managed Services · 2026-05-30" vertex="1">
+          <mxGeometry height="24" width="680" x="490" y="46" as="geometry" />
+        </mxCell>
+        <mxCell id="10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontColor=#003087;" value="&lt;b&gt;📱 Flutter Mobile App&lt;/b&gt;&lt;br&gt;Store Owners · Cashiers" vertex="1">
+          <mxGeometry height="56" width="190" x="140" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="11" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontColor=#003087;" value="&lt;b&gt;💬 WhatsApp Customers&lt;/b&gt;&lt;br&gt;Inbound messages" vertex="1">
+          <mxGeometry height="56" width="190" x="30" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="12" parent="1" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontColor=#333333;fontStyle=1;fontSize=12;" value="🌐 Internet" vertex="1">
+          <mxGeometry height="100" width="240" x="690" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0078D4;strokeColor=#004578;fontColor=#ffffff;fontSize=10;" value="&lt;b&gt;⚡ Azure Front Door + WAF&lt;/b&gt;&lt;br&gt;DDoS Protection · SSL Termination · CDN Caching&lt;br&gt;&lt;i&gt;— Production Only —&lt;/i&gt;" vertex="1">
+          <mxGeometry height="64" width="440" x="590" y="218" as="geometry" />
+        </mxCell>
+        <mxCell id="14" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0078D4;strokeColor=#004578;fontColor=#ffffff;fontSize=10;" value="&lt;b&gt;📊 Azure Monitor&lt;/b&gt;&lt;br&gt;Log Analytics Workspace&lt;br&gt;Dashboards · Alerts · On-call" vertex="1">
+          <mxGeometry height="70" width="224" x="1380" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="20" parent="1" style="swimlane;startSize=34;fillColor=#EFF6FC;strokeColor=#0078D4;strokeWidth=2;fontStyle=1;fontSize=12;fontColor=#0078D4;horizontal=1;" value="☁️  Azure Container Apps Environment  ·  cae-lohiya-&lt;env&gt;" vertex="1">
+          <mxGeometry height="264" width="1040" x="300" y="322" as="geometry" />
+        </mxCell>
+        <mxCell id="21" parent="20" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#0078D4;strokeWidth=1.5;fontSize=10;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;spacingRight=6;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;&lt;b style=&quot;&quot;&gt;🐍 Kirana Master Backend&lt;/b&gt; &amp;nbsp;·&amp;nbsp; FastAPI · Python 3.11 · Port 9000 &amp;nbsp;·&amp;nbsp; 2–10 replicas · 1 vCPU / 2 GiB each&lt;/font&gt;&lt;hr&gt;&lt;table style=&quot;width: 100%;&quot;&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td&gt;&lt;font style=&quot;font-size: 18px;&quot;&gt;&lt;b&gt;/kirana&lt;/b&gt; — AI recommendations &amp;amp; 30+ KPIs&lt;br&gt;&lt;b&gt;/pos&lt;/b&gt; — POS · cashier auth (JWT)&lt;br&gt;&lt;b&gt;/oltp&lt;/b&gt; — Orders · inventory · customers&lt;/font&gt;&lt;/td&gt;&lt;td&gt;&lt;font style=&quot;font-size: 18px;&quot;&gt;&lt;b&gt;/whatsapp&lt;/b&gt; — WhatsApp webhook + AI responses&lt;br&gt;&lt;b&gt;/ai&lt;/b&gt; — Gemini AI proxy endpoint&lt;br&gt;&lt;b&gt;/kpis&lt;/b&gt; — KPI calculators&lt;/font&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;hr&gt;&lt;i&gt;&lt;font style=&quot;font-size: 18px;&quot;&gt;⏰ Intelligence Engine (APScheduler) — Low stock alerts · Udhaar reminders · Abandoned cart detection · Weekly reports&lt;/font&gt;&lt;/i&gt;" vertex="1">
+          <mxGeometry height="206" width="1000" x="20" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="30" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#107C10;strokeColor=#0B6F0B;fontColor=#ffffff;fontSize=10;boundedLbl=1;backgroundOutline=1;size=14;" value="&lt;b&gt;🗄️ Azure Database for PostgreSQL Flexible Server&lt;/b&gt;&lt;br&gt;General Purpose D4s_v3 (4 vCores / 16 GiB) · Zone-Redundant HA · 256 GiB · 35-day backup + geo-redundant&lt;hr/&gt;Schema: &lt;b&gt;kirana_oltp&lt;/b&gt; — 35+ operational tables (store, users, product, orders, inventory, customer, khata, subscription …)&lt;br&gt;Schema: &lt;b&gt;kirana_olap&lt;/b&gt; — OLAP analytics tables + partitioned metrics + materialized views" vertex="1">
+          <mxGeometry height="130" width="740" x="60" y="624" as="geometry" />
+        </mxCell>
+        <mxCell id="40" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0078D4;strokeColor=#004578;fontColor=#ffffff;fontSize=10;" value="&lt;b&gt;📦 Azure Container Registry&lt;/b&gt;&lt;br&gt;crlohiyakirana · Standard SKU&lt;br&gt;Versioned images: dev · qa · uat · prod" vertex="1">
+          <mxGeometry height="76" width="224" x="1390" y="356" as="geometry" />
+        </mxCell>
+        <mxCell id="41" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7719AA;strokeColor=#560785;fontColor=#ffffff;fontSize=10;" value="&lt;b&gt;🔐 Azure Key Vault&lt;/b&gt;&lt;br&gt;Secrets management&lt;br&gt;API keys · DB password · Firebase creds" vertex="1">
+          <mxGeometry height="76" width="224" x="1390" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="97" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;spacingLeft=8;" value="&lt;b&gt;Environment Topology&lt;/b&gt;&lt;hr/&gt;DEV &amp;nbsp;→&amp;nbsp; Team manages&lt;br&gt;QA &amp;nbsp;&amp;nbsp;→&amp;nbsp; Team manages&lt;br&gt;UAT &amp;nbsp;→&amp;nbsp; Team manages&lt;br&gt;&lt;b&gt;PROD →&amp;nbsp; Cloud4C manages&lt;/b&gt;&lt;hr/&gt;All envs share one ACR.&lt;br&gt;Each env has its own&lt;br&gt;Container App + DB." vertex="1">
+          <mxGeometry height="150" width="224" x="1390" y="624" as="geometry" />
+        </mxCell>
+        <mxCell id="56" parent="1" style="text;html=1;strokeColor=#d79b00;fillColor=#ffe6cc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontStyle=3;fontSize=10;fontColor=#d79b00;" value="External SaaS Integrations  ·  Not managed by Cloud4C  ·  Billed and operated by Lohiya AI" vertex="1">
+          <mxGeometry height="28" width="1200" x="40" y="940" as="geometry" />
+        </mxCell>
+        <mxCell id="50" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6D00;strokeColor=#E65100;fontColor=#ffffff;fontSize=9;" value="&lt;b&gt;🔔 Firebase FCM&lt;/b&gt;&lt;br&gt;(Google)&lt;br&gt;Push notifications&lt;br&gt;Android + iOS" vertex="1">
+          <mxGeometry height="86" width="160" x="40" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="51" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#25D366;strokeColor=#128C7E;fontColor=#ffffff;fontSize=9;" value="&lt;b&gt;💬 WhatsApp API&lt;/b&gt;&lt;br&gt;(Meta Graph)&lt;br&gt;Inbound + Outbound&lt;br&gt;Business messaging" vertex="1">
+          <mxGeometry height="86" width="160" x="235" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="52" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1A73E8;strokeColor=#1557B0;fontColor=#ffffff;fontSize=9;" value="&lt;b&gt;🤖 Gemini AI&lt;/b&gt;&lt;br&gt;(Google)&lt;br&gt;AI chat responses&lt;br&gt;/ai endpoint proxy" vertex="1">
+          <mxGeometry height="86" width="160" x="430" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="53" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6B35;strokeColor=#CC4400;fontColor=#ffffff;fontSize=9;" value="&lt;b&gt;🧠 Mistral AI&lt;/b&gt;&lt;br&gt;WhatsApp intelligence&lt;br&gt;KPI explainer&lt;br&gt;mistral-small-latest" vertex="1">
+          <mxGeometry height="86" width="160" x="625" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="54" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2D8CFF;strokeColor=#1A5FAB;fontColor=#ffffff;fontSize=9;" value="&lt;b&gt;💳 Razorpay&lt;/b&gt;&lt;br&gt;Payment gateway&lt;br&gt;Subscription billing&lt;br&gt;% per transaction" vertex="1">
+          <mxGeometry height="86" width="160" x="820" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="55" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#34A853;strokeColor=#1E7D34;fontColor=#ffffff;fontSize=9;" value="&lt;b&gt;🏪 Google Play&lt;/b&gt;&lt;br&gt;IAP receipt&lt;br&gt;verification&lt;br&gt;In-app purchases" vertex="1">
+          <mxGeometry height="86" width="160" x="1015" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="60" edge="1" parent="1" source="10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=9;" target="12" value="HTTPS">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="61" edge="1" parent="1" source="11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=9;" target="12" value="HTTPS">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="62" edge="1" parent="1" source="12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=9;fontStyle=1;" target="13" value="HTTPS">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="63" edge="1" parent="1" source="13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" target="20" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="64" edge="1" parent="1" source="20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=9;fontStyle=1;" target="30" value="Private · SSL">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="65" edge="1" parent="1" source="40" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;fontSize=9;endArrow=open;endFill=0;" target="20" value="pull image">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="66" edge="1" parent="1" source="20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;fontSize=9;endArrow=open;endFill=0;" target="41" value="read secrets">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="67" edge="1" parent="1" source="20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;fontSize=9;endArrow=open;endFill=0;" target="14" value="logs + metrics">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1270" y="165" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="68" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=9;" target="50" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="69" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=9;" target="51" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="70" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=9;" target="52" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="71" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=9;" target="53" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="72" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=9;" target="54" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="73" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=9;" target="55" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

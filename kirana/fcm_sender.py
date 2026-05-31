@@ -31,19 +31,25 @@ def _ensure_init() -> bool:
         logger.info("FIREBASE_CREDENTIALS_JSON not set — FCM push disabled")
         return False
 
-    creds_path = raw if os.path.isabs(raw) else os.path.join(_ROOT, raw)
-    logger.info("FCM: looking for credentials at %s", creds_path)
-
-    if not os.path.isfile(creds_path):
-        logger.warning("FCM: credentials file not found at %s — FCM push disabled", creds_path)
-        return False
-
     try:
         import firebase_admin
         from firebase_admin import credentials, messaging as fb_messaging
+        
+        # Check if the environment variable looks like a raw JSON string or a file path
+        if raw.startswith("{") and raw.endswith("}"):
+            logger.info("FCM: Loading credentials directly from JSON string in environment variable")
+            cred_dict = json.loads(raw)
+            cred = credentials.Certificate(cred_dict)
+        else:
+            creds_path = raw if os.path.isabs(raw) else os.path.join(_ROOT, raw)
+            logger.info("FCM: looking for credentials at %s", creds_path)
+            
+            if not os.path.isfile(creds_path):
+                logger.warning("FCM: credentials file not found at %s — FCM push disabled", creds_path)
+                return False
+            cred = credentials.Certificate(creds_path)
 
         if not firebase_admin._apps:
-            cred = credentials.Certificate(creds_path)
             firebase_admin.initialize_app(cred)
 
         _messaging = fb_messaging

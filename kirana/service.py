@@ -274,6 +274,7 @@ class KiranaService:
                 store_name=req.store_name,
                 store_type=req.store_type,
                 footfall=req.footfall,
+                budget=req.budget,
                 location=req.location,
                 region=req.region,
                 username=req.username.strip(),

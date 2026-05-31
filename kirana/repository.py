@@ -404,16 +404,17 @@ class KiranaRepository:
                     WHERE ks.store_id = s.store_id
                 """))
 
-            # Seed deterministic footfall/budget for stores that still have nulls
-            # (seed-data rows have no footfall/budget from the original schema).
+            # Seed deterministic footfall for legacy rows that still have nulls
+            # (original seed-data rows had no footfall). footfall is also
+            # recomputed from real order volume by compute_store_footfall().
+            # Budget is intentionally NOT seeded — it is the owner's real
+            # monthly sales target, collected at onboarding / store settings.
             conn.execute(text("""
                 UPDATE kirana_oltp.store
                 SET footfall     = COALESCE(footfall,     80 + (store_id * 17) % 80),
-                    budget       = COALESCE(budget,       100000 + (store_id * 7000) % 50000),
-                    daily_budget = COALESCE(daily_budget, 4000 + (store_id * 200) % 2000),
                     store_type   = COALESCE(store_type,   'kirana')
                 WHERE COALESCE(is_deleted, FALSE) = FALSE
-                  AND (footfall IS NULL OR budget IS NULL)
+                  AND footfall IS NULL
             """))
             conn.execute(text(
                 "SELECT setval(pg_get_serial_sequence('kirana_oltp.store','store_id'),"
@@ -550,9 +551,14 @@ class KiranaRepository:
                 "full_name": row["full_name"], "role": row["role"], "store_id": row["store_id"]}
 
     def authenticate_by_phone(self, phone_number: str, firebase_uid: str | None = None) -> dict | None:
-        """Look up an active user by phone number or firebase_uid (Firebase already verified the OTP)."""
+        """Look up an active user by phone number or firebase_uid (Firebase already verified the OTP).
+
+        If the user is found by phone number but their stored firebase_uid differs from the one
+        provided (e.g. after switching Firebase projects or migrating to a new environment),
+        the stored UID is silently updated so future lookups stay consistent.
+        """
         sql = """
-        SELECT user_id, username, full_name, role, store_id
+        SELECT user_id, username, full_name, role, store_id, firebase_uid AS stored_fuid
         FROM kirana_oltp.users
         WHERE (phone_number = :phone OR (:fuid IS NOT NULL AND firebase_uid = :fuid))
           AND is_active = TRUE AND COALESCE(is_deleted, FALSE) = FALSE
@@ -560,7 +566,18 @@ class KiranaRepository:
         """
         with self._conn() as conn:
             row = conn.execute(text(sql), {"phone": phone_number, "fuid": firebase_uid}).mappings().first()
-        return dict(row) if row else None
+            if not row:
+                return None
+            user = dict(row)
+            # Heal mismatched firebase_uid (different Firebase project, environment migration, etc.)
+            if firebase_uid and user.get("stored_fuid") != firebase_uid:
+                conn.execute(
+                    text("UPDATE kirana_oltp.users SET firebase_uid = :fuid WHERE user_id = :uid"),
+                    {"fuid": firebase_uid, "uid": user["user_id"]},
+                )
+                conn.commit()
+                logger.info("firebase_uid healed for user_id=%s", user["user_id"])
+        return {k: user[k] for k in ("user_id", "username", "full_name", "role", "store_id")}
 
     def check_username_available(self, username: str) -> bool:
         sql = "SELECT 1 FROM kirana_oltp.users WHERE LOWER(username) = LOWER(:u)"
@@ -672,6 +689,7 @@ class KiranaRepository:
         username: str,
         password: str,
         full_name: str,
+        budget: float | None = None,
         email: str | None = None,
         phone_number: str | None = None,
         firebase_uid: str | None = None,
@@ -690,12 +708,15 @@ class KiranaRepository:
 
         with self._conn() as conn:
             # 1. kirana_oltp.store (now holds all metadata)
+            # daily_budget is derived from the owner's monthly sales target.
+            daily_budget = (budget / 30.0) if budget else None
             store_row = conn.execute(text("""
-                INSERT INTO kirana_oltp.store(name, location, region, store_type, footfall, latitude, longitude)
-                VALUES(:sn, :location, :region, :st, :fp, :lat, :lng)
-                RETURNING store_id, name, location, region, store_type, footfall, latitude, longitude
+                INSERT INTO kirana_oltp.store(name, location, region, store_type, footfall, budget, daily_budget, latitude, longitude)
+                VALUES(:sn, :location, :region, :st, :fp, :budget, :daily_budget, :lat, :lng)
+                RETURNING store_id, name, location, region, store_type, footfall, budget, daily_budget, latitude, longitude
             """), {"sn": store_name, "location": location, "region": region,
                    "st": store_type, "fp": footfall,
+                   "budget": budget, "daily_budget": daily_budget,
                    "lat": latitude, "lng": longitude}).mappings().first()
             store_id = store_row["store_id"]
 
@@ -1060,11 +1081,13 @@ class KiranaRepository:
         "alert_min_velocity":       0.3,
         "alert_reorder_days":       3,
         "alert_dead_stock_days":    21,
+        "alert_expiry_days":        7,
         "notify_whatsapp":          False,
         "notify_in_app":            True,
         "quiet_hours_start":        22,
         "quiet_hours_end":          7,
         "subscribed_kpis":          None,
+        "allow_social_marketing":   False,
     }
 
     def get_user_prefs(self, user_id: int) -> dict:
@@ -1398,7 +1421,8 @@ class KiranaRepository:
         SELECT
             COALESCE(SUM(amount - amount_paid), 0) AS total_pending,
             COALESCE(SUM(amount_paid), 0)          AS total_recovered,
-            COUNT(DISTINCT customer_id)            AS customer_count
+            -- customers who STILL owe (balance > 0), not everyone ever given udhaar
+            COUNT(DISTINCT customer_id) FILTER (WHERE amount > amount_paid) AS customer_count
         FROM kirana_oltp.khata
         WHERE store_id = :sid
         """
@@ -1447,6 +1471,76 @@ class KiranaRepository:
         with self._conn() as conn:
             rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
         return [dict(r) for r in rows]
+
+    def get_smart_udhaar(self, store_id: int) -> list[dict]:
+        """Open udhaar ranked by recovery risk, with a suggested action.
+
+        Risk (0-100, higher = more at risk) blends:
+          - how long it's been outstanding (up to 40 pts),
+          - the customer's past repayment ratio (up to 30 pts),
+          - how long since they last shopped here (up to 30 pts).
+        Replaces the old purely days-based reminder ordering.
+        """
+        sql = """
+        WITH cust_hist AS (
+            SELECT customer_id,
+                   SUM(amount)      AS total_khata,
+                   SUM(amount_paid) AS total_paid
+            FROM kirana_oltp.khata
+            WHERE store_id = :sid
+            GROUP BY customer_id
+        ),
+        last_order AS (
+            SELECT customer_id, MAX(order_date)::date AS last_order_date
+            FROM kirana_oltp.orders
+            WHERE store_id = :sid AND customer_id IS NOT NULL
+            GROUP BY customer_id
+        )
+        SELECT k.khata_id, k.customer_id, c.name AS customer_name, c.phone,
+               (k.amount - k.amount_paid)::float AS balance,
+               k.issue_date::text AS date_taken,
+               (CURRENT_DATE - k.issue_date) AS days_pending,
+               COALESCE(ch.total_khata, 0)::float AS total_khata,
+               COALESCE(ch.total_paid, 0)::float  AS total_paid,
+               (CURRENT_DATE - lo.last_order_date) AS days_since_order
+        FROM kirana_oltp.khata k
+        JOIN kirana_oltp.customer c ON k.customer_id = c.customer_id
+        LEFT JOIN cust_hist ch ON ch.customer_id = k.customer_id
+        LEFT JOIN last_order lo ON lo.customer_id = k.customer_id
+        WHERE k.store_id = :sid
+          AND k.status IN ('open', 'overdue', 'pending')
+          AND (k.amount - k.amount_paid) > 0
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
+        out = []
+        for r in rows:
+            d = dict(r)
+            days = int(d.get("days_pending") or 0)
+            total_khata = float(d.get("total_khata") or 0)
+            total_paid = float(d.get("total_paid") or 0)
+            paid_ratio = (total_paid / total_khata) if total_khata > 0 else 0.0
+            dso = d.get("days_since_order")
+            days_score = min(days, 90) / 90 * 40
+            hist_score = (1 - min(max(paid_ratio, 0.0), 1.0)) * 30
+            inact_score = 30 if dso is None else min(int(dso), 90) / 90 * 30
+            risk = max(0, min(100, round(days_score + hist_score + inact_score)))
+            band = "high" if risk >= 67 else ("medium" if risk >= 34 else "low")
+            if band == "high":
+                action = "Call or visit — high risk of non-recovery"
+            elif band == "medium":
+                action = "Send a WhatsApp reminder"
+            else:
+                action = "Likely to pay — a gentle nudge is enough"
+            d["risk_score"] = risk
+            d["risk_band"] = band
+            d["recovery_likelihood"] = 100 - risk
+            d["suggested_action"] = action
+            d.pop("total_khata", None)
+            d.pop("total_paid", None)
+            out.append(d)
+        out.sort(key=lambda x: x["risk_score"], reverse=True)
+        return out
 
     def record_udhaar_recovery(self, store_id: int, khata_id: int, recovery_amount: float) -> dict:
         # 1. Fetch current record
@@ -1498,6 +1592,341 @@ class KiranaRepository:
         """
         with self._conn() as conn:
             rows = conn.execute(text(sql), {"kid": khata_id, "sid": store_id}).mappings().all()
+        return [dict(r) for r in rows]
+
+    # ── Expiry / near-expiry batches (loss prevention) ──────────────────────────
+
+    @staticmethod
+    def _suggested_markdown(days_left) -> float:
+        """Urgency-based clearance markdown so near-expiry stock actually sells."""
+        if days_left is None:
+            return 0.0
+        if days_left <= 1:
+            return 40.0
+        if days_left <= 3:
+            return 25.0
+        if days_left <= 5:
+            return 15.0
+        return 10.0
+
+    def get_near_expiry_batches(self, store_id: int, days: int = 7) -> list[dict]:
+        """Active batches expiring within `days`, with value-at-risk and a
+        suggested clearance markdown. Drives the Expiry Loss Prevention screen."""
+        sql = """
+            SELECT ib.batch_id, ib.product_id, p.name AS product_name, p.unit,
+                   ib.batch_no, ib.expiry_date::text AS expiry_date,
+                   (ib.expiry_date - CURRENT_DATE) AS days_left,
+                   ib.qty_in_stock, COALESCE(ib.markdown_pct, 0)::float AS markdown_pct,
+                   COALESCE(ib.wasted_units, 0) AS wasted_units,
+                   COALESCE(ib.recovered_units, 0) AS recovered_units,
+                   COALESCE(pr.price, 0)::float AS price,
+                   COALESCE(ps.cost_price, 0)::float AS cost_price
+            FROM kirana_oltp.inventory_batch ib
+            JOIN kirana_oltp.product p ON p.product_id = ib.product_id
+            LEFT JOIN LATERAL (
+                SELECT price FROM kirana_oltp.pricing
+                WHERE product_id = ib.product_id AND store_id = ib.store_id
+                  AND (valid_to IS NULL OR valid_to >= now())
+                ORDER BY valid_from DESC LIMIT 1
+            ) pr ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT cost_price FROM kirana_oltp.product_supplier
+                WHERE product_id = ib.product_id LIMIT 1
+            ) ps ON TRUE
+            WHERE ib.store_id = :sid
+              AND ib.qty_in_stock > 0
+              AND ib.expiry_date <= CURRENT_DATE + make_interval(days => :days)
+            ORDER BY ib.expiry_date ASC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"sid": store_id, "days": days}).mappings().all()
+        out = []
+        for r in rows:
+            d = dict(r)
+            days_left = d.get("days_left")
+            d["suggested_markdown_pct"] = self._suggested_markdown(days_left)
+            d["value_at_risk"] = round(float(d["qty_in_stock"]) * float(d["cost_price"] or 0), 2)
+            price = float(d["price"] or 0)
+            d["marked_down_price"] = round(price * (1 - float(d["markdown_pct"]) / 100.0), 2)
+            out.append(d)
+        return out
+
+    def set_batch_markdown(self, store_id: int, batch_id: int, markdown_pct: float) -> dict:
+        markdown_pct = max(0.0, min(float(markdown_pct), 90.0))  # clamp 0–90%
+        with self._conn() as conn:
+            row = conn.execute(text("""
+                UPDATE kirana_oltp.inventory_batch
+                SET markdown_pct = :pct
+                WHERE batch_id = :bid AND store_id = :sid
+                RETURNING batch_id, product_id, markdown_pct, qty_in_stock
+            """), {"pct": markdown_pct, "bid": batch_id, "sid": store_id}).mappings().first()
+            if not row:
+                raise ValueError("Batch not found")
+            conn.commit()
+        return dict(row)
+
+    def record_batch_waste(self, store_id: int, batch_id: int, units: int) -> dict:
+        """Write off spoiled units: reduce the batch and the store inventory,
+        and track wasted_units for the perishable-waste KPI."""
+        units = max(0, int(units))
+        with self._conn() as conn:
+            row = conn.execute(text("""
+                UPDATE kirana_oltp.inventory_batch
+                SET qty_in_stock = GREATEST(qty_in_stock - :u, 0),
+                    wasted_units = COALESCE(wasted_units, 0) + :u
+                WHERE batch_id = :bid AND store_id = :sid
+                RETURNING batch_id, product_id, qty_in_stock, wasted_units
+            """), {"u": units, "bid": batch_id, "sid": store_id}).mappings().first()
+            if not row:
+                raise ValueError("Batch not found")
+            conn.execute(text("""
+                UPDATE kirana_oltp.inventory
+                SET quantity = GREATEST(quantity - :u, 0)
+                WHERE product_id = :pid AND store_id = :sid
+            """), {"u": units, "pid": row["product_id"], "sid": store_id})
+            conn.commit()
+        return dict(row)
+
+    # ── Auto reorder suggestions (velocity-based) ───────────────────────────────
+
+    def get_reorder_suggestions(self, store_id: int, cover_days: int = 14,
+                                lookback_days: int = 30) -> list[dict]:
+        """Products running low relative to their sales velocity, with a suggested
+        reorder quantity and the cheapest known supplier.
+
+        Suggested qty targets `cover_days + supplier lead time` of cover:
+            qty = ceil(avg_daily_sales * (cover_days + lead_time) - current_stock)
+
+        NOTE: avg_daily is a simple last-`lookback_days` velocity. A future ML
+        hook can replace the `sales` CTE / avg_daily with demand-forecast output
+        without changing the response shape.
+        """
+        sql = """
+            WITH sales AS (
+                SELECT oi.product_id,
+                       SUM(oi.quantity)::float / :lookback AS avg_daily
+                FROM kirana_oltp.order_item oi
+                JOIN kirana_oltp.orders o ON o.order_id = oi.order_id
+                WHERE o.store_id = :sid
+                  AND o.order_date >= now() - make_interval(days => :lookback)
+                  AND COALESCE(o.order_status, 'completed') <> 'cancelled'
+                GROUP BY oi.product_id
+            )
+            SELECT p.product_id, p.name AS product_name, p.unit,
+                   COALESCE(inv.quantity, 0) AS stock,
+                   s.avg_daily,
+                   ps.supplier_id, sup.name AS supplier_name,
+                   COALESCE(ps.cost_price, 0)::float AS cost_price,
+                   COALESCE(ps.lead_time_days, 0) AS lead_time_days
+            FROM kirana_oltp.inventory inv
+            JOIN kirana_oltp.product p ON p.product_id = inv.product_id
+            JOIN sales s ON s.product_id = inv.product_id
+            LEFT JOIN LATERAL (
+                SELECT supplier_id, cost_price, lead_time_days
+                FROM kirana_oltp.product_supplier
+                WHERE product_id = inv.product_id
+                ORDER BY cost_price ASC NULLS LAST
+                LIMIT 1
+            ) ps ON TRUE
+            LEFT JOIN kirana_oltp.supplier sup ON sup.supplier_id = ps.supplier_id
+            WHERE inv.store_id = :sid
+              AND s.avg_daily > 0
+              AND COALESCE(inv.quantity, 0)
+                  < s.avg_daily * (:cover + COALESCE(ps.lead_time_days, 0))
+            ORDER BY (COALESCE(inv.quantity, 0) / NULLIF(s.avg_daily, 0)) ASC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {
+                "sid": store_id, "lookback": lookback_days, "cover": cover_days,
+            }).mappings().all()
+        out = []
+        for r in rows:
+            d = dict(r)
+            avg = float(d["avg_daily"] or 0)
+            stock = float(d["stock"] or 0)
+            lead = int(d["lead_time_days"] or 0)
+            target = avg * (cover_days + lead)
+            diff = target - stock
+            suggested = max(0, int(diff) + (1 if diff > int(diff) else 0))
+            if suggested <= 0:
+                continue
+            d["avg_daily"] = round(avg, 2)
+            d["days_of_cover"] = round(stock / avg, 1) if avg > 0 else None
+            d["suggested_qty"] = suggested
+            d["reorder_cost"] = round(suggested * float(d["cost_price"] or 0), 2)
+            out.append(d)
+        return out
+
+    # ── AI Price Memory (forgotten / unset prices) ──────────────────────────────
+
+    def get_missing_prices(self, store_id: int) -> list[dict]:
+        """Products in stock with no active selling price (₹0 or unset).
+        Suggests a price from the store's last known price, else the MRP."""
+        sql = """
+        WITH active_price AS (
+            SELECT DISTINCT ON (product_id) product_id, price, mrp
+            FROM kirana_oltp.pricing
+            WHERE store_id = :sid AND valid_from <= now()
+              AND (valid_to IS NULL OR valid_to >= now())
+            ORDER BY product_id, valid_from DESC
+        ),
+        last_known AS (
+            SELECT DISTINCT ON (product_id) product_id, price, mrp
+            FROM kirana_oltp.pricing
+            WHERE store_id = :sid
+            ORDER BY product_id, valid_from DESC
+        )
+        SELECT p.product_id, p.name AS product_name, p.unit,
+               COALESCE(inv.quantity, 0) AS stock,
+               ap.price::float AS active_price,
+               lk.price::float AS last_known_price,
+               COALESCE(ap.mrp, lk.mrp)::float AS mrp
+        FROM kirana_oltp.inventory inv
+        JOIN kirana_oltp.product p ON p.product_id = inv.product_id
+        LEFT JOIN active_price ap ON ap.product_id = inv.product_id
+        LEFT JOIN last_known  lk ON lk.product_id = inv.product_id
+        WHERE inv.store_id = :sid
+          AND (ap.price IS NULL OR ap.price = 0)
+        ORDER BY p.name ASC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
+        out = []
+        for r in rows:
+            d = dict(r)
+            last_known = d.get("last_known_price")
+            mrp = d.get("mrp")
+            if last_known and float(last_known) > 0:
+                d["suggested_price"] = round(float(last_known), 2)
+                d["suggestion_source"] = "your last price"
+            elif mrp and float(mrp) > 0:
+                d["suggested_price"] = round(float(mrp), 2)
+                d["suggestion_source"] = "MRP"
+            else:
+                d["suggested_price"] = None
+                d["suggestion_source"] = None
+            out.append(d)
+        return out
+
+    def set_product_cost(self, product_id: int, cost_price: float,
+                         supplier_id: int | None = None) -> dict:
+        """Capture a product's real purchase cost into product_supplier so future
+        sales snapshot a true cost (no estimate needed). Updates the relevant
+        existing row if present, else inserts one."""
+        with self._conn() as conn:
+            if supplier_id is not None:
+                updated = conn.execute(text("""
+                    UPDATE kirana_oltp.product_supplier SET cost_price = :c
+                    WHERE product_id = :pid AND supplier_id = :sup
+                    RETURNING id
+                """), {"c": cost_price, "pid": product_id, "sup": supplier_id}).first()
+                if not updated:
+                    conn.execute(text("""
+                        INSERT INTO kirana_oltp.product_supplier (product_id, supplier_id, cost_price)
+                        VALUES (:pid, :sup, :c)
+                    """), {"pid": product_id, "sup": supplier_id, "c": cost_price})
+            else:
+                updated = conn.execute(text("""
+                    UPDATE kirana_oltp.product_supplier SET cost_price = :c
+                    WHERE id = (SELECT id FROM kirana_oltp.product_supplier
+                                WHERE product_id = :pid ORDER BY id LIMIT 1)
+                    RETURNING id
+                """), {"c": cost_price, "pid": product_id}).first()
+                if not updated:
+                    conn.execute(text("""
+                        INSERT INTO kirana_oltp.product_supplier (product_id, supplier_id, cost_price)
+                        VALUES (:pid, NULL, :c)
+                    """), {"pid": product_id, "c": cost_price})
+            conn.commit()
+        return {"product_id": product_id, "cost_price": cost_price}
+
+    def set_product_price(self, store_id: int, product_id: int,
+                          price: float, mrp: float | None = None) -> dict:
+        """Set a product's selling price by opening a new pricing window and
+        closing any currently-open one."""
+        with self._conn() as conn:
+            conn.execute(text("""
+                UPDATE kirana_oltp.pricing
+                SET valid_to = now()
+                WHERE store_id = :sid AND product_id = :pid AND valid_to IS NULL
+            """), {"sid": store_id, "pid": product_id})
+            row = conn.execute(text("""
+                INSERT INTO kirana_oltp.pricing (product_id, store_id, price, mrp, valid_from)
+                VALUES (:pid, :sid, :price, :mrp, now())
+                RETURNING pricing_id, product_id, price::float AS price, mrp::float AS mrp
+            """), {"pid": product_id, "sid": store_id, "price": price, "mrp": mrp}).mappings().first()
+            conn.commit()
+        return dict(row)
+
+    # ── Customer returns / exchanges (purchase memory) ──────────────────────────
+
+    def record_return(self, store_id: int, order_id: int | None,
+                      items: list[dict], reason: str | None = None) -> dict:
+        """Record a customer return/exchange.
+
+        Resaleable units go back into store inventory. Damaged units are logged
+        to `return_to_vendor` (so they feed the Return-to-Vendor recovery KPI and
+        the owner can claim credit from the distributor).
+        items: [{product_id, qty, resaleable}].
+        """
+        restocked = 0
+        to_vendor = 0
+        with self._conn() as conn:
+            for it in items:
+                pid = int(it["product_id"])
+                qty = int(it.get("qty") or 0)
+                if qty <= 0:
+                    continue
+                resaleable = bool(it.get("resaleable", True))
+                if resaleable:
+                    conn.execute(text("""
+                        UPDATE kirana_oltp.inventory
+                        SET quantity = quantity + :q
+                        WHERE product_id = :pid AND store_id = :sid
+                    """), {"q": qty, "pid": pid, "sid": store_id})
+                    restocked += qty
+                else:
+                    row = conn.execute(text("""
+                        SELECT supplier_id, COALESCE(cost_price, 0) AS cost_price
+                        FROM kirana_oltp.product_supplier
+                        WHERE product_id = :pid
+                        ORDER BY cost_price ASC NULLS LAST
+                        LIMIT 1
+                    """), {"pid": pid}).mappings().first()
+                    supplier_id = row["supplier_id"] if row else None
+                    cost = float(row["cost_price"]) if row else 0.0
+                    conn.execute(text("""
+                        INSERT INTO kirana_oltp.return_to_vendor
+                            (store_id, supplier_id, product_id, return_date,
+                             qty_returned, unit_cost, recovery_pct, amount_recovered, reason)
+                        VALUES (:sid, :sup, :pid, CURRENT_DATE, :q, :cost, 0, 0, :reason)
+                    """), {
+                        "sid": store_id, "sup": supplier_id, "pid": pid, "q": qty,
+                        "cost": cost, "reason": (reason or "customer_return")[:60],
+                    })
+                    to_vendor += qty
+            conn.commit()
+        return {
+            "order_id": order_id,
+            "restocked_units": restocked,
+            "to_vendor_units": to_vendor,
+        }
+
+    def get_customer_purchases(self, store_id: int, customer_id: int, limit: int = 50) -> list[dict]:
+        """Recall what a customer bought — for resolving return/exchange disputes."""
+        sql = """
+            SELECT o.order_id, o.order_date::text AS order_date,
+                   oi.product_id, p.name AS product_name,
+                   oi.quantity, oi.unit_price::float AS unit_price
+            FROM kirana_oltp.orders o
+            JOIN kirana_oltp.order_item oi ON oi.order_id = o.order_id
+            JOIN kirana_oltp.product p ON p.product_id = oi.product_id
+            WHERE o.store_id = :sid AND o.customer_id = :cid
+            ORDER BY o.order_date DESC
+            LIMIT :lim
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"sid": store_id, "cid": customer_id, "lim": limit}).mappings().all()
         return [dict(r) for r in rows]
 
     def add_udhaar(self, store_id: int, customer_name: str, phone: str, amount: float) -> dict:

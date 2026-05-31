@@ -15,6 +15,7 @@ Design notes:
 from __future__ import annotations
 
 import os
+import time
 import logging
 from typing import Any
 
@@ -34,6 +35,18 @@ MIN_VELOCITY_FOR_STOCKOUT = 0.3
 # the model to flag dead stock AND the recent-window data to confirm:
 # avg sales below this threshold is what "no sales" means in practice.
 MAX_VELOCITY_FOR_DEADSTOCK = 0.3
+
+# Predictions older than this are considered stale (kirana demand shifts fast).
+ML_STALE_AFTER_HOURS = 36
+
+# The result CSVs the adapter depends on.
+ML_RESULT_FILES = [
+    "stockout_predictions.csv",
+    "margin_predictions.csv",
+    "velocity_predictions.csv",
+    "reorder_recommendations.csv",
+    "deadstock_predictions.csv",
+]
 
 
 def _load(path: str, label: str) -> pd.DataFrame:
@@ -295,6 +308,55 @@ class MLAdapter:
             "MLAdapter refresh complete: %d recommendation rows across %d stores",
             len(df), df["store_id"].nunique() if not df.empty else 0,
         )
+
+        # Freshness guard: warn loudly if any model file is missing or stale, so
+        # degraded ML output isn't silent.
+        fresh = self.freshness()
+        if fresh["any_missing"]:
+            missing = [f["file"] for f in fresh["files"] if not f["present"]]
+            logger.warning("ML predictions MISSING: %s — recommendations degraded. "
+                           "Run: python ml_models/train_all.py", missing)
+        elif fresh["stale"]:
+            logger.warning("ML predictions STALE: oldest is %.1fh old (> %dh). "
+                           "Consider retraining: python ml_models/train_all.py",
+                           fresh["oldest_age_hours"], ML_STALE_AFTER_HOURS)
+
+    def freshness(self) -> dict[str, Any]:
+        """Per-file age + an overall stale flag for the prediction CSVs."""
+        now = time.time()
+        files: list[dict[str, Any]] = []
+        any_missing = False
+        oldest_hours = 0.0
+        for name in ML_RESULT_FILES:
+            path = self._path(name)
+            if os.path.exists(path):
+                age_h = round((now - os.path.getmtime(path)) / 3600, 1)
+                files.append({"file": name, "present": True, "age_hours": age_h})
+                oldest_hours = max(oldest_hours, age_h)
+            else:
+                any_missing = True
+                files.append({"file": name, "present": False, "age_hours": None})
+        return {
+            "stale": any_missing or oldest_hours > ML_STALE_AFTER_HOURS,
+            "any_missing": any_missing,
+            "oldest_age_hours": oldest_hours,
+            "stale_after_hours": ML_STALE_AFTER_HOURS,
+            "results_dir": self.results_dir,
+            "files": files,
+        }
+
+    def flags_for_store(self, store_id: int) -> dict[int, list[str]]:
+        """{product_id: [recommendation_type, ...]} for one store — drives the
+        ML flag tags (fast_moving / reorder_now / dead_stock / ...) on items."""
+        df = self.get_frame()
+        if df is None or df.empty or "store_id" not in df.columns:
+            return {}
+        sub = df[df["store_id"] == store_id]
+        out: dict[int, list[str]] = {}
+        for _, r in sub.iterrows():
+            pid = int(r["sku_id"])
+            out.setdefault(pid, []).append(str(r["recommendation_type"]))
+        return out
 
     def get_frame(self) -> pd.DataFrame:
         if self._frame is None:

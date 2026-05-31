@@ -1273,12 +1273,28 @@ def calc_gross_profit_margin(engine, store_id: int, days: int = 30) -> dict:
       AND o.order_date BETWEEN :pp_from AND :pp_to AND oi.cost_price>0
     """, {"sid": store_id, "pp_from": pp_from, "pp_to": pp_to})
 
+    # Total billed revenue WITHOUT the cost filter — lets us report how much of
+    # the period's sales actually have cost data behind the profit figure.
+    billed_revenue = float(_scalar(engine, """
+    SELECT SUM(oi.quantity * oi.unit_price)
+    FROM kirana_oltp.orders o JOIN kirana_oltp.order_item oi ON o.order_id = oi.order_id
+    WHERE o.store_id = :sid AND o.order_status = 'completed'
+      AND o.order_date BETWEEN :p_from AND :p_to
+    """, {"sid": store_id, "p_from": p_from, "p_to": p_to}) or 0)
+
+    covered_revenue = float(r.get("revenue") or 0)
+    cost_coverage_pct = round(covered_revenue / billed_revenue * 100, 1) if billed_revenue > 0 else 0.0
+
     cur = float(r.get("gpm_pct") or 0)
     return {
-        "total_revenue":   float(r.get("revenue") or 0),
+        "total_revenue":   covered_revenue,
+        "billed_revenue":  round(billed_revenue, 2),
         "total_cogs":      float(r.get("cogs") or 0),
         "gross_profit":    float(r.get("gross_profit") or 0),
         "gpm_pct":         cur,
+        # Share of billed revenue that has cost data — how trustworthy the
+        # profit number is. 100% = every sold item had a known cost.
+        "cost_coverage_pct": cost_coverage_pct,
         "by_category":     [{"category_name": c["category_name"],
                              "margin_pct": float(c["margin_pct"] or 0),
                              "revenue": float(c["revenue"] or 0)} for c in by_cat],

@@ -18,6 +18,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import text
 
 from kirana.fcm_sender import send_to_token, UNREGISTERED
 from kirana.intelligence.repository import IntelligenceRepository
@@ -26,6 +27,12 @@ from kirana.intelligence import triggers as T
 logger = logging.getLogger("kirana.intelligence.engine")
 
 _IST = "Asia/Kolkata"
+
+# Postgres advisory-lock keys: the scheduler runs in EVERY replica (Azure
+# Container Apps may scale to several), so the heavy nightly jobs guard
+# themselves — only the replica that wins the lock actually runs them.
+_SNAPSHOT_LOCK_KEY = 994201
+_ML_RETRAIN_LOCK_KEY = 994202
 
 
 class IntelligenceEngine:
@@ -86,6 +93,27 @@ class IntelligenceEngine:
 
     def _repo(self) -> IntelligenceRepository:
         return IntelligenceRepository(self._db)
+
+    def _try_lock(self, key: int):
+        """Acquire a session-level advisory lock. Returns the held connection
+        (release + close it when done) or None if another replica holds it."""
+        conn = self._db.connect()
+        try:
+            if conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}).scalar():
+                return conn
+        except Exception:
+            logger.exception("Advisory lock %s acquisition failed", key)
+        conn.close()
+        return None
+
+    @staticmethod
+    def _release_lock(conn, key: int) -> None:
+        try:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
+        except Exception:
+            logger.exception("Advisory unlock %s failed", key)
+        finally:
+            conn.close()
 
     async def _dispatch(
         self,
@@ -248,8 +276,13 @@ class IntelligenceEngine:
     async def _run_snapshot_refresh(self) -> None:
         """Write daily inventory snapshots from live orders + inventory tables."""
         from datetime import date
-        from sqlalchemy import text
         from kirana.repository import KiranaRepository
+
+        # One replica only (Azure Container Apps may run several).
+        lock_conn = self._try_lock(_SNAPSHOT_LOCK_KEY)
+        if lock_conn is None:
+            logger.info("Snapshot refresh: another replica holds the lock — skipping here")
+            return
 
         today = date.today().isoformat()
         repo  = KiranaRepository(self._db)
@@ -303,6 +336,8 @@ class IntelligenceEngine:
             logger.info("Snapshot refresh: wrote %d rows across %d stores", total, len(store_ids))
         except Exception:
             logger.exception("Snapshot refresh failed")
+        finally:
+            self._release_lock(lock_conn, _SNAPSHOT_LOCK_KEY)
 
     # ── ML model retraining ───────────────────────────────────────────────────
 
@@ -319,16 +354,22 @@ class IntelligenceEngine:
         import sys
         import os
 
-        train_script = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "ml_models", "train_all.py")
-        )
-
-        if not os.path.isfile(train_script):
-            logger.error("ML retrain: train_all.py not found at %s", train_script)
+        # Only one replica should run the (expensive) training subprocess.
+        lock_conn = self._try_lock(_ML_RETRAIN_LOCK_KEY)
+        if lock_conn is None:
+            logger.info("ML retrain: another replica holds the lock — skipping here")
             return
 
-        logger.info("ML retrain: starting %s", train_script)
         try:
+            train_script = os.path.normpath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "ml_models", "train_all.py")
+            )
+
+            if not os.path.isfile(train_script):
+                logger.error("ML retrain: train_all.py not found at %s", train_script)
+                return
+
+            logger.info("ML retrain: starting %s", train_script)
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, train_script,
                 stdout=asyncio.subprocess.PIPE,
@@ -354,6 +395,8 @@ class IntelligenceEngine:
 
         except Exception:
             logger.exception("ML retrain failed unexpectedly")
+        finally:
+            self._release_lock(lock_conn, _ML_RETRAIN_LOCK_KEY)
 
     # ── ML prediction refresh ─────────────────────────────────────────────────
 

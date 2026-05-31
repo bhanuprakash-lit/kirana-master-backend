@@ -23,6 +23,8 @@ from kirana.schemas import (
     SubscriptionUpgradeRequest,
     PaymentOrderRequest, PaymentVerifyRequest,
     ChangePasswordRequest,
+    BatchMarkdownRequest, BatchWasteRequest,
+    ReturnCreate, SetPriceRequest, SetCostRequest,
 )
 from kirana.service import KiranaService
 
@@ -382,6 +384,139 @@ async def add_udhaar(request: Request, body: UdhaarAddRequest, user: dict = Depe
     return _svc(request).add_udhaar(int(sid), body.customer_name, body.phone, body.amount)
 
 
+@router.get("/finance/udhaar/smart")
+async def smart_udhaar(request: Request, user: dict = Depends(_auth)):
+    """Open udhaar ranked by recovery risk, with a suggested action per entry."""
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    return {"udhaar": KiranaRepository(request.app.state.engine).get_smart_udhaar(int(sid))}
+
+
+# ── Inventory: Expiry loss prevention ───────────────────────────────────────────
+
+@router.get("/inventory/near-expiry")
+async def near_expiry_batches(request: Request, days: int = 7, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    return {"batches": repo.get_near_expiry_batches(int(sid), days)}
+
+
+@router.post("/inventory/batch/{batch_id}/markdown")
+async def set_batch_markdown(batch_id: int, request: Request, body: BatchMarkdownRequest,
+                             user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    try:
+        return repo.set_batch_markdown(int(sid), batch_id, body.markdown_pct)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/inventory/batch/{batch_id}/waste")
+async def record_batch_waste(batch_id: int, request: Request, body: BatchWasteRequest,
+                             user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    try:
+        return repo.record_batch_waste(int(sid), batch_id, body.units)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/inventory/reorder-suggestions")
+async def reorder_suggestions(request: Request, cover_days: int = 14,
+                              lookback_days: int = 30, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    return {"suggestions": repo.get_reorder_suggestions(int(sid), cover_days, lookback_days)}
+
+
+# ── Returns / exchanges (purchase memory) ───────────────────────────────────────
+
+@router.post("/returns")
+async def record_return(request: Request, body: ReturnCreate, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    items = [it.model_dump() for it in body.items]
+    if not items:
+        raise HTTPException(status_code=400, detail="No items to return")
+    return repo.record_return(int(sid), body.order_id, items, body.reason)
+
+
+@router.get("/customers/{customer_id}/purchases")
+async def customer_purchases(customer_id: int, request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    return {"purchases": repo.get_customer_purchases(int(sid), customer_id)}
+
+
+# ── AI Price Memory (forgotten / unset prices) ──────────────────────────────────
+
+@router.get("/inventory/missing-prices")
+async def missing_prices(request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    return {"products": KiranaRepository(request.app.state.engine).get_missing_prices(int(sid))}
+
+
+@router.post("/inventory/price")
+async def set_product_price(request: Request, body: SetPriceRequest, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    if body.price < 0:
+        raise HTTPException(status_code=400, detail="Price must be ≥ 0")
+    return KiranaRepository(request.app.state.engine).set_product_price(
+        int(sid), body.product_id, body.price, body.mrp)
+
+
+@router.get("/inventory/flags")
+async def inventory_flags(request: Request, user: dict = Depends(_auth)):
+    """Per-product ML flags (fast_moving / reorder_now / dead_stock / stockout_risk
+    / profit_opportunity) for the store — used to tag items in inventory/POS."""
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    flags = _svc(request).ml.flags_for_store(int(sid))
+    return {"flags": {str(pid): types for pid, types in flags.items()}}
+
+
+@router.post("/inventory/cost")
+async def set_product_cost(request: Request, body: SetCostRequest, user: dict = Depends(_auth)):
+    """Capture a product's real purchase cost (product_supplier.cost_price)."""
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    if body.cost_price < 0:
+        raise HTTPException(status_code=400, detail="Cost must be ≥ 0")
+    return KiranaRepository(request.app.state.engine).set_product_cost(
+        body.product_id, body.cost_price, body.supplier_id)
+
+
 # ── Subscription ──────────────────────────────────────────────────────────────
 
 @router.get("/subscription")
@@ -577,6 +712,46 @@ def _get_kpi_tier_config(request: Request) -> dict[str, str]:
     return KiranaRepository(request.app.state.engine).get_kpi_tier_config()
 
 
+# ── Admin: ML model freshness + retraining ──────────────────────────────────────
+
+@router.get("/admin/ml/status")
+async def ml_status(request: Request, refresh: bool = False, user: dict = Depends(_auth)):
+    """Prediction-CSV freshness (per-file age + overall stale flag).
+    Pass ?refresh=true to reload the CSVs from disk first."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    svc = _svc(request)
+    if refresh:
+        svc.ml.refresh()
+    return svc.ml.freshness()
+
+
+@router.post("/admin/ml/retrain")
+async def ml_retrain(request: Request, user: dict = Depends(_auth)):
+    """Kick off model retraining (ml_models/train_all.py) in the background.
+    Output is appended to logs/ml_retrain.log. Re-check /admin/ml/status?refresh=true after."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    import os as _os
+    import sys as _sys
+    import subprocess as _sp
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    script = _os.path.join(root, "ml_models", "train_all.py")
+    if not _os.path.exists(script):
+        raise HTTPException(status_code=500, detail="train_all.py not found")
+    try:
+        log_path = _os.path.join(root, "logs", "ml_retrain.log")
+        logf = open(log_path, "a", encoding="utf-8")
+        _sp.Popen([_sys.executable, script], cwd=root, stdout=logf, stderr=_sp.STDOUT)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not start retraining: {exc}")
+    return {
+        "status": "started",
+        "note": "Retraining runs in the background (logs/ml_retrain.log). "
+                "Check /admin/ml/status?refresh=true in a few minutes.",
+    }
+
+
 @router.get("/admin/stats")
 async def admin_stats(request: Request, user: dict = Depends(_auth)):
     if user.get("role") != "admin":
@@ -610,10 +785,12 @@ async def admin_list_stores(request: Request, user: dict = Depends(_auth)):
                    u.user_id, u.username,
                    COALESCE(u.full_name, u.username) AS owner_name,
                    sub.tier, sub.trial_tier,
-                   sub.trial_ends_at, sub.ended_at
+                   sub.trial_ends_at, sub.ended_at,
+                   COALESCE(up.allow_social_marketing, FALSE) AS allow_social_marketing
             FROM kirana_oltp.store s
             LEFT JOIN kirana_oltp.users u
                 ON u.store_id = s.store_id AND NOT COALESCE(u.is_deleted, FALSE)
+            LEFT JOIN kirana_oltp.user_prefs up ON up.user_id = u.user_id
             LEFT JOIN kirana_oltp.subscription sub ON sub.store_id = s.store_id
             WHERE NOT s.is_deleted
             ORDER BY s.created_at DESC
@@ -1023,6 +1200,16 @@ async def list_associations(request: Request, user: dict = Depends(_auth)):
         raise HTTPException(status_code=403, detail="Store owner login required")
     from kirana.repository import KiranaRepository
     return {"associations": KiranaRepository(request.app.state.engine).list_associations(int(sid))}
+
+
+@router.get("/associations/heatmap")
+async def association_heatmap(request: Request, user: dict = Depends(_auth)):
+    """Per-apartment/area growth metrics (customers, orders, revenue, last order)."""
+    sid = user.get("store_id")
+    if not sid:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    from kirana.repository import KiranaRepository
+    return {"heatmap": KiranaRepository(request.app.state.engine).get_association_heatmap(int(sid))}
 
 
 @router.post("/associations")
@@ -1451,6 +1638,121 @@ async def intelligence_logs(request: Request, limit: int = 50, user: dict = Depe
         logs = repo.list_logs(int(sid), limit=min(limit, 100))
 
     return {"logs": logs, "count": len(logs)}
+
+
+@router.get("/admin/logs")
+async def admin_logs(
+    request: Request,
+    lines: int = 200,
+    level: str = "",
+    user: dict = Depends(_auth),
+):
+    """Stream last N lines from the server log file. Admin only."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    import os as _os
+    log_path = _os.environ.get("LOG_FILE", "/app/logs/master.log")
+
+    if not _os.path.exists(log_path):
+        return {"lines": [], "total": 0, "log_path": log_path, "error": "Log file not found"}
+
+    lines = max(1, min(lines, 2000))
+    level_filter = level.upper() if level else ""
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            all_lines = fh.readlines()
+
+        tail = all_lines[-lines * 3 if level_filter else -lines:]
+
+        parsed = []
+        for raw in tail:
+            raw = raw.rstrip("\n")
+            if not raw:
+                continue
+            lvl = "INFO"
+            for candidate in ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"):
+                if candidate in raw:
+                    lvl = candidate
+                    break
+            if level_filter and lvl != level_filter:
+                continue
+            parsed.append({"raw": raw, "level": lvl})
+
+        result = parsed[-lines:]
+        return {"lines": result, "total": len(result), "log_path": log_path}
+    except Exception as exc:
+        logger.exception("Failed to read log file %s", log_path)
+        raise HTTPException(status_code=500, detail=f"Could not read logs: {exc}")
+
+
+@router.get("/admin/logs/stream")
+async def stream_logs(
+    request: Request,
+    tail: int = 100,
+    user: dict = Depends(_auth),
+):
+    """SSE live tail of the server log file. Sends last `tail` lines on connect, then streams new lines."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    import os as _os, asyncio, json as _json
+    log_path = _os.environ.get("LOG_FILE", "/app/logs/master.log")
+    tail = max(10, min(tail, 500))
+
+    def _level(line: str) -> str:
+        for lvl in ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"):
+            if f"[{lvl}]" in line:
+                return lvl
+        return "INFO"
+
+    async def _gen():
+        if not _os.path.exists(log_path):
+            yield f'data: {_json.dumps({"error": "Log file not found"})}\n\n'
+            return
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()
+                end_pos = fh.tell()
+        except OSError as exc:
+            yield f'data: {_json.dumps({"error": str(exc)})}\n\n'
+            return
+
+        for line in lines[-tail:]:
+            line = line.rstrip()
+            if line:
+                yield f'data: {_json.dumps({"raw": line, "level": _level(line)})}\n\n'
+
+        ka = 0
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                fh.seek(end_pos)
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    chunk = fh.read()
+                    if chunk:
+                        ka = 0
+                        for line in chunk.splitlines():
+                            line = line.strip()
+                            if line:
+                                yield f'data: {_json.dumps({"raw": line, "level": _level(line)})}\n\n'
+                    else:
+                        ka += 1
+                        if ka >= 5:
+                            yield ": ka\n\n"
+                            ka = 0
+                    await asyncio.sleep(1)
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
+
+    from starlette.responses import StreamingResponse as _SR
+    return _SR(
+        _gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/admin/intelligence/fire/{trigger_name}")

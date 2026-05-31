@@ -45,6 +45,7 @@ class RegisterStoreOwnerRequest(BaseModel):
     store_name: str
     store_type: str = "kirana"
     footfall: int = 40
+    budget: Optional[float] = None       # owner's monthly sales target (₹)
     location: Optional[str] = None
     region: Optional[str] = None
     email: Optional[str] = None          # store owner's contact email
@@ -365,3 +366,35 @@ class BasketCreate(BaseModel):
     valid_from: str | None = None  # YYYY-MM-DD
     valid_to: str | None = None
     items: list[BasketItemInput] = []
+
+
+class BatchMarkdownRequest(BaseModel):
+    markdown_pct: float
+
+
+class BatchWasteRequest(BaseModel):
+    units: int
+
+
+class ReturnItemInput(BaseModel):
+    product_id: int
+    qty: int
+    resaleable: bool = True
+
+
+class ReturnCreate(BaseModel):
+    order_id: int | None = None
+    items: list[ReturnItemInput] = []
+    reason: str | None = None
+
+
+class SetPriceRequest(BaseModel):
+    product_id: int
+    price: float
+    mrp: float | None = None
+
+
+class SetCostRequest(BaseModel):
+    product_id: int
+    cost_price: float
+    supplier_id: int | None = None

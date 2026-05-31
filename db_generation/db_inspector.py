@@ -1,19 +1,40 @@
 import csv
 import io
+import os
 from math import ceil
+from urllib.parse import urlparse
 
 import psycopg2
+from dotenv import load_dotenv
 from flask import Flask, Response, abort, render_template, request, url_for
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
-DB_NAME = "lit_db"
-DB_USER = "postgres"
-DB_PASSWORD = "123456"
-DB_HOST = "localhost"
-DB_PORT = "5432"
+# Load .env from repo root (two levels up from this file)
+_ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+load_dotenv(_ENV_PATH)
 
-APP_TITLE = "Kirana DB Inspector"
+# Parse DATABASE_URL if present, else fall back to individual DB_* vars
+_url = os.getenv("DATABASE_URL", "")
+if _url:
+    _p = urlparse(_url.replace("postgresql+psycopg2://", "postgresql://"))
+    DB_HOST     = _p.hostname or "localhost"
+    DB_PORT     = str(_p.port or 5432)
+    DB_USER     = _p.username or "postgres"
+    DB_PASSWORD = _p.password or ""
+    DB_NAME     = (_p.path or "/lit_db").lstrip("/")
+else:
+    DB_HOST     = os.getenv("DB_HOST",     "localhost")
+    DB_PORT     = os.getenv("DB_PORT",     "5432")
+    DB_USER     = os.getenv("DB_USER",     "postgres")
+    DB_PASSWORD = os.getenv("DB_PASSWORD", "123456")
+    DB_NAME     = os.getenv("DB_NAME",     "lit_db")
+
+# Azure Flexible Server requires SSL; detect by hostname suffix
+_AZURE = "postgres.database.azure.com" in DB_HOST
+_SSL   = {"sslmode": "require"} if _AZURE else {}
+
+APP_TITLE = f"Kirana DB Inspector — {DB_HOST}/{DB_NAME}"
 PAGE_SIZE = 50
 SCHEMAS = ("kirana_oltp", "kirana_olap")
 STORE_FILTERS = {
@@ -58,6 +79,7 @@ def get_conn():
         password=DB_PASSWORD,
         host=DB_HOST,
         port=DB_PORT,
+        **_SSL,
     )
 
 

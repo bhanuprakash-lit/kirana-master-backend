@@ -5,7 +5,28 @@
       "Bash(del \"C:\\\\Users\\\\Bhanuprakash\\\\Documents\\\\kirana-master-backend\\\\_check_users.py\")",
       "PowerShell(psql *)",
       "Bash(psql *)",
-      "Bash(cd C:UsersBhanuprakashDocumentskirana-master-backend *)"
+      "Bash(cd C:UsersBhanuprakashDocumentskirana-master-backend *)",
+      "Bash(Get-ChildItem -Recurse \"C:\\\\Users\\\\Bhanuprakash\\\\Documents\\\\kirana-master-backend\\\\implement_logs\")",
+      "Bash(Select-Object FullName)",
+      "PowerShell(az acr login *)",
+      "PowerShell(docker context ls *)",
+      "PowerShell(docker context use default)",
+      "PowerShell(docker info 2>&1)",
+      "PowerShell(docker build *)",
+      "PowerShell(git add *)",
+      "PowerShell(az containerapp logs show *)",
+      "PowerShell(az postgres flexible-server firewall-rule *)",
+      "Bash(npm run *)",
+      "PowerShell(.\\\\deploy.ps1)",
+      "PowerShell(& \"C:\\\\Users\\\\Bhanuprakash\\\\Documents\\\\kirana-master-backend\\\\deploy.ps1\")",
+      "PowerShell(Invoke-RestMethod \"https://ca-lohiya-outlet.purpleglacier-c71fadea.centralindia.azurecontainerapps.io/health\" -TimeoutSec 30 | ConvertTo-Json)",
+      "Bash(python db_generation/ensure_full_schema.py)",
+      "PowerShell($env:DB_HOST = \"psql-lohiya-kirana.postgres.database.azure.com\"; $env:DB_USER = \"psqladmin\"; $env:DB_PASSWORD = \"Lohiya@2026\"; $env:DB_NAME = \"db-kirana-dev\"; $env:DB_PORT = \"5432\"; Set-Location \"C:\\\\Users\\\\Bhanuprakash\\\\Documents\\\\kirana-master-backend\"; python db_generation/ensure_full_schema.py 2>&1)",
+      "PowerShell($ip = \\(Invoke-RestMethod -Uri \"https://api.ipify.org\"\\); Write-Host \"Current IP: $ip\")",
+      "PowerShell($env:DB_HOST = \"psql-lohiya-kirana.postgres.database.azure.com\"; $env:DB_USER = \"psqladmin\"; $env:DB_PASSWORD = \"Lohiya@2026\"; $env:DB_NAME = \"db-kirana-dev\"; $env:DB_PORT = \"5432\"; Set-Location \"C:\\\\Users\\\\Bhanuprakash\\\\Documents\\\\kirana-master-backend\"; python db_generation/ensure_full_schema.py 2>&1 | Select-String -Pattern \"alter:khata|ERR|Done:\")",
+      "PowerShell(az containerapp show *)",
+      "PowerShell($env:DB_HOST=\"psql-lohiya-kirana.postgres.database.azure.com\"; $env:DB_USER=\"psqladmin\"; $env:DB_PASSWORD=\"Lohiya@2026\"; $env:DB_NAME=\"db-kirana-dev\"; $env:DB_PORT=\"5432\"; python db_generation/ensure_full_schema.py 2>&1 | Select-String -Pattern \"view:|SKIP view:|ERROR\" | Select-Object -First 20)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Bhanuprakash\\\\Documents\\\\kirana-master-backend\\\\db_generation\" -File | Where-Object { $_.Extension -eq \".py\" } | Select-Object Name)"
     ]
   }
 }
