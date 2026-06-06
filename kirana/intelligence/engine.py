@@ -28,9 +28,15 @@ logger = logging.getLogger("kirana.intelligence.engine")
 
 _IST = "Asia/Kolkata"
 
-# Postgres advisory-lock keys: the scheduler runs in EVERY replica (Azure
-# Container Apps may scale to several), so the heavy nightly jobs guard
-# themselves — only the replica that wins the lock actually runs them.
+# Postgres advisory-lock keys: every process that constructs an
+# IntelligenceEngine (each uvicorn worker, each Azure Container App replica)
+# would otherwise run its own scheduler and fire every job — and every push —
+# once per process. _SCHEDULER_LOCK_KEY gates the whole scheduler so only the
+# leader runs jobs; the heavy nightly jobs additionally guard themselves as a
+# belt-and-braces against a brief lock handover.
+# NOTE: advisory locks are scoped per *database*, so DEV/QA/UAT sharing one
+# Postgres *server* but separate databases are isolated automatically.
+_SCHEDULER_LOCK_KEY = 994200
 _SNAPSHOT_LOCK_KEY = 994201
 _ML_RETRAIN_LOCK_KEY = 994202
 
@@ -40,19 +46,81 @@ class IntelligenceEngine:
         self._db = engine
         self._kirana_svc = kirana_svc
         self._scheduler = AsyncIOScheduler(timezone=_IST)
-        self._setup_jobs()
+        self._lock_conn = None  # held connection for the leader's scheduler lock
+        self._is_leader = False
 
     # ── Public lifecycle ──────────────────────────────────────────────────────
 
     def start(self) -> None:
-        if not self._scheduler.running:
-            self._scheduler.start()
-            logger.info("Intelligence engine started")
+        if self._scheduler.running:
+            return
+        # The scheduler runs in every worker/replica, but only the one that holds
+        # the advisory lock registers the real jobs (leader). The rest poll for
+        # leadership every 2 min so that if the current leader dies or releases
+        # the lock — e.g. the brief overlap during a rolling deploy — a standby
+        # takes over instead of leaving nobody running the jobs.
+        self._scheduler.start()
+        self._try_become_leader()
+        if not self._is_leader:
+            logger.info("Intelligence engine: scheduler lock held elsewhere — standby, retrying leadership every 2 min")
+            self._scheduler.add_job(
+                self._try_become_leader, IntervalTrigger(minutes=2),
+                id="_leader_election", replace_existing=True,
+            )
+
+    def _try_become_leader(self) -> None:
+        if self._is_leader:
+            return
+        conn = self._try_lock(_SCHEDULER_LOCK_KEY)
+        if conn is None:
+            return  # someone else still holds it; the election job retries
+        self._lock_conn = conn
+        self._is_leader = True
+        self._setup_jobs()  # registers the real jobs + lock keepalive
+        try:
+            job = self._scheduler.get_job("_leader_election")
+            if job:
+                job.remove()
+        except Exception:
+            pass
+        logger.info("Intelligence engine started (scheduler leader)")
+
+    def _step_down(self) -> None:
+        """Lost the lock — drop the jobs and re-enter the election."""
+        self._is_leader = False
+        if self._lock_conn is not None:
+            self._release_lock(self._lock_conn, _SCHEDULER_LOCK_KEY)
+            self._lock_conn = None
+        for job in self._scheduler.get_jobs():
+            if job.id != "_leader_election":
+                try:
+                    job.remove()
+                except Exception:
+                    pass
+        self._scheduler.add_job(
+            self._try_become_leader, IntervalTrigger(minutes=2),
+            id="_leader_election", replace_existing=True,
+        )
 
     def stop(self) -> None:
         if self._scheduler.running:
             self._scheduler.shutdown(wait=False)
             logger.info("Intelligence engine stopped")
+        if self._lock_conn is not None:
+            self._release_lock(self._lock_conn, _SCHEDULER_LOCK_KEY)
+            self._lock_conn = None
+
+    @property
+    def handlers(self) -> list[dict]:
+        """Registered scheduled triggers, for admin introspection."""
+        return [
+            {
+                "id": job.id,
+                "trigger": str(job.trigger),
+                "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+            }
+            for job in self._scheduler.get_jobs()
+        ]
 
     # ── Job registration ──────────────────────────────────────────────────────
 
@@ -77,6 +145,9 @@ class IntelligenceEngine:
         # Abandoned cart — checked every 5 minutes
         s.add_job(self._run_abandoned_cart, IntervalTrigger(minutes=5), id="abandoned_cart", replace_existing=True)
 
+        # Delayed onboarding template — checked every 5 minutes
+        s.add_job(self._run_delayed_onboarding, IntervalTrigger(minutes=5), id="delayed_onboarding", replace_existing=True)
+
         # Nightly inventory snapshot (2am IST) — keeps ML predictions fresh
         s.add_job(self._run_snapshot_refresh, CronTrigger(hour=2, minute=0, timezone=_IST), id="snapshot_refresh", replace_existing=True)
 
@@ -86,6 +157,11 @@ class IntelligenceEngine:
 
         # ML prediction refresh every 6 hours — safety net reload of CSVs
         s.add_job(self._run_ml_refresh, IntervalTrigger(hours=6), id="ml_refresh", replace_existing=True)
+
+        # Keep the leader's advisory-lock connection warm. Azure can cut idle TCP
+        # sessions, which would silently release the lock; only the leader runs
+        # this job (standby instances never start the scheduler).
+        s.add_job(self._keepalive_lock, IntervalTrigger(minutes=4), id="_lock_keepalive", replace_existing=True)
 
         logger.info("Intelligence engine: %d jobs registered", len(s.get_jobs()))
 
@@ -115,6 +191,27 @@ class IntelligenceEngine:
         finally:
             conn.close()
 
+    def _keepalive_lock(self) -> None:
+        """Ping the held lock connection so Azure doesn't reap it as idle. If the
+        connection has dropped, step down and re-enter the election so another
+        replica (or this one) can pick the lock back up."""
+        if self._lock_conn is None:
+            return
+        try:
+            self._lock_conn.execute(text("SELECT 1"))
+        except Exception:
+            logger.warning("Scheduler lock connection lost — stepping down to standby and re-electing")
+            self._step_down()
+
+    def _is_in_quiet_hours(self, quiet_hours_start: int, quiet_hours_end: int) -> bool:
+        from datetime import datetime
+        import zoneinfo
+        now_hour = datetime.now(zoneinfo.ZoneInfo(_IST)).hour
+        if quiet_hours_start <= quiet_hours_end:
+            return quiet_hours_start <= now_hour < quiet_hours_end
+        else:
+            return now_hour >= quiet_hours_start or now_hour < quiet_hours_end
+
     async def _dispatch(
         self,
         trigger_name: str,
@@ -138,6 +235,10 @@ class IntelligenceEngine:
                     skipped += 1
                     continue
                 if dedupe == "weekly" and repo.was_sent_this_week(store_id, trigger_name):
+                    skipped += 1
+                    continue
+
+                if self._is_in_quiet_hours(store.get("quiet_hours_start", 22), store.get("quiet_hours_end", 7)):
                     skipped += 1
                     continue
 
@@ -270,6 +371,89 @@ class IntelligenceEngine:
 
         if sent or skipped:
             logger.info("Trigger abandoned_cart sent=%d skipped=%d", sent, skipped)
+
+    async def _run_delayed_onboarding(self) -> None:
+        """Finds store owners whose trial started 60-65 minutes ago and sends them the onboarding WhatsApp template."""
+        from kirana.repository import KiranaRepository
+        repo = self._repo()
+        sent = 0
+
+        # Query for users who hit the 1-hour mark
+        with self._db.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT u.phone_number, u.user_id, s.store_id,
+                       COALESCE(up.quiet_hours_start, 22) AS quiet_hours_start,
+                       COALESCE(up.quiet_hours_end, 7) AS quiet_hours_end
+                FROM kirana_oltp.users u
+                JOIN kirana_oltp.subscription s ON s.store_id = u.store_id
+                LEFT JOIN kirana_oltp.user_prefs up ON up.user_id = u.user_id
+                WHERE u.role = 'store_owner'
+                  AND u.phone_number IS NOT NULL
+                  AND u.phone_number != ''
+                  AND NOT COALESCE(u.is_deleted, FALSE)
+                  AND s.started_at BETWEEN NOW() - INTERVAL '65 minutes' AND NOW() - INTERVAL '60 minutes'
+            """)).mappings().all()
+
+        if not rows:
+            return
+
+        from whatsapp.templates import onboarding_payload
+        import traceback
+
+        for row in rows:
+            phone = row["phone_number"]
+            store_id = row["store_id"]
+
+            if self._is_in_quiet_hours(row.get("quiet_hours_start", 22), row.get("quiet_hours_end", 7)):
+                continue
+
+            # We can use intelligence_logs to ensure we never double-send
+            if repo.was_sent_today(store_id, "delayed_onboarding"):
+                continue
+
+            try:
+                # Need wa_client to send the message
+                # It's usually attached to app.state, but we need to fetch it via the engine here.
+                # Since we don't have direct access to `app.state`, we'll import get_settings
+                # and initialize a temp client if needed, or rely on the kirana_svc context if possible.
+                # Wait, engine doesn't easily hold the wa_client. Let's get it via FastAPI if we can,
+                # but better yet, let's use the DB directly to check if they have a WhatsApp session.
+                
+                # A robust way is to just fire an HTTP request to our own endpoint? No, that's messy.
+                # We can construct the WhatsAppClient right here since we have settings.
+                from config import get_settings
+                from whatsapp.client import WhatsAppClient
+                s = get_settings()
+                if not s.whatsapp_access_token:
+                    continue
+
+                wa_client = WhatsAppClient(
+                    access_token=s.whatsapp_access_token,
+                    phone_number_id=s.whatsapp_phone_number_id,
+                    base_url=s.whatsapp_api_base_url,
+                )
+
+                if not wa_client.is_configured:
+                    continue
+
+                # The onboarding template requires a 'user_number'. In conversation_handler, it defaults to 1.
+                payload = onboarding_payload(phone, 1)
+                wa_client.send_template(payload)
+
+                repo.log_notification(
+                    store_id=store_id, user_id=row["user_id"],
+                    trigger_type="delayed_onboarding",
+                    title="Onboarding WhatsApp", body="Sent 1 hour after trial start",
+                    payload={"phone": phone},
+                    status="sent",
+                )
+                sent += 1
+            except Exception as exc:
+                logger.error("Failed to send delayed onboarding to %s: %s", phone, exc)
+                logger.debug(traceback.format_exc())
+
+        if sent:
+            logger.info("Trigger delayed_onboarding sent=%d", sent)
 
     # ── Snapshot refresh ─────────────────────────────────────────────────────
 
@@ -413,12 +597,22 @@ class IntelligenceEngine:
 
     # ── Manual trigger (for testing/admin) ───────────────────────────────────
 
+    @property
+    def handlers(self) -> list[str]:
+        return [
+            "morning_greeting", "evening_summary", "weekly_report",
+            "overdue_udhaar", "distributor_due", "low_stock_alert",
+            "expiry_alert", "inactive_customer", "feature_discovery",
+            "abandoned_cart", "delayed_onboarding", "snapshot_refresh",
+            "ml_retrain", "ml_refresh",
+        ]
+
     async def fire(self, trigger_name: str, store_id: int | None = None) -> dict:
         """
         Manually fire a trigger immediately, bypassing deduplication.
         Used by the admin API for testing.
         """
-        handlers = {
+        method_map = {
             "morning_greeting":  self._run_morning_greeting,
             "evening_summary":   self._run_evening_summary,
             "weekly_report":     self._run_weekly_report,
@@ -429,11 +623,12 @@ class IntelligenceEngine:
             "inactive_customer": self._run_inactive_customer,
             "feature_discovery": self._run_feature_discovery,
             "abandoned_cart":    self._run_abandoned_cart,
+            "delayed_onboarding": self._run_delayed_onboarding,
             "snapshot_refresh":  self._run_snapshot_refresh,
             "ml_retrain":        self._run_ml_retrain,
             "ml_refresh":        self._run_ml_refresh,
         }
-        handler = handlers.get(trigger_name)
+        handler = method_map.get(trigger_name)
         if not handler:
             return {"error": f"Unknown trigger: {trigger_name}"}
         await handler()

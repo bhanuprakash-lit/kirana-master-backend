@@ -148,9 +148,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    s = get_settings()
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=s.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=True,
@@ -250,6 +252,6 @@ if __name__ == "__main__":
         host=s.host,
         port=s.port,
         reload=s.debug,
-        workers=1 if s.debug else 2,
+        workers=1 if s.debug else int(os.getenv("WORKERS", "1")),
         log_level="info",
     )

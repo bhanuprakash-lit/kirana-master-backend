@@ -60,5 +60,8 @@ EXPOSE 9000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -fsS http://localhost:9000/health || exit 1
 
-# 2 workers matches main.py production default. Override via WORKERS env if needed.
-CMD ["sh", "-c", "uvicorn main:app --host ${MASTER_HOST} --port ${MASTER_PORT} --workers ${WORKERS:-2} --proxy-headers --forwarded-allow-ips='*'"]
+# 1 worker per container by design: each worker is a separate process that runs
+# the full lifespan (ML bootstrap + in-process scheduler), so >1 worker means
+# duplicate startup logs, duplicate scheduled notifications, and 2x ML memory.
+# Scale horizontally with Container App replicas instead. Override via WORKERS env.
+CMD ["sh", "-c", "uvicorn main:app --host ${MASTER_HOST} --port ${MASTER_PORT} --workers ${WORKERS:-1} --proxy-headers --forwarded-allow-ips='*'"]
