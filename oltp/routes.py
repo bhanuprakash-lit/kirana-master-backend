@@ -71,20 +71,20 @@ def _key_filters(request: Request) -> dict[str, str]:
 
 
 @router.get("/schema", summary="List schema metadata for all kirana_oltp tables")
-async def schema_overview(request: Request, user: dict = Depends(_auth)):
+def schema_overview(request: Request, user: dict = Depends(_auth)):
     repo = _repo(request)
     return {"schema": "kirana_oltp", "tables": repo.schema_overview()}
 
 
 @router.get("/schema/{table_name}", summary="Get schema metadata for one kirana_oltp table")
-async def schema_for_table(table_name: str, request: Request, user: dict = Depends(_auth)):
+def schema_for_table(table_name: str, request: Request, user: dict = Depends(_auth)):
     _check_table(table_name)
     repo = _repo(request)
     return {"schema": "kirana_oltp", "table": repo.schema_for(table_name)}
 
 
 @router.get("/{table_name}", summary="List rows from a kirana_oltp table")
-async def list_table_rows(
+def list_table_rows(
     table_name: str,
     request: Request,
     limit: int = Query(100, ge=1, le=500),
@@ -97,14 +97,14 @@ async def list_table_rows(
 
 
 @router.get("/{table_name}/record", summary="Get a single row by primary key")
-async def get_table_row(table_name: str, request: Request, user: dict = Depends(_auth)):
+def get_table_row(table_name: str, request: Request, user: dict = Depends(_auth)):
     _check_table(table_name)
     repo = _repo(request)
     return repo.get_row(table_name, user, _key_filters(request))
 
 
 @router.post("/{table_name}", summary="Create a row in a kirana_oltp table")
-async def create_table_row(
+def create_table_row(
     table_name: str,
     request: Request,
     payload: dict[str, Any] = Body(...),
@@ -116,7 +116,7 @@ async def create_table_row(
 
 
 @router.patch("/{table_name}", summary="Update a row by query parameter keys")
-async def update_table_row_direct(
+def update_table_row_direct(
     table_name: str,
     request: Request,
     payload: dict[str, Any] = Body(...),
@@ -128,14 +128,14 @@ async def update_table_row_direct(
 
 
 @router.delete("/{table_name}", summary="Delete a row by query parameter keys")
-async def delete_table_row_direct(table_name: str, request: Request, user: dict = Depends(_auth)):
+def delete_table_row_direct(table_name: str, request: Request, user: dict = Depends(_auth)):
     _check_table(table_name)
     repo = _repo(request)
     return repo.delete_row(table_name, user, _key_filters(request))
 
 
 @router.patch("/{table_name}/record", summary="Update a row using a structured keys/data body")
-async def update_table_row(
+def update_table_row(
     table_name: str,
     request: Request,
     body: RecordUpdateRequest,
@@ -147,7 +147,7 @@ async def update_table_row(
 
 
 @router.delete("/{table_name}/record", summary="Delete a row in a kirana_oltp table")
-async def delete_table_row(table_name: str, request: Request, user: dict = Depends(_auth)):
+def delete_table_row(table_name: str, request: Request, user: dict = Depends(_auth)):
     _check_table(table_name)
     repo = _repo(request)
     return repo.delete_row(table_name, user, _key_filters(request))

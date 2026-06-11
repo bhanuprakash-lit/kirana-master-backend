@@ -79,6 +79,10 @@ def send_to_token(
     if not fcm_token or not _ensure_init():
         return False
     try:
+        # Route to the per-category Android channel the app created (so users can
+        # mute one kind without silencing the rest). The `channel` data field and
+        # the AndroidNotification.channel_id must agree; default keeps old behaviour.
+        channel_id = str((data or {}).get("channel") or "kirana_ai_high")
         msg = _messaging.Message(
             notification=_messaging.Notification(title=title, body=body),
             data={k: str(v) for k, v in (data or {}).items()},
@@ -86,7 +90,7 @@ def send_to_token(
             android=_messaging.AndroidConfig(
                 priority="high",
                 notification=_messaging.AndroidNotification(
-                    channel_id="kirana_ai_high",
+                    channel_id=channel_id,
                     priority="high",
                 ),
             ),

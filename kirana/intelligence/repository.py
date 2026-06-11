@@ -221,11 +221,15 @@ class IntelligenceRepository:
         """
         sql = """
         SELECT cs.store_id, cs.item_count, cs.cart_data, cs.updated_at,
-               u.user_id, u.fcm_token, s.name AS store_name
+               u.user_id, u.fcm_token, s.name AS store_name,
+               COALESCE(up.quiet_hours_start, 22) AS quiet_hours_start,
+               COALESCE(up.quiet_hours_end, 7) AS quiet_hours_end
         FROM kirana_oltp.cart_session cs
         JOIN kirana_oltp.store s ON s.store_id = cs.store_id
         JOIN kirana_oltp.users u
             ON u.store_id = cs.store_id AND u.role = 'store_owner'
+        LEFT JOIN kirana_oltp.user_prefs up
+            ON up.user_id = u.user_id
         WHERE cs.item_count > 0
           AND cs.updated_at < NOW() - (:mins || ' minutes')::interval
           AND (cs.notified_at IS NULL OR cs.notified_at < NOW() - INTERVAL '1 hour')

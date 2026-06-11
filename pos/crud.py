@@ -113,48 +113,36 @@ def _enrich(db: Session, product: KiranaProduct, store_id: int) -> dict:
 
 def get_products(db: Session, store_id: int, skip: int = 0, limit: int = 100) -> list[dict]:
     tbl = _product_tbl(store_id)
-    if store_id in CATALOG_STORES:
-        rows = db.execute(text(f"""
-            SELECT p.product_id, p.name, p.brand, p.unit,
-                   p.weight::float            AS weight,
-                   p.sku, p.barcode, p.is_perishable, p.is_loose, p.image_url, p.category_id,
-                   COALESCE(pr.price,    0.0)::float AS price,
-                   pr.mrp::float                     AS mrp,
-                   COALESCE(inv.quantity, 0)          AS stock_quantity,
-                   TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
-            FROM   {tbl} p
-            JOIN   kirana_oltp.inventory inv
-                       ON inv.product_id = p.product_id AND inv.store_id = :sid
-            LEFT   JOIN LATERAL (
-                       SELECT price, mrp
-                       FROM   kirana_oltp.pricing
-                       WHERE  product_id = p.product_id
-                         AND  store_id   = :sid
-                         AND  valid_from <= NOW()
-                       ORDER  BY valid_from DESC LIMIT 1
-                   ) pr ON TRUE
-            LEFT   JOIN kirana_oltp.inventory_batch ib
-                       ON ib.product_id = p.product_id
-                      AND ib.store_id   = :sid
-                      AND ib.qty_in_stock > 0
-            GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight,
-                      p.sku, p.barcode, p.is_perishable, p.is_loose,
-                      p.image_url, p.category_id, pr.price, pr.mrp, inv.quantity
-            ORDER  BY p.product_id
-            LIMIT  :limit OFFSET :skip
-        """), {"sid": store_id, "limit": limit, "skip": skip}).mappings().all()
-        return [dict(r) for r in rows]
-    # ── default: full product table (ORM path) ────────────────────────────────
-    products = (
-        db.query(KiranaProduct)
-        .join(KiranaInventory, KiranaInventory.product_id == KiranaProduct.product_id)
-        .filter(KiranaInventory.store_id == store_id)
-        .order_by(KiranaProduct.product_id)
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-    return [_enrich(db, p, store_id) for p in products]
+    rows = db.execute(text(f"""
+        SELECT p.product_id, p.name, p.brand, p.unit,
+               p.weight::float            AS weight,
+               p.sku, p.barcode, p.is_perishable, p.is_loose, p.image_url, p.category_id,
+               COALESCE(pr.price,    0.0)::float AS price,
+               pr.mrp::float                     AS mrp,
+               COALESCE(inv.quantity, 0)          AS stock_quantity,
+               TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
+        FROM   {tbl} p
+        JOIN   kirana_oltp.inventory inv
+                   ON inv.product_id = p.product_id AND inv.store_id = :sid
+        LEFT   JOIN LATERAL (
+                   SELECT price, mrp
+                   FROM   kirana_oltp.pricing
+                   WHERE  product_id = p.product_id
+                     AND  store_id   = :sid
+                     AND  valid_from <= NOW()
+                   ORDER  BY valid_from DESC LIMIT 1
+               ) pr ON TRUE
+        LEFT   JOIN kirana_oltp.inventory_batch ib
+                   ON ib.product_id = p.product_id
+                  AND ib.store_id   = :sid
+                  AND ib.qty_in_stock > 0
+        GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight,
+                  p.sku, p.barcode, p.is_perishable, p.is_loose,
+                  p.image_url, p.category_id, pr.price, pr.mrp, inv.quantity
+        ORDER  BY p.product_id
+        LIMIT  :limit OFFSET :skip
+    """), {"sid": store_id, "limit": limit, "skip": skip}).mappings().all()
+    return [dict(r) for r in rows]
 
 
 def get_product(db: Session, product_id: int, store_id: int) -> dict | None:

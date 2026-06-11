@@ -68,3 +68,7 @@ serviceAccountKey.json
 
 # Personal ops runbook — contains credentials, never commit
 RUNBOOK.md
+
+# Local dev / DB test scripts (throwaway)
+test_azure_conn.py
+export_stores.py

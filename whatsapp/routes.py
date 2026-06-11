@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger("whatsapp.routes")
@@ -86,16 +86,11 @@ async def verify_webhook(
 # ── Webhook receiver (POST) ───────────────────────────────────────────────────
 
 @router.post("/webhook", summary="Receive WhatsApp messages and status updates")
-async def receive_webhook(request: Request):
+def receive_webhook(request: Request, data: dict = Body(...)):
     """
     Meta sends all incoming messages here.
     We parse, route through ConversationHandler, and return 200 immediately.
     """
-    try:
-        data = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-
     if data.get("object") != "whatsapp_business_account":
         return {"status": "ignored"}
 
@@ -116,8 +111,7 @@ async def receive_webhook(request: Request):
 
                 if phone:
                     try:
-                        loop = asyncio.get_event_loop()
-                        await loop.run_in_executor(None, handler.handle, phone, message, msg_id)
+                        handler.handle(phone, message, msg_id)
                         processed += 1
                     except Exception as exc:
                         logger.exception("Error handling message from %s: %s", phone, exc)

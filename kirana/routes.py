@@ -1,6 +1,6 @@
 import logging
 from typing import Optional, List, TYPE_CHECKING
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ from kirana.schemas import (
     ReturnCreate, SetPriceRequest, SetCostRequest,
 )
 from kirana.service import KiranaService
+from whatsapp.templates import udhaar_reminder_payload, basket_promo_payload
 
 router = APIRouter(prefix="/kirana", tags=["Kirana AI"])
 
@@ -71,24 +72,40 @@ async def health(request: Request):
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
+def _telemetry(request: Request) -> dict:
+    """Device/OS headers sent by the mobile app + the client IP, persisted in
+    user_sessions for the admin Sessions page (see docs/TELEMETRY_SPEC.md).
+    Honours X-Forwarded-For so we record the real client IP behind the proxy."""
+    h = request.headers
+    xff = h.get("X-Forwarded-For")
+    ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else None)
+    return {
+        "device_brand": h.get("X-Device-Brand"),
+        "device_model": h.get("X-Device-Model"),
+        "os_name": h.get("X-OS-Name"),
+        "os_version": h.get("X-OS-Version"),
+        "ip_address": ip,
+    }
+
+
 @router.post("/auth/login")
 async def login(request: Request, body: LoginRequest):
     try:
-        return _svc(request).login(body)
+        return _svc(request).login(body, telemetry=_telemetry(request))
     except ValueError:
         logger.warning("Failed login attempt for user: %s", body.username)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @router.post("/auth/register")
 async def register(request: Request, body: RegisterStoreOwnerRequest):
-    return _svc(request).register_store_owner(body).model_dump()
+    return _svc(request).register_store_owner(body, telemetry=_telemetry(request)).model_dump()
 
 
 @router.post("/auth/phone-login")
 async def phone_login(request: Request, body: PhoneLoginRequest):
     """Log in using a Firebase-verified phone number. Returns 401 if no account exists."""
     try:
-        return _svc(request).phone_login(body)
+        return _svc(request).phone_login(body, telemetry=_telemetry(request))
     except ValueError:
         logger.warning("Phone login: no account for %s", body.phone_number[:4] + "****")
         raise HTTPException(status_code=404, detail="No account found for this phone number")
@@ -107,7 +124,7 @@ async def me(user: dict = Depends(_auth)):
 
 
 @router.get("/catalog/search")
-async def catalog_search(
+def catalog_search(
     request: Request,
     q: str = "",
     barcode: str = "",
@@ -292,9 +309,12 @@ async def store_recommendations(store_id: int, request: Request, user: dict = De
 # ── Snapshots / Inventory Ingestion ───────────────────────────────────────────
 
 @router.post("/stores/{store_id}/snapshot")
-async def ingest_snapshot(store_id: int, body: InventorySnapshotWriteRequest, request: Request, user: dict = Depends(_auth)):
+async def ingest_snapshot(store_id: int, body: InventorySnapshotWriteRequest, request: Request, background_tasks: BackgroundTasks, user: dict = Depends(_auth)):
     _require_store(store_id, user)
-    return _svc(request).ingest_store_snapshot(store_id, body)
+    result = _svc(request).ingest_store_snapshot(store_id, body)
+    from kirana.repository import KiranaRepository
+    background_tasks.add_task(KiranaRepository(request.app.state.engine).compute_store_footfall, store_id)
+    return result
 
 
 @router.get("/stores/{store_id}/snapshot")
@@ -567,20 +587,49 @@ async def upgrade_subscription(request: Request, body: SubscriptionUpgradeReques
 @router.post("/subscription/send-reminder")
 async def send_subscription_reminder(
     request: Request,
-    days_left: int = 0,
-    message: str = "",
     user: dict = Depends(_auth),
 ):
     user_id = user.get("user_id")
     if not user_id:
         return {"sent": False}
-    title = "Kirana AI Trial Expiring" if days_left > 0 else "Kirana AI Trial Expired"
+    # The app sends days_left/message in the JSON body — read them from there.
+    # (Bare scalar params would be parsed as query params and silently stay at
+    # their defaults, making every reminder say "Trial Expired".)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    # Source of truth = the live subscription, NOT the client. A stale/buggy app
+    # (or a body the server can't read) must never be able to turn a perfectly
+    # valid trial into a "Trial Expired" push. We only fall back to the client
+    # value when there's no subscription row to read.
+    sid = user.get("store_id")
+    days_left = None
+    expired = None
+    if sid is not None:
+        try:
+            sub = _svc(request).get_active_subscription(int(sid))
+        except Exception:
+            sub = None
+        if sub:
+            days_left = sub.get("days_remaining")
+            expired = bool(sub.get("is_expired"))
+    if days_left is None:
+        days_left = int(payload.get("days_left") or 0)
+    if expired is None:
+        expired = days_left <= 0
+
+    message = (payload.get("message") or "").strip()
+    # Title is localized by the app and passed in; fall back to English.
+    title_in = (payload.get("title") or "").strip()
+    title = title_in or ("Kirana AI Trial Expiring" if not expired else "Kirana AI Trial Expired")
     body = message or (
         f"Your trial ends in {days_left} day{'s' if days_left != 1 else ''}. Upgrade to continue."
-        if days_left > 0 else
+        if not expired else
         "Your free trial has ended. Upgrade to keep your store running smoothly."
     )
-    sent = _svc(request).send_fcm_to_user(user_id, title, body, data={"action": "open_subscription", "days_left": str(days_left)})
+    sent = _svc(request).send_fcm_to_user(user_id, title, body, data={"action": "open_subscription", "days_left": str(days_left), "channel": "kirana_account"})
     return {"sent": sent}
 
 
@@ -607,7 +656,7 @@ async def approve_trial(store_id: int, request: Request, user: dict = Depends(_a
                 row["user_id"],
                 f"Your Kirana AI {tier_label} Trial is Active!",
                 f"Your {tier_label} trial has been activated. You have {trial_days} days to explore {tier_label} features.",
-                data={"action": "open_subscription"},
+                data={"action": "open_subscription", "channel": "kirana_account"},
             )
             logger.info("approve_trial: FCM to user_id=%s sent=%s", row["user_id"], sent)
         else:
@@ -782,7 +831,7 @@ async def admin_list_stores(request: Request, user: dict = Depends(_auth)):
     with request.app.state.engine.connect() as conn:
         rows = conn.execute(_text("""
             SELECT s.store_id, s.name AS store_name, s.location, s.created_at,
-                   u.user_id, u.username,
+                   u.user_id, u.username, u.phone_number,
                    COALESCE(u.full_name, u.username) AS owner_name,
                    sub.tier, sub.trial_tier,
                    sub.trial_ends_at, sub.ended_at,
@@ -796,6 +845,56 @@ async def admin_list_stores(request: Request, user: dict = Depends(_auth)):
             ORDER BY s.created_at DESC
         """)).mappings().all()
     return {"stores": [dict(r) for r in rows]}
+
+
+@router.get("/admin/stores/{store_id}/deep-dive")
+async def admin_store_deep_dive(store_id: int, request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from kirana.repository import KiranaRepository
+    repo = KiranaRepository(request.app.state.engine)
+    data = repo.get_store_deep_dive(store_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Store not found")
+    return data
+
+
+@router.get("/admin/intelligence/triggers")
+async def admin_list_triggers(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    engine: "IntelligenceEngine" = request.app.state.intelligence
+    return {"triggers": engine.handlers}
+
+
+@router.get("/admin/sessions")
+async def admin_list_sessions(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from kirana.repository import KiranaRepository
+    repo = KiranaRepository(request.app.state.engine)
+    sessions = repo.list_active_sessions(limit=100)
+    return {"sessions": sessions}
+
+
+@router.get("/admin/vouchers")
+async def admin_list_vouchers(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from kirana.repository import KiranaRepository
+    repo = KiranaRepository(request.app.state.engine)
+    vouchers = repo.list_vouchers(limit=100)
+    return {"vouchers": vouchers}
+
+
+@router.get("/admin/intelligence/all-logs")
+async def admin_intelligence_all_logs(request: Request, limit: int = 50, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from kirana.intelligence.repository import IntelligenceRepository
+    repo = IntelligenceRepository(request.app.state.engine)
+    logs = repo.list_all_logs(limit=limit)
+    return {"logs": logs, "count": len(logs)}
 
 
 @router.post("/admin/notify")
@@ -821,7 +920,7 @@ async def admin_notify(request: Request, user: dict = Depends(_auth)):
                 "SELECT user_id FROM kirana_oltp.users WHERE role = 'store_owner' AND NOT COALESCE(is_deleted, FALSE)"
             )).mappings().all()
             user_ids = [r["user_id"] for r in rows]
-    sent = sum(1 for uid in user_ids if svc.send_fcm_to_user(uid, title, message, data={"action": "admin_notify"}))
+    sent = sum(1 for uid in user_ids if svc.send_fcm_to_user(uid, title, message, data={"action": "admin_notify", "channel": "kirana_account"}))
     return {"sent": sent, "total": len(user_ids)}
 
 
@@ -853,7 +952,7 @@ async def admin_mock_payment(request: Request, user: dict = Depends(_auth)):
             owner["user_id"],
             f"Your Kirana AI {tier_label} plan is active!",
             f"Admin activated your {tier_label} plan.",
-            data={"action": "open_subscription"},
+            data={"action": "open_subscription", "channel": "kirana_account"},
         )
     return {"success": True}
 
@@ -1121,22 +1220,22 @@ async def alert_basket_customers(basket_id: int, request: Request, user: dict = 
     if not basket:
         raise HTTPException(status_code=404, detail="Basket not found")
 
-    # Build WhatsApp message
+    # Fetch store name
+    store_info = repo.get_store(int(sid))
+    store_name = store_info.get("store_name", "Our Store") if store_info else "Our Store"
+
+    # Build WhatsApp message payload parameters
     name = basket["name"]
-    price = f"₹{basket['price']}" if basket.get("price") else ""
-    desc = basket.get("description") or ""
-    valid_to = basket.get("valid_to") or ""
+    price = f"₹{basket['price']}" if basket.get("price") else "N/A"
+    valid_to = basket.get("valid_to") or "Available now"
+
     items_list = basket.get("items") or []
     item_lines = "\n".join(
         f"  • {it.get('product_name', 'Item')} × {it.get('qty', 1)}"
         for it in (items_list if isinstance(items_list, list) else [])
     )
-    msg = f"🛒 *{name}*"
-    if price: msg += f" — *{price}*"
-    if desc:  msg += f"\n{desc}"
-    if item_lines: msg += f"\n\nIncludes:\n{item_lines}"
-    if valid_to: msg += f"\n\n⏰ Valid until: {valid_to}"
-    msg += "\n\nContact us to order!"
+    if not item_lines:
+        item_lines = "  • Exciting mystery items included!"
 
     # Fetch all customers with phone numbers
     with request.app.state.engine.connect() as conn:
@@ -1150,12 +1249,21 @@ async def alert_basket_customers(basket_id: int, request: Request, user: dict = 
     if wa_client and wa_client.is_configured:
         for phone in phones:
             try:
-                wa_client.send_text(phone, msg)
+                payload = basket_promo_payload(
+                    recipient=phone,
+                    lang="en",  # Defaulting to English, could check customer pref
+                    store_name=store_name,
+                    basket_name=name,
+                    price=price,
+                    item_lines=item_lines,
+                    valid_to=valid_to
+                )
+                wa_client.send_template(payload)
                 sent += 1
             except Exception:
                 pass
 
-    return {"sent": sent, "total": len(phones), "message": msg}
+    return {"sent": sent, "total": len(phones), "message": "Promo templates sent"}
 
 
 @router.post("/admin/cancel-subscription/{store_id}")
@@ -1175,6 +1283,7 @@ async def admin_cancel_subscription(store_id: int, request: Request, user: dict 
         data={
             "action": "subscription_cancelled",
             "route": "/profile/subscription",
+            "channel": "kirana_account",
         },
     )
     return result
@@ -1357,7 +1466,7 @@ async def mock_confirm_payment(request: Request, body: PaymentOrderRequest, user
             _svc(request).send_fcm_to_user(
                 user_id, f"Welcome to Kirana AI {tier_name}!",
                 f"Your {tier_name} plan is now active. Enjoy!",
-                data={"action": "open_subscription"},
+                data={"action": "open_subscription", "channel": "kirana_account"},
             )
         return result
     except ValueError:
@@ -1434,7 +1543,7 @@ async def verify_iap_payment(request: Request, user: dict = Depends(_auth)):
                 user_id,
                 f"Welcome to Kirana AI {tier_name}!",
                 f"Your {tier_name} plan is now active. Enjoy all the features!",
-                data={"action": "open_subscription"},
+                data={"action": "open_subscription", "channel": "kirana_account"},
             )
         except Exception:
             pass
@@ -1463,7 +1572,7 @@ async def verify_payment(request: Request, body: PaymentVerifyRequest, user: dic
                 user_id,
                 f"Welcome to Kirana AI {tier_name}!",
                 f"Your {tier_name} subscription is now active. Enjoy all features!",
-                data={"action": "open_subscription"},
+                data={"action": "open_subscription", "channel": "kirana_account"},
             )
         return result
     except ValueError:
@@ -1495,7 +1604,15 @@ async def remind_udhaar(request: Request, body: UdhaarRemindRequest, user: dict 
     if sid is None:
         raise HTTPException(status_code=403, detail="Store owner login required")
     wa_client = request.app.state.wa_client
-    return _svc(request).send_udhaar_reminder(int(sid), body.khata_id, wa_client)
+    try:
+        return _svc(request).send_udhaar_reminder(int(sid), body.khata_id, wa_client)
+    except ValueError as e:
+        # Bad request / cannot deliver (no phone, not found, WhatsApp rejected) —
+        # surface a clean message instead of a 500 so the app can show it.
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Udhaar reminder failed for store=%s khata=%s", sid, body.khata_id)
+        raise HTTPException(status_code=502, detail=f"Could not send reminder: {e}")
 
 
 # ── Cashflow Support ──────────────────────────────────────────────────────────

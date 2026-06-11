@@ -10,6 +10,25 @@ Template naming convention (as approved in Meta Business Manager):
 from __future__ import annotations
 from dataclasses import dataclass, field
 
+__all__ = [
+    "TemplateMessage",
+    "onboarding_payload",
+    "welcome_payload",
+    "sales_dashboard_payload",
+    "view_analytics_payload",
+    "udhaar_reminder_payload",
+    "basket_promo_payload",
+    "match_button",
+    "LANG_CODES",
+    "LANG_MAP",
+    "LANG_PROMPT",
+    "WELCOME_BUTTONS",
+    "SALES_BUTTONS",
+    "ANALYTICS_BUTTONS",
+]
+
+print("DEBUG: Loading whatsapp.templates v3 (with udhaar and basket payloads)")
+
 
 LANG_CODES = {
     "en": "en",
@@ -116,6 +135,80 @@ def view_analytics_payload(recipient: str, lang: str) -> dict:
     return TemplateMessage(
         template_name=f"view_analytics_{lang}",
         language_code=lc,
+    ).to_payload(recipient)
+
+
+def udhaar_reminder_payload(
+    recipient: str,
+    lang: str,
+    customer_name: str,
+    store_name: str,
+    balance: str,
+    days_pending: str,
+) -> dict:
+    """Build the udhaar (credit) payment-reminder template payload.
+
+    Matches the APPROVED Meta template `udhaar_reminder_{lang}` which uses NAMED
+    variables across two components:
+        HEADER: {{store_name}}
+        BODY:   {{customer_name}}, {{balance}}, {{days_pending}}
+    The template already prints the rupee sign (`*Rs{{balance}}*`), so `balance`
+    must be the bare amount (no currency symbol). Reminders are business-
+    initiated (the customer hasn't necessarily messaged the store), so a
+    free-form text would be blocked outside the 24h window — the approved
+    template is required for reliable delivery.
+    """
+    lc = LANG_CODES.get(lang, "en")
+    return TemplateMessage(
+        template_name=f"udhaar_reminder_{lang}",
+        language_code=lc,
+        components=[
+            {
+                "type": "header",
+                "parameters": [
+                    {"type": "text", "parameter_name": "store_name", "text": store_name},
+                ],
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "parameter_name": "customer_name", "text": customer_name},
+                    {"type": "text", "parameter_name": "balance", "text": balance},
+                    {"type": "text", "parameter_name": "days_pending", "text": days_pending},
+                ],
+            },
+        ],
+    ).to_payload(recipient)
+
+
+def basket_promo_payload(
+    recipient: str,
+    lang: str,
+    store_name: str,
+    basket_name: str,
+    price: float,
+    item_lines: str,
+    valid_to: str,
+) -> dict:
+    """Build the basket promotion template payload.
+
+    Expects template `basket_promo_{lang}` with body variables:
+        {{1}} store_name  {{2}} basket_name  {{3}} price  {{4}} item_lines  {{5}} valid_to
+    """
+    lc = LANG_CODES.get(lang, "en")
+    return TemplateMessage(
+        template_name=f"basket_promo_{lang}",
+        language_code=lc,
+        components=[{
+            "type": "body",
+            "parameters": [
+                {"type": "text", "text": store_name},
+                {"type": "text", "text": basket_name},
+                {"type": "text", "text": f"{price:,.2f}"},
+                {"type": "text", "text": item_lines},
+                {"type": "text", "text": valid_to},
+            ],
+        }],
     ).to_payload(recipient)
 
 

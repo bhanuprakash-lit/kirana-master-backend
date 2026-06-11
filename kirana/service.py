@@ -27,6 +27,7 @@ from kirana.schemas import (
 )
 from kirana.agents.mistral_explainer import MistralExplainer
 from kirana.agents.query_agent import interpret as interpret_query
+from whatsapp.templates import udhaar_reminder_payload
 
 logger = logging.getLogger("kirana.service")
 
@@ -229,7 +230,7 @@ class KiranaService:
 
     # ── Auth / Users ──────────────────────────────────────────────────────────
 
-    def login(self, req: LoginRequest) -> LoginResponse:
+    def login(self, req: LoginRequest, telemetry: dict | None = None) -> LoginResponse:
         from kirana.repository import KiranaRepository
         repo = KiranaRepository(self._db)
         logger.info(f"Login attempt for user: {req.username}")
@@ -237,9 +238,9 @@ class KiranaService:
         if not user:
             logger.warning(f"Authentication failed for user: {req.username}")
             raise ValueError("Invalid username or password")
-        
+
         try:
-            token = repo.create_session(user["user_id"], login_method="password")
+            token = repo.create_session(user["user_id"], login_method="password", telemetry=telemetry)
             logger.info(f"Session created for user_id: {user['user_id']}")
             res = LoginResponse(access_token=token, user=AuthUser(**user))
             return res
@@ -251,14 +252,14 @@ class KiranaService:
         from kirana.repository import KiranaRepository
         return KiranaRepository(self._db).get_user_by_token(token)
 
-    def phone_login(self, req: PhoneLoginRequest) -> LoginResponse:
+    def phone_login(self, req: PhoneLoginRequest, telemetry: dict | None = None) -> LoginResponse:
         """Log in using a Firebase-verified phone number. Raises ValueError if no account found."""
         from kirana.repository import KiranaRepository
         repo = KiranaRepository(self._db)
         user = repo.authenticate_by_phone(req.phone_number, req.firebase_uid)
         if not user:
             raise ValueError(f"No account found for phone number {req.phone_number}")
-        token = repo.create_session(user["user_id"], login_method="phone")
+        token = repo.create_session(user["user_id"], login_method="phone", telemetry=telemetry)
         logger.info(f"Phone login for user_id={user['user_id']} phone={req.phone_number}")
         return LoginResponse(access_token=token, user=AuthUser(**user))
 
@@ -266,7 +267,7 @@ class KiranaService:
         from kirana.repository import KiranaRepository
         return KiranaRepository(self._db).check_username_available(username)
 
-    def register_store_owner(self, req: RegisterStoreOwnerRequest) -> RegisterStoreOwnerResponse:
+    def register_store_owner(self, req: RegisterStoreOwnerRequest, telemetry: dict | None = None) -> RegisterStoreOwnerResponse:
         from kirana.repository import KiranaRepository
         repo = KiranaRepository(self._db)
         try:
@@ -293,7 +294,7 @@ class KiranaService:
             if "unique" in msg.lower() and "phone" in msg.lower():
                 raise ValueError("An account with this phone number already exists")
             raise
-        token = repo.create_session(user["user_id"], login_method="register")
+        token = repo.create_session(user["user_id"], login_method="register", telemetry=telemetry)
         return RegisterStoreOwnerResponse(access_token=token, user=AuthUser(**user), store=store)
 
     def create_user(self, req: UserCreateRequest) -> UserCreateResponse:
@@ -330,8 +331,6 @@ class KiranaService:
         result = []
         for s in stores:
             sid = int(s["store_id"])
-            # Auto-compute footfall daily
-            repo.compute_store_footfall(sid)
             summary = self.ml.store_summary(sid)
             result.append({**s, **summary})
         return result
@@ -777,27 +776,53 @@ class KiranaService:
         phone = record.get("phone")
         if not phone:
             raise ValueError("Customer has no phone number")
-        
-        # 2. Format message
+
+        # Server-side throttle: at most one WhatsApp reminder per customer per day
+        # (prevents repeated taps from spamming templates / burning WhatsApp quota).
+        customer_id = record.get("customer_id")
+        if customer_id is not None and repo.udhaar_reminded_today(store_id, int(customer_id)):
+            raise ValueError("You've already reminded this customer today. Try again tomorrow.")
+
+        # 2. Build payload
         store_name = repo.get_store(store_id).get("store_name", "Our Store")
         balance = record["balance"]
         days = record["days_pending"]
-        
-        message = (
-            f"Hello {record['customer_name']},\n\n"
-            f"This is a friendly reminder from *{store_name}* regarding your pending balance of "
-            f"*₹{balance:,.2f}* (pending for {days} days).\n\n"
-            f"Please visit the store or pay via UPI at your earliest convenience. Thank you!"
+
+        payload = udhaar_reminder_payload(
+
+            recipient=phone,
+            lang="en",  # Defaulting to English, could be pulled from customer pref later
+            customer_name=record['customer_name'],
+            store_name=store_name,
+            balance=f"{balance:,.2f}",
+            days_pending=str(days)
         )
         
-        # 3. Send via WhatsApp
+        # 3. Send via WhatsApp — prefer the approved template; if it isn't live
+        #    yet (or Meta rejects it), fall back to a plain text reminder, which
+        #    still delivers when the customer is inside the 24h service window.
         try:
-            wa_client.send_text(phone, message)
-        except Exception as e:
-            logger.error(f"Failed to send WhatsApp reminder: {e}")
-            raise ValueError(f"WhatsApp service error: {e}")
-            
-        return {"success": True, "phone": phone, "message": message}
+            wa_client.send_template(payload)
+            if customer_id is not None:
+                repo.mark_udhaar_reminded(store_id, int(customer_id))
+            return {"success": True, "phone": phone, "message": "Template message sent"}
+        except Exception as template_err:
+            logger.warning(
+                "Udhaar reminder template send failed (%s); trying text fallback", template_err
+            )
+            try:
+                fallback_text = (
+                    f"Namaste {record['customer_name']}, this is a friendly reminder from "
+                    f"{store_name}. Your pending balance is Rs.{balance} "
+                    f"({days} days). Kindly clear it at your convenience. Thank you!"
+                )
+                wa_client.send_text(phone, fallback_text)
+            except Exception as text_err:
+                logger.error("Failed to send WhatsApp reminder: %s", text_err)
+                raise ValueError(f"WhatsApp service error: {text_err}")
+            if customer_id is not None:
+                repo.mark_udhaar_reminded(store_id, int(customer_id))
+            return {"success": True, "phone": phone, "message": "Text reminder sent"}
 
 
     def create_cashflow_request(self, store_id: int, user_id: int,

@@ -12,15 +12,26 @@ export function isConfigured() {
   return !!_baseUrl && !!_apiKey;
 }
 
-async function request(method, path, body) {
-  const res = await fetch(`${_baseUrl}${path}`, {
+async function request(method, path, body, params) {
+  let url = `${_baseUrl}${path}`;
+  if (params) {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') qs.append(k, v); });
+    if (qs.toString()) url += `?${qs.toString()}`;
+  }
+
+  const options = {
     method,
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': _apiKey,
     },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
+  };
+  if (body !== undefined && method !== 'GET' && method !== 'HEAD') {
+    options.body = JSON.stringify(body);
+  }
+
+  const res = await fetch(url, options);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `HTTP ${res.status}`);
@@ -30,10 +41,6 @@ async function request(method, path, body) {
 
 /**
  * Open a live SSE log stream via fetch (supports custom headers, unlike EventSource).
- * @param {number} tail   - initial lines to backfill
- * @param {function} onEvent  - called with each parsed {raw, level} object
- * @param {function} onClose  - called with Error|null when stream ends
- * @returns {function} cancel - call to abort the stream
  */
 export function startLogStream(tail = 100, onEvent, onClose) {
   const ctrl = new AbortController();
@@ -70,36 +77,46 @@ export function startLogStream(tail = 100, onEvent, onClose) {
 
 export const api = {
   health:          ()                     => request('GET',  '/kirana/health'),
+  
   // Dashboard
   stats:           ()                     => request('GET',  '/kirana/admin/stats'),
-  // Stores
+  
+  // Admin Management
   adminStores:     ()                     => request('GET',  '/kirana/admin/stores'),
-  mockPayment:     (storeId, tier)        => request('POST', '/kirana/admin/payment/mock-confirm', { store_id: storeId, tier }),
-  // Trials & subscriptions
-  pendingTrials:   ()                     => request('GET',  '/kirana/admin/pending-trials'),
-  approveTrial:    (storeId, tier='basic') => request('POST', `/kirana/admin/approve-trial/${storeId}?tier=${tier}`),
-  allSubs:         ()                     => request('GET',  '/kirana/admin/all-subscriptions'),
+  storeDeepDive:   (id)                   => request('GET',  `/kirana/admin/stores/${id}/deep-dive`),
+  adminProducts:   (params)               => request('GET',  '/kirana/admin/products', null, params),
+  posCategories:   ()                     => request('GET',  '/kirana/admin/categories'),
+  approveTrial:    (storeId)              => request('POST', `/kirana/admin/approve-trial/${storeId}`),
   cancelSub:       (storeId)              => request('POST', `/kirana/admin/cancel-subscription/${storeId}`),
-  // Notifications
-  notify:          (storeId, title, body) => request('POST', '/kirana/admin/notify', { store_id: storeId || null, title, body }),
-  // KPI config
+  
+  // User Activity & Sessions
+  userActivity:    ()                     => request('GET',  '/kirana/admin/user-activity'),
+  adminSessions:   ()                     => request('GET',  '/kirana/admin/sessions'),
+  
+  // Intelligence
+  intelTriggers:   ()                     => request('GET',  '/kirana/admin/intelligence/triggers'),
+  fireTrigger:     (name)                 => request('POST', `/kirana/admin/intelligence/fire/${name}`),
+  intelLogs:       (limit = 100)          => request('GET',  '/kirana/admin/intelligence/all-logs', null, { limit }),
+  
+  // Loyalty
+  adminVouchers:   ()                     => request('GET',  '/kirana/admin/vouchers'),
+  
+  // KPI Config
   getKpiTiers:     ()                     => request('GET',  '/kirana/admin/kpi-tiers'),
   saveKpiTiers:    (configs)              => request('PUT',  '/kirana/admin/kpi-tiers', { configs }),
-  userActivity:    ()                     => request('GET',  '/kirana/admin/user-activity'),
-  // ML model freshness + retraining
-  mlStatus:        (refresh = false)      => request('GET',  `/kirana/admin/ml/status${refresh ? '?refresh=true' : ''}`),
+  
+  // System & ML
+  mlStatus:        ()                     => request('GET',  '/kirana/admin/ml/status'),
   mlRetrain:       ()                     => request('POST', '/kirana/admin/ml/retrain'),
+  logs:            (lines = 200, level = '') => request('GET',  '/kirana/admin/logs', null, { lines, level }),
+
   // Support / Issue reports
   listIssues:      (limit=200)            => request('GET',  `/oltp/issue_report?limit=${limit}`),
   updateIssue:     (reportId, data)       => request('PATCH', '/oltp/issue_report/record', { keys: { report_id: reportId }, data }),
+  
   // Cashflow requests
   listCashflow:    (limit=200)            => request('GET',  `/oltp/cashflow_requests?limit=${limit}`),
-  // Inventory / Product catalog
-  posCategories:  ()                      => request('GET',  '/kirana/admin/categories'),
-  adminProducts:  (params)                => request('GET',  `/kirana/admin/products?${new URLSearchParams(params)}`),
-  updateProduct:  (id, data)              => request('PATCH', `/kirana/admin/products/${id}`, data),
-  // Server logs (snapshot)
-  logs: (lines = 200, level = '') => request('GET', `/kirana/admin/logs?lines=${lines}${level ? `&level=${level}` : ''}`),
+
   // WhatsApp
   waHealth:        ()                     => request('GET',  '/whatsapp/health'),
   waSession:       (phone)               => request('GET',  `/whatsapp/session/${encodeURIComponent(phone)}`),

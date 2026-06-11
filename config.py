@@ -14,6 +14,7 @@ class Settings:
     host: str
     port: int
     debug: bool
+    cors_origins: list[str]
 
     # ── Single database (lit_db) ─────────────────────────────────────────────
     db_url: str
@@ -62,6 +63,7 @@ def get_settings() -> Settings:
         host=os.getenv("MASTER_HOST", "0.0.0.0"),
         port=int(os.getenv("MASTER_PORT", "9000")),
         debug=os.getenv("MASTER_DEBUG", "false").lower() == "true",
+        cors_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000,*").split(","),
 
         # Single DB — everything lives in lit_db
         db_url=os.getenv(

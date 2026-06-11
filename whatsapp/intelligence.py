@@ -34,13 +34,27 @@ class WhatsAppIntelligence:
     def _call(self, prompt: str) -> str:
         if not self.client:
             return ""
+        
+        # Use class-level cache to share across instances
+        if not hasattr(self.__class__, '_LLM_CACHE'):
+            self.__class__._LLM_CACHE = {}
+        cache = self.__class__._LLM_CACHE
+        
+        cache_key = prompt
+        if cache_key in cache:
+            return cache[cache_key]
+
         try:
             resp = self.client.chat.complete(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=400,
             )
-            return resp.choices[0].message.content.strip()
+            text = resp.choices[0].message.content.strip()
+            cache[cache_key] = text
+            if len(cache) > 500:
+                cache.clear()
+            return text
         except Exception as exc:
             logger.warning("Mistral call failed: %s", exc)
             return ""

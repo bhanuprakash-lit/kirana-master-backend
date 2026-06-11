@@ -75,12 +75,23 @@ class KiranaRepository:
                     access_token VARCHAR(128) UNIQUE NOT NULL,
                     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     revoked_at   TIMESTAMPTZ,
-                    login_method VARCHAR(20) DEFAULT 'password'
+                    login_method VARCHAR(20) DEFAULT 'password',
+                    device_brand VARCHAR(50),
+                    device_model VARCHAR(100),
+                    os_name      VARCHAR(50),
+                    os_version   VARCHAR(50),
+                    ip_address   VARCHAR(45)
                 )
             """))
-            conn.execute(text(
-                "ALTER TABLE kirana_oltp.user_sessions ADD COLUMN IF NOT EXISTS login_method VARCHAR(20) DEFAULT 'password'"
-            ))
+            for ddl in [
+                "ALTER TABLE kirana_oltp.user_sessions ADD COLUMN IF NOT EXISTS login_method VARCHAR(20) DEFAULT 'password'",
+                "ALTER TABLE kirana_oltp.user_sessions ADD COLUMN IF NOT EXISTS device_brand VARCHAR(50)",
+                "ALTER TABLE kirana_oltp.user_sessions ADD COLUMN IF NOT EXISTS device_model VARCHAR(100)",
+                "ALTER TABLE kirana_oltp.user_sessions ADD COLUMN IF NOT EXISTS os_name      VARCHAR(50)",
+                "ALTER TABLE kirana_oltp.user_sessions ADD COLUMN IF NOT EXISTS os_version   VARCHAR(50)",
+                "ALTER TABLE kirana_oltp.user_sessions ADD COLUMN IF NOT EXISTS ip_address   VARCHAR(45)",
+            ]:
+                conn.execute(text(ddl))
 
             # kirana_oltp.issue_report
             conn.execute(text("""
@@ -228,6 +239,11 @@ class KiranaRepository:
             conn.execute(text(
                 "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS store_id BIGINT "
                 "REFERENCES kirana_oltp.store(store_id)"
+            ))
+            # Per-customer udhaar-reminder throttle (one WhatsApp reminder/day).
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS "
+                "last_udhaar_reminded_at TIMESTAMP"
             ))
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_customer_store_id "
@@ -585,16 +601,42 @@ class KiranaRepository:
             row = conn.execute(text(sql), {"u": username}).first()
         return row is None
 
-    def create_session(self, user_id: int, login_method: str = "password") -> str:
+    def create_session(self, user_id: int, login_method: str = "password", telemetry: dict | None = None) -> str:
         token = secrets.token_hex(32)
+        telemetry = telemetry or {}
         sql = """
-            INSERT INTO kirana_oltp.user_sessions(user_id, access_token, created_at, login_method)
-            VALUES(:uid, :tok, NOW(), :method)
+            INSERT INTO kirana_oltp.user_sessions(
+                user_id, access_token, created_at, login_method,
+                device_brand, device_model, os_name, os_version, ip_address
+            )
+            VALUES(:uid, :tok, NOW(), :method, :brand, :model, :os, :osv, :ip)
         """
         with self._conn() as conn:
-            conn.execute(text(sql), {"uid": user_id, "tok": token, "method": login_method})
+            conn.execute(text(sql), {
+                "uid": user_id, "tok": token, "method": login_method,
+                "brand": telemetry.get("device_brand"),
+                "model": telemetry.get("device_model"),
+                "os":    telemetry.get("os_name"),
+                "osv":   telemetry.get("os_version"),
+                "ip":    telemetry.get("ip_address"),
+            })
             conn.commit()
         return token
+
+    def list_active_sessions(self, limit: int = 100) -> list[dict]:
+        sql = """
+            SELECT s.*, u.username, u.full_name, st.name AS store_name
+            FROM kirana_oltp.user_sessions s
+            JOIN kirana_oltp.users u ON s.user_id = u.user_id
+            LEFT JOIN kirana_oltp.store st ON u.store_id = st.store_id
+            WHERE s.revoked_at IS NULL
+              AND s.created_at > NOW() - INTERVAL '30 days'
+            ORDER BY s.created_at DESC
+            LIMIT :lim
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"lim": limit}).mappings().all()
+        return [dict(r) for r in rows]
 
     def get_user_by_token(self, token: str) -> dict | None:
         sql = """
@@ -1456,7 +1498,10 @@ class KiranaRepository:
             (k.amount - k.amount_paid) AS balance,
             k.issue_date::text AS date_taken,
             k.status,
-            (CURRENT_DATE - k.issue_date) AS days_pending
+            (CURRENT_DATE - k.issue_date) AS days_pending,
+            (c.last_udhaar_reminded_at IS NOT NULL
+             AND (c.last_udhaar_reminded_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
+                 = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS reminded_today
         FROM kirana_oltp.khata k
         JOIN kirana_oltp.customer c ON k.customer_id = c.customer_id
         WHERE k.store_id = :sid
@@ -1471,6 +1516,28 @@ class KiranaRepository:
         with self._conn() as conn:
             rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
         return [dict(r) for r in rows]
+
+    def udhaar_reminded_today(self, store_id: int, customer_id: int) -> bool:
+        """True if this customer already got a udhaar reminder today (IST day)."""
+        sql = """
+        SELECT (last_udhaar_reminded_at IS NOT NULL
+                AND (last_udhaar_reminded_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
+                    = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS reminded
+        FROM kirana_oltp.customer
+        WHERE customer_id = :cid AND store_id = :sid
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"cid": customer_id, "sid": store_id}).mappings().first()
+        return bool(row and row["reminded"])
+
+    def mark_udhaar_reminded(self, store_id: int, customer_id: int) -> None:
+        """Stamp the customer's last reminder time (after a successful send)."""
+        with self._conn() as conn:
+            conn.execute(text(
+                "UPDATE kirana_oltp.customer SET last_udhaar_reminded_at = NOW() "
+                "WHERE customer_id = :cid AND store_id = :sid"
+            ), {"cid": customer_id, "sid": store_id})
+            conn.commit()
 
     def get_smart_udhaar(self, store_id: int) -> list[dict]:
         """Open udhaar ranked by recovery risk, with a suggested action.
@@ -2237,6 +2304,26 @@ class KiranaRepository:
             conn.commit()
         return row is not None
 
+    def list_vouchers(self, limit: int = 100) -> list[dict]:
+        sql = """
+        SELECT v.*, c.name AS customer_name, s.name AS store_name, cp.name AS campaign_name
+        FROM kirana_oltp.referral_vouchers v
+        JOIN kirana_oltp.customer c ON v.customer_id = c.customer_id
+        JOIN kirana_oltp.store s ON v.store_id = s.store_id
+        JOIN kirana_oltp.referral_campaigns cp ON v.campaign_id = cp.campaign_id
+        ORDER BY v.earned_at DESC
+        LIMIT :lim
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql), {"lim": limit}).mappings().all()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d["earned_at"]: d["earned_at"] = d["earned_at"].isoformat()
+            if d["used_at"]: d["used_at"] = d["used_at"].isoformat()
+            result.append(d)
+        return result
+
     # ── Store associations ─────────────────────────────────────────────────────
 
     def list_associations(self, store_id: int) -> list[dict]:
@@ -2420,3 +2507,77 @@ class KiranaRepository:
             ), {"bid": basket_id, "sid": store_id})
             conn.commit()
         return True
+
+    def get_store_deep_dive(self, store_id: int) -> dict:
+        # 1. Basic Store & Subscription Info
+        info_sql = """
+            SELECT s.*, sub.tier, sub.started_at AS sub_started, sub.trial_ends_at,
+                   u.username, u.phone_number, COALESCE(u.full_name, u.username) AS owner_name
+            FROM kirana_oltp.store s
+            LEFT JOIN kirana_oltp.subscription sub ON s.store_id = sub.store_id
+            LEFT JOIN kirana_oltp.users u ON u.store_id = s.store_id AND u.role = 'store_owner'
+            WHERE s.store_id = :sid
+        """
+        # 2. Inventory Stats
+        inv_sql = """
+            SELECT 
+                COUNT(*) AS total_skus,
+                COALESCE(SUM(quantity), 0) AS total_stock_units,
+                COUNT(*) FILTER (WHERE quantity <= 0) AS out_of_stock_count
+            FROM kirana_oltp.inventory
+            WHERE store_id = :sid
+        """
+        # 3. Recent Sales (7 days)
+        sales_sql = """
+            SELECT 
+                DATE(order_date AT TIME ZONE 'Asia/Kolkata')::text AS date,
+                COALESCE(SUM(total_amount), 0) AS revenue,
+                COUNT(*) AS orders
+            FROM kirana_oltp.orders
+            WHERE store_id = :sid AND order_date > NOW() - INTERVAL '7 days'
+            GROUP BY 1 ORDER BY 1
+        """
+        # 4. Udhaar Stats
+        udhaar_sql = """
+            SELECT 
+                COALESCE(SUM(amount), 0) AS total_given,
+                COALESCE(SUM(amount_paid), 0) AS total_recovered,
+                COALESCE(SUM(amount - amount_paid), 0) AS total_pending
+            FROM kirana_oltp.khata
+            WHERE store_id = :sid AND status != 'written_off'
+        """
+        # 5. Top Customers (Last 30 Days)
+        cust_sql = """
+            SELECT c.name, c.phone, COALESCE(SUM(o.total_amount), 0) as total_spent, COUNT(o.order_id) as total_orders
+            FROM kirana_oltp.customer c
+            JOIN kirana_oltp.orders o ON c.customer_id = o.customer_id
+            WHERE c.store_id = :sid AND o.order_date > NOW() - INTERVAL '30 days'
+            GROUP BY c.customer_id
+            ORDER BY total_spent DESC
+            LIMIT 5
+        """
+        with self._conn() as conn:
+            store = conn.execute(text(info_sql), {"sid": store_id}).mappings().first()
+            if not store: return {}
+            inv = conn.execute(text(inv_sql), {"sid": store_id}).mappings().first()
+            sales = conn.execute(text(sales_sql), {"sid": store_id}).mappings().all()
+            udhaar = conn.execute(text(udhaar_sql), {"sid": store_id}).mappings().first()
+            top_customers = conn.execute(text(cust_sql), {"sid": store_id}).mappings().all()
+            
+            # Fetch owner id for AI Status
+            owner = conn.execute(text(
+                "SELECT user_id FROM kirana_oltp.users WHERE store_id = :sid AND role = 'store_owner' LIMIT 1"
+            ), {"sid": store_id}).mappings().first()
+
+        ai_status = self.get_ai_status(owner["user_id"]) if owner else {}
+        expiring = self.get_near_expiry_batches(store_id, days=30)
+
+        return {
+            "store": dict(store),
+            "inventory": dict(inv),
+            "sales_history": [dict(s) for s in sales],
+            "udhaar": dict(udhaar),
+            "top_customers": [dict(c) for c in top_customers],
+            "ai_status": ai_status,
+            "expiring_batches": expiring
+        }

@@ -5,7 +5,7 @@ Uses kirana_oltp schema (lit_db). Auth via kirana_app_users (JWT).
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
@@ -28,7 +28,7 @@ def _get_session_factory(request: Request):
     return request.app.state.db_session
 
 
-async def _current_user(
+def _current_user(
     request: Request,
     token: str = Depends(_oauth2),
 ) -> dict:
@@ -63,7 +63,7 @@ def _resolve_store_scope(current: dict, requested_store_id: Optional[int] = None
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 @router.post("/token", response_model=schemas.Token, summary="POS login — returns JWT")
-async def pos_login(
+def pos_login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
 ):
@@ -81,7 +81,7 @@ async def pos_login(
 
 
 @router.post("/token-from-kirana", response_model=schemas.Token, summary="Exchange Kirana Bearer token for POS JWT")
-async def pos_token_from_kirana(request: Request):
+def pos_token_from_kirana(request: Request):
     """Phone-auth users have no password — they exchange their Kirana Bearer token for a POS JWT."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -96,14 +96,14 @@ async def pos_token_from_kirana(request: Request):
 
 
 @router.get("/me", response_model=dict, summary="Current POS user info")
-async def pos_me(current: dict = Depends(_current_user)):
+def pos_me(current: dict = Depends(_current_user)):
     return current
 
 
 # ── Stores ────────────────────────────────────────────────────────────────────
 
 @router.get("/stores", response_model=List[schemas.StoreOut], summary="List all kirana stores")
-async def list_stores(request: Request, current: dict = Depends(_current_user)):
+def list_stores(request: Request, current: dict = Depends(_current_user)):
     with request.app.state.db_session() as db:
         store_id = _resolve_store_scope(current)
         if store_id is None:
@@ -113,7 +113,7 @@ async def list_stores(request: Request, current: dict = Depends(_current_user)):
 
 
 @router.get("/stores/{store_id}", response_model=schemas.StoreOut, summary="Get a specific store")
-async def get_store(request: Request, store_id: int, current: dict = Depends(_current_user)):
+def get_store(request: Request, store_id: int, current: dict = Depends(_current_user)):
     store_id = _resolve_store_scope(current, store_id)
     with request.app.state.db_session() as db:
         s = crud.get_store(db, store_id)
@@ -125,7 +125,7 @@ async def get_store(request: Request, store_id: int, current: dict = Depends(_cu
 # ── Categories ────────────────────────────────────────────────────────────────
 
 @router.get("/categories", response_model=List[schemas.CategoryOut], summary="List all product categories")
-async def list_categories(request: Request, current: dict = Depends(_current_user)):
+def list_categories(request: Request, current: dict = Depends(_current_user)):
     with request.app.state.db_session() as db:
         return crud.get_categories(db)
 
@@ -135,7 +135,7 @@ async def list_categories(request: Request, current: dict = Depends(_current_use
 @router.get("/products", response_model=List[schemas.ProductOut],
             summary="List products with current price and stock for a store")
 @router.get("/products/", response_model=List[schemas.ProductOut], include_in_schema=False)
-async def list_products(
+def list_products(
     request: Request,
     store_id: int = 1,
     skip: int = 0,
@@ -149,7 +149,7 @@ async def list_products(
 
 @router.get("/products/barcode/{barcode}", response_model=schemas.ProductOut,
             summary="Look up a product by barcode")
-async def product_by_barcode(
+def product_by_barcode(
     request: Request,
     barcode: str,
     store_id: int = 1,
@@ -165,7 +165,7 @@ async def product_by_barcode(
 
 @router.get("/products/{product_id}", response_model=schemas.ProductOut,
             summary="Get a single product with price and stock")
-async def get_product(
+def get_product(
     request: Request,
     product_id: int,
     store_id: int = 1,
@@ -184,22 +184,26 @@ async def get_product(
 @router.post("/orders", response_model=schemas.OrderOut, status_code=201,
              summary="Create a new POS order (deducts stock automatically)")
 @router.post("/orders/", response_model=schemas.OrderOut, status_code=201, include_in_schema=False)
-async def create_order(
+def create_order(
     request: Request,
     order: schemas.OrderCreate,
+    background_tasks: BackgroundTasks,
     current: dict = Depends(_current_user),
 ):
     store_id = current.get("store_id")
     if not store_id:
         raise HTTPException(status_code=403, detail="No store assigned to this user")
     with request.app.state.db_session() as db:
-        return crud.create_order(db, order, current["user_id"], store_id)
+        new_order = crud.create_order(db, order, current["user_id"], store_id)
+        from kirana.repository import KiranaRepository
+        background_tasks.add_task(KiranaRepository(request.app.state.engine).compute_store_footfall, store_id)
+        return new_order
 
 
 @router.get("/orders", response_model=List[schemas.OrderOut],
             summary="List orders for the current user's store")
 @router.get("/orders/", response_model=List[schemas.OrderOut], include_in_schema=False)
-async def list_orders(
+def list_orders(
     request: Request,
     skip: int = 0,
     limit: int = 50,
@@ -233,7 +237,7 @@ async def list_orders(
 
 @router.get("/orders/{order_id}", response_model=schemas.OrderOut,
             summary="Get a single order")
-async def get_order(
+def get_order(
     request: Request,
     order_id: int,
     current: dict = Depends(_current_user),
@@ -251,7 +255,7 @@ async def get_order(
 @router.post("/payments", response_model=schemas.PaymentOut, status_code=201,
              summary="Record a payment for an order")
 @router.post("/payments/", response_model=schemas.PaymentOut, status_code=201, include_in_schema=False)
-async def create_payment(
+def create_payment(
     request: Request,
     payment: schemas.PaymentCreate,
     current: dict = Depends(_current_user),
@@ -269,7 +273,7 @@ async def create_payment(
 @router.get("/reports/daily-sales", response_model=schemas.DailySalesReport,
             summary="Daily revenue summary for the store (defaults to today IST)")
 @router.get("/reports/daily-sales/", response_model=schemas.DailySalesReport, include_in_schema=False)
-async def daily_sales(
+def daily_sales(
     request: Request,
     date: Optional[str] = None,
     store_id: Optional[int] = None,

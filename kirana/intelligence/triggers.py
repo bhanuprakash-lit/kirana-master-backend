@@ -56,7 +56,7 @@ def morning_greeting(store_id: int, repo) -> dict | None:
     return {
         "title": f"Good morning, {store} 🌅",
         "body": body,
-        "payload": {"route": "/home", "trigger": "morning_greeting"},
+        "payload": {"route": "/home", "trigger": "morning_greeting", "channel": "kirana_summary"},
     }
 
 
@@ -71,14 +71,14 @@ def evening_summary(store_id: int, repo) -> dict | None:
         return {
             "title": f"Day wrap-up — {store}",
             "body": "No sales recorded today. Check if the POS is set up correctly, or add your first order.",
-            "payload": {"route": "/home", "trigger": "evening_summary"},
+            "payload": {"route": "/home", "trigger": "evening_summary", "channel": "kirana_summary"},
         }
 
     credit_note = f" {_fmt_inr(credit)} is on credit." if float(credit) > 0 else ""
     return {
         "title": f"Today's Summary — {_fmt_inr(rev)} 📊",
         "body": f"{orders} order{'s' if orders != 1 else ''} billed today totalling {_fmt_inr(rev)}.{credit_note}",
-        "payload": {"route": "/home", "trigger": "evening_summary"},
+        "payload": {"route": "/home", "trigger": "evening_summary", "channel": "kirana_summary"},
     }
 
 
@@ -95,7 +95,7 @@ def weekly_report(store_id: int, repo) -> dict | None:
         return {
             "title": "Weekly Report",
             "body": "No orders recorded last week. Start billing to see your weekly performance here.",
-            "payload": {"route": "/profile/history", "trigger": "weekly_report"},
+            "payload": {"route": "/profile/history", "trigger": "weekly_report", "channel": "kirana_summary"},
         }
 
     return {
@@ -104,7 +104,7 @@ def weekly_report(store_id: int, repo) -> dict | None:
             f"{orders} orders · {customers} customer{'s' if customers != 1 else ''} · "
             f"avg {_fmt_inr(avg)}/order. Tap to see the full breakdown."
         ),
-        "payload": {"route": "/profile/history", "trigger": "weekly_report"},
+        "payload": {"route": "/profile/history", "trigger": "weekly_report", "channel": "kirana_summary"},
     }
 
 
@@ -119,7 +119,7 @@ def abandoned_cart(store_id: int, repo, cart_items: list, item_count: int) -> di
     return {
         "title": f"Cart waiting — {item_count} {item_word} 🛒",
         "body": f"{item_list} {'is' if item_count == 1 else 'are'} sitting in your cart. Complete the sale?",
-        "payload": {"route": "/home", "trigger": "abandoned_cart"},
+        "payload": {"route": "/home", "trigger": "abandoned_cart", "tab": "pos", "subtab": "0", "channel": "kirana_sales", "cta": "Resume sale"},
     }
 
 
@@ -138,7 +138,7 @@ def overdue_udhaar(store_id: int, repo) -> dict | None:
             f"{customers} {customer_word} {'has' if customers == 1 else 'have'} "
             f"unpaid dues older than 7 days. Send a reminder?"
         ),
-        "payload": {"route": "/home", "trigger": "overdue_udhaar", "tab": "finance"},
+        "payload": {"route": "/home", "trigger": "overdue_udhaar", "tab": "finance", "subtab": "0", "channel": "kirana_payments", "cta": "View dues"},
     }
 
 
@@ -157,7 +157,7 @@ def distributor_due(store_id: int, repo) -> dict | None:
             f"You have outstanding payments to {suppliers} {supplier_word} "
             f"totalling {_fmt_inr(total)}. Review your distributor tab."
         ),
-        "payload": {"route": "/home", "trigger": "distributor_due", "tab": "finance", "subtab": "1"},
+        "payload": {"route": "/home", "trigger": "distributor_due", "tab": "finance", "subtab": "1", "channel": "kirana_payments", "cta": "View payments"},
     }
 
 
@@ -170,7 +170,7 @@ def low_stock_alert(store_id: int, repo) -> dict | None:
     return {
         "title": f"Low Stock — {count} item{'s' if count != 1 else ''} need restocking 📉",
         "body": f"{count} {item_word} below their reorder level. Order now to avoid stockouts.",
-        "payload": {"route": "/home", "trigger": "low_stock_alert", "tab": "pos", "subtab": "1"},
+        "payload": {"route": "/home", "trigger": "low_stock_alert", "tab": "pos", "subtab": "1", "channel": "kirana_stock", "cta": "Reorder"},
     }
 
 
@@ -183,7 +183,7 @@ def expiry_alert(store_id: int, repo) -> dict | None:
     return {
         "title": f"Expiry Alert — {count} {item_word} expiring soon ⚠️",
         "body": f"{count} {item_word} will expire within 7 days. Run a discount or move stock quickly.",
-        "payload": {"route": "/home", "trigger": "expiry_alert", "tab": "pos", "subtab": "1"},
+        "payload": {"route": "/home", "trigger": "expiry_alert", "tab": "pos", "subtab": "1", "channel": "kirana_stock", "cta": "View items"},
     }
 
 
@@ -196,7 +196,7 @@ def inactive_customer(store_id: int, repo) -> dict | None:
     return {
         "title": f"{count} {customer_word} haven't visited in 45+ days 👥",
         "body": f"Win them back — send a personal message or run a campaign targeting inactive shoppers.",
-        "payload": {"route": "/profile/customers", "trigger": "inactive_customer"},
+        "payload": {"route": "/profile/customers", "trigger": "inactive_customer", "channel": "kirana_growth", "cta": "View customers"},
     }
 
 
@@ -238,7 +238,7 @@ def feature_discovery(store_id: int, repo) -> dict | None:
                 return {
                     "title": tip["title"],
                     "body": tip["body"],
-                    "payload": {"route": tip["route"], "trigger": "feature_discovery"},
+                    "payload": {"route": tip["route"], "trigger": "feature_discovery", "channel": "kirana_growth"},
                 }
         except Exception:
             continue

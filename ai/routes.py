@@ -90,10 +90,18 @@ def _call_gemini_sync_body(model: str, parts: list, api_key: str) -> dict:
     }
 
 
+import hashlib
+_LLM_CACHE = {}
+
 async def _call_gemini(
     model: str, parts: list, api_key: str, request: Request
 ) -> str:
     """POST to Gemini and return the raw text from the first candidate."""
+    part_str = str(parts)
+    cache_key = f"{model}:" + hashlib.md5(part_str.encode('utf-8')).hexdigest()
+    if cache_key in _LLM_CACHE:
+        return _LLM_CACHE[cache_key]
+
     client = get_gemini_client()
     url    = f"/v1beta/models/{model}:generateContent?key={api_key}"
     body   = {
@@ -117,7 +125,11 @@ async def _call_gemini(
 
     data = resp.json()
     try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        _LLM_CACHE[cache_key] = text
+        if len(_LLM_CACHE) > 500:
+            _LLM_CACHE.clear()
+        return text
     except (KeyError, IndexError) as exc:
         logger.error("Unexpected Gemini response shape: %s", data)
         raise HTTPException(status_code=502, detail="Unexpected AI response format")
