@@ -25,6 +25,7 @@ from kirana.schemas import (
     ChangePasswordRequest,
     BatchMarkdownRequest, BatchWasteRequest,
     ReturnCreate, SetPriceRequest, SetCostRequest,
+    SetCustomerPriceRequest,
 )
 from kirana.service import KiranaService
 from whatsapp.templates import udhaar_reminder_payload, basket_promo_payload
@@ -488,6 +489,33 @@ async def customer_purchases(customer_id: int, request: Request, user: dict = De
         raise HTTPException(status_code=403, detail="Store owner login required")
     repo = KiranaRepository(request.app.state.engine)
     return {"purchases": repo.get_customer_purchases(int(sid), customer_id)}
+
+
+@router.get("/customers/{customer_id}/price-memory")
+async def customer_price_memory(customer_id: int, request: Request, user: dict = Depends(_auth)):
+    """Per-customer price memory — products where this customer's last-paid price
+    differs from the current catalog price (powers POS customer-specific pricing)."""
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    return {"prices": repo.get_customer_price_memory(int(sid), customer_id)}
+
+
+@router.post("/customers/{customer_id}/price")
+async def set_customer_price(customer_id: int, request: Request,
+                             body: SetCustomerPriceRequest, user: dict = Depends(_auth)):
+    """Pin (or, with price=null, remove) a customer-specific price for a product."""
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    if body.price is not None and body.price < 0:
+        raise HTTPException(status_code=400, detail="Price must be ≥ 0")
+    repo = KiranaRepository(request.app.state.engine)
+    return repo.set_customer_product_price(
+        int(sid), customer_id, body.product_id, body.price)
 
 
 # ── AI Price Memory (forgotten / unset prices) ──────────────────────────────────
@@ -1179,11 +1207,11 @@ async def admin_update_product(
 # ── Baskets ───────────────────────────────────────────────────────────────────
 
 @router.get("/baskets")
-async def list_baskets(request: Request, user: dict = Depends(_auth)):
+async def list_baskets(request: Request, include_archived: bool = False, user: dict = Depends(_auth)):
     from kirana.repository import KiranaRepository
     sid = user.get("store_id") or 0
     repo = KiranaRepository(request.app.state.engine)
-    return {"baskets": repo.get_baskets(int(sid))}
+    return {"baskets": repo.get_baskets(int(sid), include_archived=include_archived)}
 
 
 @router.post("/baskets")
@@ -1197,6 +1225,19 @@ async def create_basket(request: Request, user: dict = Depends(_auth)):
     return basket
 
 
+@router.put("/baskets/{basket_id}")
+async def update_basket(basket_id: int, request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    from kirana.schemas import BasketCreate
+    body = BasketCreate(**(await request.json()))
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    basket = repo.update_basket(int(sid), basket_id, body.model_dump())
+    if not basket:
+        raise HTTPException(status_code=404, detail="Basket not found")
+    return basket
+
+
 @router.delete("/baskets/{basket_id}")
 async def delete_basket(basket_id: int, request: Request, user: dict = Depends(_auth)):
     from kirana.repository import KiranaRepository
@@ -1206,6 +1247,57 @@ async def delete_basket(basket_id: int, request: Request, user: dict = Depends(_
     return {"deleted": True}
 
 
+@router.post("/baskets/{basket_id}/archive")
+async def archive_basket(basket_id: int, request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    if not repo.set_basket_archived(int(sid), basket_id, True):
+        raise HTTPException(status_code=404, detail="Basket not found")
+    return {"archived": True}
+
+
+@router.post("/baskets/{basket_id}/restore")
+async def restore_basket(basket_id: int, request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    if not repo.set_basket_archived(int(sid), basket_id, False):
+        raise HTTPException(status_code=404, detail="Basket not found")
+    return {"archived": False}
+
+
+# ── Basket tier config (per-store ranges + auto-discount) ─────────────────────
+
+@router.get("/basket-tier-config")
+async def get_basket_tier_config(request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    return {"config": repo.get_tier_config(int(sid))}
+
+
+@router.put("/basket-tier-config")
+async def put_basket_tier_config(request: Request, user: dict = Depends(_auth)):
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    body = await request.json()
+    config = repo.set_tier_config(int(sid), body.get("config", body))
+    # Tiers freeze at creation — let the app offer to recompute existing baskets.
+    return {"config": config, "existing_baskets": repo.count_active_baskets(int(sid))}
+
+
+@router.post("/baskets/retier")
+async def retier_baskets(request: Request, user: dict = Depends(_auth)):
+    """Recompute tier/price for all existing baskets under the current config."""
+    from kirana.repository import KiranaRepository
+    sid = user.get("store_id") or 0
+    repo = KiranaRepository(request.app.state.engine)
+    updated = repo.retier_baskets(int(sid))
+    return {"updated": updated}
+
+
 @router.post("/baskets/{basket_id}/alert")
 async def alert_basket_customers(basket_id: int, request: Request, user: dict = Depends(_auth)):
     """Send WhatsApp message to all store customers about this basket deal."""
@@ -1213,6 +1305,13 @@ async def alert_basket_customers(basket_id: int, request: Request, user: dict = 
     from sqlalchemy import text as _text
     sid = user.get("store_id") or 0
     repo = KiranaRepository(request.app.state.engine)
+
+    # Once-per-day throttle — owners tap repeatedly otherwise, blasting N templates.
+    if repo.basket_alerted_today(int(sid), basket_id):
+        raise HTTPException(
+            status_code=400,
+            detail="You've already alerted customers about this basket today. Try again tomorrow.",
+        )
 
     # Get basket details
     baskets = repo.get_baskets(int(sid))
@@ -1224,18 +1323,23 @@ async def alert_basket_customers(basket_id: int, request: Request, user: dict = 
     store_info = repo.get_store(int(sid))
     store_name = store_info.get("store_name", "Our Store") if store_info else "Our Store"
 
-    # Build WhatsApp message payload parameters
+    # Build WhatsApp message payload parameters.
+    # NOTE: basket_promo_payload formats price with `:,.2f`, so it must receive a
+    # NUMBER, not a pre-formatted "₹…" string (that raises "Unknown format code
+    # 'f' for object of type 'str'" for every recipient and nothing sends).
     name = basket["name"]
-    price = f"₹{basket['price']}" if basket.get("price") else "N/A"
+    price = float(basket["price"]) if basket.get("price") else 0.0
     valid_to = basket.get("valid_to") or "Available now"
 
+    # Meta rejects template parameters containing newlines/tabs or >4 consecutive
+    # spaces, so keep item_lines to a single comma-separated line.
     items_list = basket.get("items") or []
-    item_lines = "\n".join(
-        f"  • {it.get('product_name', 'Item')} × {it.get('qty', 1)}"
+    item_lines = ", ".join(
+        f"{it.get('product_name', 'Item')} x{it.get('qty', 1)}"
         for it in (items_list if isinstance(items_list, list) else [])
     )
     if not item_lines:
-        item_lines = "  • Exciting mystery items included!"
+        item_lines = "Exciting items included!"
 
     # Fetch all customers with phone numbers
     with request.app.state.engine.connect() as conn:
@@ -1246,12 +1350,13 @@ async def alert_basket_customers(basket_id: int, request: Request, user: dict = 
 
     wa_client = getattr(request.app.state, "wa_client", None)
     sent = 0
+    last_error: str | None = None
     if wa_client and wa_client.is_configured:
         for phone in phones:
             try:
                 payload = basket_promo_payload(
                     recipient=phone,
-                    lang="en",  # Defaulting to English, could check customer pref
+                    lang="en",  # Customers don't pick a language — promos are always English.
                     store_name=store_name,
                     basket_name=name,
                     price=price,
@@ -1260,10 +1365,25 @@ async def alert_basket_customers(basket_id: int, request: Request, user: dict = 
                 )
                 wa_client.send_template(payload)
                 sent += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                # Don't hide the failure — a bad/unapproved template fails for
+                # EVERY recipient identically, so surfacing the first error is
+                # what tells the owner why nobody received the promo.
+                last_error = str(exc)
+                logger.warning("basket_promo send failed for store %s: %s", sid, exc)
+    elif wa_client is not None:
+        last_error = wa_client.config_error
 
-    return {"sent": sent, "total": len(phones), "message": "Promo templates sent"}
+    # Record the send so the once-per-day throttle kicks in (only if we reached anyone).
+    if sent > 0:
+        repo.mark_basket_alerted(int(sid), basket_id)
+
+    return {
+        "sent": sent,
+        "total": len(phones),
+        "error": last_error,
+        "message": "Promo templates sent" if sent else (last_error or "No messages sent"),
+    }
 
 
 @router.post("/admin/cancel-subscription/{store_id}")

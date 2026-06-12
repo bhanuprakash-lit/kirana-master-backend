@@ -73,6 +73,11 @@ class OrderCreate(BaseModel):
     # Only set when payment_method == "udhaar" and it's a partial split.
     udhaar_amount: Optional[float] = None
     cash_paid: Optional[float] = None
+    # Basket attribution — set only when the cart was filled from a basket bundle.
+    basket_id: Optional[int] = None
+    basket_name: Optional[str] = None
+    basket_gross: Optional[float] = None
+    basket_savings: Optional[float] = None
 
 
 class OrderItemOut(BaseModel):
@@ -99,6 +104,11 @@ class OrderOut(BaseModel):
     # Split / partial-udhaar breakdown (null for pure cash or full-udhaar orders)
     udhaar_amount: Optional[float] = None
     cash_paid: Optional[float] = None
+    # Basket attribution (null unless the sale came from a basket bundle)
+    basket_id: Optional[int] = None
+    basket_name: Optional[str] = None
+    basket_gross: Optional[float] = None
+    basket_savings: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 
 

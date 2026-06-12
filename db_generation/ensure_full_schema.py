@@ -214,7 +214,11 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.orders (
     total_amount  NUMERIC(12,2) CHECK (total_amount >= 0),
     udhaar_amount NUMERIC(12,2),
     cash_paid     NUMERIC(12,2),
-    order_channel VARCHAR(20) DEFAULT 'walk_in'
+    order_channel VARCHAR(20) DEFAULT 'walk_in',
+    basket_id      BIGINT,
+    basket_name    VARCHAR(255),
+    basket_gross   NUMERIC(12,2),
+    basket_savings NUMERIC(12,2)
 )
 """)
 
@@ -735,6 +739,10 @@ column_patches = [
     ("orders.udhaar_amount",      "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS udhaar_amount NUMERIC(12,2)"),
     ("orders.cash_paid",          "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS cash_paid NUMERIC(12,2)"),
     ("orders.order_channel",      "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS order_channel VARCHAR(20) DEFAULT 'walk_in'"),
+    ("orders.basket_id",          "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS basket_id BIGINT"),
+    ("orders.basket_name",        "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS basket_name VARCHAR(255)"),
+    ("orders.basket_gross",       "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS basket_gross NUMERIC(12,2)"),
+    ("orders.basket_savings",     "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS basket_savings NUMERIC(12,2)"),
 
     ("users.full_name",           "ALTER TABLE kirana_oltp.users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255) NOT NULL DEFAULT ''"),
     ("users.password_salt",       "ALTER TABLE kirana_oltp.users ADD COLUMN IF NOT EXISTS password_salt VARCHAR(64)"),

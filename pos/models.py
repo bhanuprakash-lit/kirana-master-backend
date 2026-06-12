@@ -102,6 +102,12 @@ class KiranaOrder(POSBase):
     # Both are NULL for pure-cash or full-udhaar orders.
     udhaar_amount = Column(Numeric, nullable=True)
     cash_paid     = Column(Numeric, nullable=True)
+    # Basket attribution snapshot — set only when the sale came from a basket
+    # bundle. NULL for ordinary orders. Frozen at sale time so history is stable.
+    basket_id      = Column(BigInteger, nullable=True)
+    basket_name    = Column(String, nullable=True)
+    basket_gross   = Column(Numeric, nullable=True)
+    basket_savings = Column(Numeric, nullable=True)
 
     items   = relationship("KiranaOrderItem", back_populates="order")
     payment = relationship("KiranaPayment",   back_populates="order", uselist=False)

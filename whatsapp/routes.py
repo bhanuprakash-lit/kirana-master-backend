@@ -91,11 +91,26 @@ def receive_webhook(request: Request, data: dict = Body(...)):
     Meta sends all incoming messages here.
     We parse, route through ConversationHandler, and return 200 immediately.
     """
+    # Log every delivery so it's possible to tell whether Meta is reaching us
+    # at all (the #1 ambiguity when "nothing happens"). Statuses (sent/delivered
+    # /read receipts) come through here too with field == "messages" but no
+    # "messages" array — log them distinctly so they aren't mistaken for inbound.
     if data.get("object") != "whatsapp_business_account":
+        logger.info("WA webhook: ignored object=%s", data.get("object"))
         return {"status": "ignored"}
 
     handler = _handler(request)
+    wa = _wa(request)
+    if not wa.is_configured:
+        logger.error(
+            "WA webhook received a message but the client is NOT configured "
+            "(access token / phone_number_id missing) — cannot reply. config_error=%s",
+            wa.config_error,
+        )
+
     processed = 0
+    inbound = 0
+    statuses = 0
 
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
@@ -103,11 +118,15 @@ def receive_webhook(request: Request, data: dict = Body(...)):
                 continue
             value = change.get("value", {})
 
+            statuses += len(value.get("statuses", []))
+
             contacts = value.get("contacts", [])
             for message in value.get("messages", []):
+                inbound += 1
                 phone_raw = (contacts[0].get("wa_id") if contacts else None) or message.get("from", "")
                 phone     = phone_raw.strip()
                 msg_id    = message.get("id")
+                logger.info("WA inbound from %s type=%s", phone, message.get("type"))
 
                 if phone:
                     try:
@@ -116,7 +135,10 @@ def receive_webhook(request: Request, data: dict = Body(...)):
                     except Exception as exc:
                         logger.exception("Error handling message from %s: %s", phone, exc)
 
-    return {"status": "ok", "processed": processed}
+    if inbound == 0 and statuses > 0:
+        logger.info("WA webhook: %d status update(s), no inbound messages", statuses)
+
+    return {"status": "ok", "processed": processed, "inbound": inbound, "statuses": statuses}
 
 
 # ── Manual send endpoints ─────────────────────────────────────────────────────

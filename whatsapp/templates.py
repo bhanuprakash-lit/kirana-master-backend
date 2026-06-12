@@ -192,23 +192,35 @@ def basket_promo_payload(
 ) -> dict:
     """Build the basket promotion template payload.
 
-    Expects template `basket_promo_{lang}` with body variables:
-        {{1}} store_name  {{2}} basket_name  {{3}} price  {{4}} item_lines  {{5}} valid_to
+    Matches the APPROVED Meta template `basket_promo_{lang}`, which uses NAMED
+    params across two components:
+        HEADER: {{store_name}}
+        BODY:   {{basket_name}}, {{price}}, {{item_lines}}, {{valid_to}}
+    The template already prints the rupee sign (`*₹ {{price}}*`), so `price` must
+    be the bare amount. `item_lines` must be a single line — Meta rejects params
+    with newlines/tabs or >4 consecutive spaces.
     """
     lc = LANG_CODES.get(lang, "en")
     return TemplateMessage(
         template_name=f"basket_promo_{lang}",
         language_code=lc,
-        components=[{
-            "type": "body",
-            "parameters": [
-                {"type": "text", "text": store_name},
-                {"type": "text", "text": basket_name},
-                {"type": "text", "text": f"{price:,.2f}"},
-                {"type": "text", "text": item_lines},
-                {"type": "text", "text": valid_to},
-            ],
-        }],
+        components=[
+            {
+                "type": "header",
+                "parameters": [
+                    {"type": "text", "parameter_name": "store_name", "text": store_name},
+                ],
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "parameter_name": "basket_name", "text": basket_name},
+                    {"type": "text", "parameter_name": "price", "text": f"{price:,.2f}"},
+                    {"type": "text", "parameter_name": "item_lines", "text": item_lines},
+                    {"type": "text", "parameter_name": "valid_to", "text": valid_to},
+                ],
+            },
+        ],
     ).to_payload(recipient)
 
 

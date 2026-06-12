@@ -19,8 +19,10 @@ from pos.schemas import OrderCreate, PaymentCreate
 
 # ── Store-level product table routing ────────────────────────────────────────
 # Stores listed here use product_catalog (barcoded + loose items only)
-# instead of the full product table.
-CATALOG_STORES: frozenset[int] = frozenset({27})
+# instead of the full product table. Store 27 was removed so its POS lists every
+# product it stocks (incl. non-barcoded items) — needed so baskets fully resolve
+# and sell as bundles. Add store ids here only to restrict a store to scannables.
+CATALOG_STORES: frozenset[int] = frozenset()
 
 def _product_tbl(store_id: int) -> str:
     return "kirana_oltp.product_catalog" if store_id in CATALOG_STORES else "kirana_oltp.product"
@@ -240,6 +242,10 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
         total_amount=0,
         udhaar_amount=order.udhaar_amount,
         cash_paid=order.cash_paid,
+        basket_id=order.basket_id,
+        basket_name=order.basket_name,
+        basket_gross=order.basket_gross,
+        basket_savings=order.basket_savings,
     )
     db.add(db_order)
     db.flush()

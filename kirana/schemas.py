@@ -394,6 +394,11 @@ class SetPriceRequest(BaseModel):
     mrp: float | None = None
 
 
+class SetCustomerPriceRequest(BaseModel):
+    product_id: int
+    price: float | None = None  # None ⇒ remove the customer-specific price
+
+
 class SetCostRequest(BaseModel):
     product_id: int
     cost_price: float
