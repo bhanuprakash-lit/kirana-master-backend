@@ -1370,6 +1370,44 @@ class KiranaRepository:
         if d.get("ended_at"): d["ended_at"] = d["ended_at"].isoformat()
         return d
 
+    def extend_trial(self, store_id: int, days: int) -> dict:
+        """Extend an active trial by `days`, added to the current end date.
+        If the trial already lapsed (or has no end date), extends from now."""
+        from datetime import datetime, timedelta
+        if days <= 0:
+            raise ValueError("Extension days must be a positive number")
+        sub = self.get_active_subscription(store_id)
+        if not sub or sub.get("tier") != "trial":
+            raise ValueError(f"No active trial to extend for store {store_id}")
+        now = datetime.now()
+        current_end = None
+        if sub.get("trial_ends_at"):
+            current_end = datetime.fromisoformat(sub["trial_ends_at"])
+        base = current_end if (current_end and current_end > now) else now
+        new_end = base + timedelta(days=days)
+        sql = """
+        UPDATE kirana_oltp.subscription
+        SET trial_ends_at = :te,
+            ended_at = NULL
+        WHERE store_id = :sid
+          AND tier = 'trial'
+          AND (ended_at IS NULL OR ended_at > NOW())
+        RETURNING *
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"sid": store_id, "te": new_end}).mappings().first()
+            conn.commit()
+        if not row:
+            raise ValueError(f"No active trial to extend for store {store_id}")
+        d = dict(row)
+        delta = new_end - now
+        d["days_remaining"] = max(0, delta.days)
+        d["seconds_remaining"] = max(0, int(delta.total_seconds()))
+        d["trial_ends_at"] = d["trial_ends_at"].isoformat()
+        d["started_at"] = d["started_at"].isoformat()
+        if d.get("ended_at"): d["ended_at"] = d["ended_at"].isoformat()
+        return d
+
     def cancel_subscription(self, store_id: int) -> dict:
         """Mark current subscription as ended."""
         sql = """
@@ -2799,11 +2837,21 @@ class KiranaRepository:
 
     def get_store_deep_dive(self, store_id: int) -> dict:
         # 1. Basic Store & Subscription Info
+        #    Surface the full subscription lifecycle (trial vs paid, end dates,
+        #    requested tier) so the admin panel can render status + actions.
         info_sql = """
-            SELECT s.*, sub.tier, sub.started_at AS sub_started, sub.trial_ends_at,
+            SELECT s.*,
+                   sub.tier, sub.started_at AS sub_started, sub.trial_ends_at,
+                   sub.ended_at AS sub_ended, sub.is_trial, sub.trial_tier,
+                   sub.requested_tier, sub.monthly_price,
                    u.username, u.phone_number, COALESCE(u.full_name, u.username) AS owner_name
             FROM kirana_oltp.store s
-            LEFT JOIN kirana_oltp.subscription sub ON s.store_id = sub.store_id
+            LEFT JOIN LATERAL (
+                SELECT * FROM kirana_oltp.subscription
+                WHERE store_id = s.store_id
+                ORDER BY started_at DESC
+                LIMIT 1
+            ) sub ON TRUE
             LEFT JOIN kirana_oltp.users u ON u.store_id = s.store_id AND u.role = 'store_owner'
             WHERE s.store_id = :sid
         """
@@ -2861,8 +2909,34 @@ class KiranaRepository:
         ai_status = self.get_ai_status(owner["user_id"]) if owner else {}
         expiring = self.get_near_expiry_batches(store_id, days=30)
 
+        # Derive a single subscription status + trial countdown for the admin UI.
+        store_d = dict(store)
+        from datetime import datetime
+        now = datetime.now()
+        tier       = store_d.get("tier")
+        sub_ended  = store_d.get("sub_ended")
+        trial_ends = store_d.get("trial_ends_at")
+        ended = bool(sub_ended and sub_ended <= now)
+        days_left = None
+        if not tier:
+            status = "none"
+        elif tier == "pending_trial":
+            status = "pending_trial"
+        elif tier == "trial":
+            if ended:
+                status, days_left = "cancelled", 0
+            elif trial_ends and trial_ends > now:
+                status, days_left = "trial", (trial_ends - now).days
+            else:
+                status, days_left = "trial_expired", 0
+        else:  # paid tier (basic / pro / …)
+            status = "cancelled" if ended else "active"
+        store_d["sub_status"]      = status
+        store_d["trial_days_left"] = days_left
+        store_d["is_paid"]         = status == "active"
+
         return {
-            "store": dict(store),
+            "store": store_d,
             "inventory": dict(inv),
             "sales_history": [dict(s) for s in sales],
             "udhaar": dict(udhaar),

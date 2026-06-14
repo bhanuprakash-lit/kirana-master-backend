@@ -706,6 +706,10 @@ class KiranaService:
         from kirana.repository import KiranaRepository
         return KiranaRepository(self._db).approve_trial(store_id, trial_days)
 
+    def extend_trial(self, store_id: int, days: int) -> dict:
+        from kirana.repository import KiranaRepository
+        return KiranaRepository(self._db).extend_trial(store_id, days)
+
     def cancel_subscription(self, store_id: int) -> dict:
         from kirana.repository import KiranaRepository
         return KiranaRepository(self._db).cancel_subscription(store_id)

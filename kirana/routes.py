@@ -694,6 +694,35 @@ async def approve_trial(store_id: int, request: Request, user: dict = Depends(_a
         raise HTTPException(status_code=400, detail="Cannot approve trial")
 
 
+class _ExtendTrialRequest(BaseModel):
+    days: int = 7
+
+
+@router.post("/admin/extend-trial/{store_id}")
+async def extend_trial(store_id: int, request: Request,
+                       body: _ExtendTrialRequest = _ExtendTrialRequest(),
+                       user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    try:
+        result = _svc(request).extend_trial(store_id, body.days)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Notify the store owner that their trial got more time.
+    owner_id = _get_store_owner_id(request, store_id)
+    if owner_id:
+        days_left = result.get("days_remaining", body.days)
+        _svc(request).send_fcm_to_user(
+            owner_id,
+            "Your Kirana AI Trial Was Extended",
+            f"Good news! Your trial has been extended — you now have {days_left} "
+            f"day{'s' if days_left != 1 else ''} remaining.",
+            data={"action": "open_subscription", "channel": "kirana_account"},
+        )
+    return result
+
+
 @router.get("/admin/pending-trials")
 async def list_pending_trials(request: Request, user: dict = Depends(_auth)):
     if user.get("role") != "admin":

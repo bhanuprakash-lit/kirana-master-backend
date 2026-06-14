@@ -8,6 +8,8 @@ export default function StoreDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState('');
+  const [extendDays, setExtendDays] = useState(7);
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
 
@@ -24,6 +26,18 @@ export default function StoreDetail() {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const runAction = async (label, fn) => {
+    setActionLoading(label);
+    try {
+      await fn();
+      await fetchData();
+    } catch (e) {
+      alert(`Action failed: ${e.message}`);
+    } finally {
+      setActionLoading('');
     }
   };
 
@@ -58,8 +72,20 @@ export default function StoreDetail() {
   if (!data || !data.store) return <div className="p-8 text-red-500">Store not found.</div>;
 
   const { store, inventory, udhaar, top_customers, ai_status, expiring_batches } = data;
-  
-  const recoveryRate = udhaar.total_given > 0 
+
+  const STATUS_META = {
+    none:          { label: 'No Subscription', cls: 'bg-slate-100 text-slate-600' },
+    pending_trial: { label: 'Trial Requested', cls: 'bg-amber-100 text-amber-800' },
+    trial:         { label: 'On Trial',        cls: 'bg-blue-100 text-blue-800' },
+    trial_expired: { label: 'Trial Expired',   cls: 'bg-red-100 text-red-700' },
+    active:        { label: 'Subscribed',      cls: 'bg-emerald-100 text-emerald-800' },
+    cancelled:     { label: 'Cancelled',       cls: 'bg-red-100 text-red-700' },
+  };
+  const subStatus = store.sub_status || 'none';
+  const statusMeta = STATUS_META[subStatus] || STATUS_META.none;
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString() : '—';
+
+  const recoveryRate = udhaar.total_given > 0
     ? Math.round((udhaar.total_recovered / udhaar.total_given) * 100) 
     : 0;
 
@@ -220,25 +246,136 @@ export default function StoreDetail() {
           </div>
 
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <h3 className="font-bold text-slate-900 mb-4">Subscription</h3>
-            <div className="space-y-4 text-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-slate-900">Subscription</h3>
+              <Badge color={statusMeta.cls}>{statusMeta.label}</Badge>
+            </div>
+
+            <div className="space-y-3 text-sm">
               <div className="flex justify-between py-2 border-b border-slate-50">
                 <span className="text-slate-500">Plan Tier</span>
-                <span className="font-bold text-slate-900 uppercase">{store.tier}</span>
+                <span className="font-bold text-slate-900 uppercase">{store.tier || '—'}</span>
               </div>
-              <div className="flex justify-between py-2 border-b border-slate-50">
-                <span className="text-slate-500">Member Since</span>
-                <span className="font-medium text-slate-900">{new Date(store.created_at).toLocaleDateString()}</span>
-              </div>
-              <div className="flex justify-between py-2 border-b border-slate-50">
-                <span className="text-slate-500">Plan Started</span>
-                <span className="font-medium text-slate-900">{store.sub_started ? new Date(store.sub_started).toLocaleDateString() : '—'}</span>
-              </div>
+
+              {subStatus === 'pending_trial' && (
+                <div className="flex justify-between py-2 border-b border-slate-50">
+                  <span className="text-slate-500">Requested Tier</span>
+                  <span className="font-bold text-amber-600 uppercase">{store.requested_tier || 'basic'}</span>
+                </div>
+              )}
+
+              {subStatus === 'trial' && (
+                <>
+                  <div className="flex justify-between py-2 border-b border-slate-50">
+                    <span className="text-slate-500">Trial Tier</span>
+                    <span className="font-bold text-blue-700 uppercase">{store.trial_tier || store.tier}</span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-slate-50">
+                    <span className="text-slate-500">Days Left</span>
+                    <span className={`font-black ${store.trial_days_left <= 3 ? 'text-red-600' : 'text-blue-700'}`}>
+                      {store.trial_days_left ?? 0} day{store.trial_days_left === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                </>
+              )}
+
               {store.trial_ends_at && (
                 <div className="flex justify-between py-2 border-b border-slate-50">
-                  <span className="text-slate-50">Trial Ends</span>
-                  <span className="font-bold text-amber-600">{new Date(store.trial_ends_at).toLocaleDateString()}</span>
+                  <span className="text-slate-500">Trial Ends</span>
+                  <span className="font-bold text-amber-600">{fmtDate(store.trial_ends_at)}</span>
                 </div>
+              )}
+
+              {subStatus === 'active' && (
+                <div className="flex justify-between py-2 border-b border-slate-50">
+                  <span className="text-slate-500">Monthly Price</span>
+                  <span className="font-bold text-emerald-600">₹{store.monthly_price ?? 0}</span>
+                </div>
+              )}
+
+              <div className="flex justify-between py-2 border-b border-slate-50">
+                <span className="text-slate-500">Plan Started</span>
+                <span className="font-medium text-slate-900">{fmtDate(store.sub_started)}</span>
+              </div>
+              {store.sub_ended && (
+                <div className="flex justify-between py-2 border-b border-slate-50">
+                  <span className="text-slate-500">Ended</span>
+                  <span className="font-medium text-red-600">{fmtDate(store.sub_ended)}</span>
+                </div>
+              )}
+              <div className="flex justify-between py-2 border-b border-slate-50">
+                <span className="text-slate-500">Member Since</span>
+                <span className="font-medium text-slate-900">{fmtDate(store.created_at)}</span>
+              </div>
+            </div>
+
+            {/* ── Admin actions ── */}
+            <div className="mt-5 pt-4 border-t border-slate-100 space-y-3">
+              {subStatus === 'pending_trial' && (
+                <button
+                  onClick={() => runAction('approve', () => api.approveTrial(store.store_id))}
+                  disabled={!!actionLoading}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm disabled:opacity-50 transition-colors"
+                >
+                  {actionLoading === 'approve' ? 'Approving…' : 'Approve Trial'}
+                </button>
+              )}
+
+              {(subStatus === 'trial' || subStatus === 'trial_expired') && (
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Extend Trial</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      value={extendDays}
+                      onChange={(e) => setExtendDays(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-20 px-3 py-2 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    />
+                    <button
+                      onClick={() => runAction('extend', () => api.extendTrial(store.store_id, extendDays))}
+                      disabled={!!actionLoading}
+                      className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm disabled:opacity-50 transition-colors"
+                    >
+                      {actionLoading === 'extend' ? 'Extending…' : `Add ${extendDays} day${extendDays === 1 ? '' : 's'}`}
+                    </button>
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    {[7, 15, 30].map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => setExtendDays(d)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                          extendDays === d
+                            ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                            : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                        }`}
+                      >
+                        +{d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(subStatus === 'trial' || subStatus === 'active') && (
+                <button
+                  onClick={() => {
+                    if (window.confirm('Cancel this subscription? The store will lose access immediately.')) {
+                      runAction('cancel', () => api.cancelSub(store.store_id));
+                    }
+                  }}
+                  disabled={!!actionLoading}
+                  className="w-full py-2.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 font-bold text-sm disabled:opacity-50 transition-colors"
+                >
+                  {actionLoading === 'cancel' ? 'Cancelling…' : 'Cancel Subscription'}
+                </button>
+              )}
+
+              {subStatus === 'none' && (
+                <p className="text-xs text-slate-400 italic text-center">
+                  This store has never started a trial or subscription.
+                </p>
               )}
             </div>
           </div>
