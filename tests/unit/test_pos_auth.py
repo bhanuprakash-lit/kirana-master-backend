@@ -42,9 +42,12 @@ def test_custom_expiry_is_honoured():
 
 def test_tampered_token_raises_401():
     token = create_access_token({"sub": "x"})
-    # Flip a character in the signature segment.
-    head, _, tail = token.rsplit(".", 2)[0], ".", "x" * 8
-    bad = token[:-1] + ("A" if token[-1] != "A" else "B")
+    # Corrupt the FIRST character of the signature segment. (Flipping the last
+    # char is unreliable: base64url padding bits there can decode to the same
+    # bytes, leaving the signature valid.)
+    head, payload, sig = token.split(".")
+    bad_first = "A" if sig[0] != "A" else "B"
+    bad = f"{head}.{payload}.{bad_first}{sig[1:]}"
     with pytest.raises(HTTPException) as exc:
         decode_token(bad)
     assert exc.value.status_code == 401

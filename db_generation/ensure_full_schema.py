@@ -378,6 +378,41 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.basket_item (
 )
 """)
 
+step("table:vision_session", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.vision_session (
+    session_id    BIGSERIAL PRIMARY KEY,
+    store_id      BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+    session_type  VARCHAR(20) NOT NULL,
+    session_date  DATE NOT NULL DEFAULT CURRENT_DATE,
+    image_url     TEXT,
+    status        VARCHAR(20) NOT NULL DEFAULT 'pending',
+    total_skus    INT NOT NULL DEFAULT 0,
+    total_units   INT NOT NULL DEFAULT 0,
+    unknown_count INT NOT NULL DEFAULT 0,
+    error         TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+""")
+
+step("table:vision_item", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
+    item_id              BIGSERIAL PRIMARY KEY,
+    session_id           BIGINT NOT NULL REFERENCES kirana_oltp.vision_session(session_id) ON DELETE CASCADE,
+    sku_id               VARCHAR(64),
+    product_id           BIGINT,
+    display_name         VARCHAR(255),
+    gemini_name          VARCHAR(255) NOT NULL,
+    visible_text         TEXT,
+    count                INT NOT NULL DEFAULT 1,
+    match_score          REAL NOT NULL DEFAULT 0,
+    is_unknown           BOOLEAN NOT NULL DEFAULT TRUE,
+    bbox_json            TEXT,
+    corrected_product_id BIGINT,
+    corrected_at         TIMESTAMPTZ,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+""")
+
 step("table:ai_usage", """
 CREATE TABLE IF NOT EXISTS kirana_oltp.ai_usage (
     id          BIGSERIAL PRIMARY KEY,

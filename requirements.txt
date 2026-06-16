@@ -23,6 +23,9 @@ imbalanced-learn>=0.12.0
 # AI
 mistralai>=1.0.0
 
+# Vision (shelf-scan catalog matching; falls back to stdlib difflib if absent)
+rapidfuzz>=3.9.0
+
 # Firebase (FCM push notifications)
 firebase-admin>=6.5.0
 
@@ -33,6 +36,9 @@ requests>=2.32.0
 
 # Scheduling (intelligence engine)
 apscheduler>=3.10,<4.0
+
+# Azure Blob (durable storage for udhaar voice-consent clips)
+azure-storage-blob>=12.19,<13.0
 
 # Testing (only needed for `pytest`; harmless in production)
 pytest>=8.0.0

@@ -39,6 +39,7 @@ def test_settings():
         host="127.0.0.1",
         port=9000,
         debug=True,
+        cors_origins=["*"],
         db_url="postgresql+psycopg2://test:test@localhost:5432/test",
         kirana_api_key="test-admin-key",
         ml_results_dir="/tmp/ml_results",
@@ -61,6 +62,8 @@ def test_settings():
         pro_price_inr=500,
         google_play_package_name="",
         google_play_credentials_json="",
+        azure_storage_connection_string="",
+        consent_audio_container="",
     )
 
 
@@ -206,7 +209,12 @@ def db_engine():
                 access_token VARCHAR(128) UNIQUE NOT NULL,
                 created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 revoked_at   TIMESTAMPTZ,
-                login_method VARCHAR(20) DEFAULT 'password'
+                login_method VARCHAR(20) DEFAULT 'password',
+                device_brand VARCHAR(50),
+                device_model VARCHAR(100),
+                os_name      VARCHAR(50),
+                os_version   VARCHAR(50),
+                ip_address   VARCHAR(45)
             )
         """))
         conn.execute(text("""

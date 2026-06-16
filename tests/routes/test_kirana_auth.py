@@ -112,7 +112,7 @@ class TestLoginRoute:
     def test_login_delegates_to_service(self, kirana_client, fake_kirana_service):
         """The route should call KiranaService.login and forward its return value."""
 
-        def fake_login(body):
+        def fake_login(body, telemetry=None):
             assert body.username == "ramesh"
             assert body.password == "secret"
             return {"access_token": "abc.def", "user": {"user_id": 1, "username": "ramesh"}}
@@ -129,7 +129,7 @@ class TestLoginRoute:
     def test_invalid_credentials_returns_401(self, kirana_client, fake_kirana_service):
         """Service raises ValueError on bad credentials -> route returns 401."""
 
-        def fake_login(body):
+        def fake_login(body, telemetry=None):
             raise ValueError("bad creds")
 
         fake_kirana_service.login = fake_login

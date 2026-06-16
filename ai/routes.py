@@ -93,8 +93,14 @@ def _call_gemini_sync_body(model: str, parts: list, api_key: str) -> dict:
 import hashlib
 _LLM_CACHE = {}
 
+async def call_gemini(model: str, parts: list, api_key: str) -> str:
+    """Public entry point for other modules (e.g. vision) to reuse the shared,
+    warm-TLS Gemini client + JSON-mode call + response caching. No request needed."""
+    return await _call_gemini(model, parts, api_key, None)
+
+
 async def _call_gemini(
-    model: str, parts: list, api_key: str, request: Request
+    model: str, parts: list, api_key: str, request: Request | None = None
 ) -> str:
     """POST to Gemini and return the raw text from the first candidate."""
     part_str = str(parts)

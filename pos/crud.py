@@ -312,12 +312,15 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
                  issue_date, due_date, status)
             VALUES
                 (:cid, :sid, :oid, :amt, 0,
-                 CURRENT_DATE, CURRENT_DATE + INTERVAL '30 days', 'pending')
+                 CURRENT_DATE,
+                 COALESCE(CAST(:due AS DATE), CURRENT_DATE + INTERVAL '30 days'),
+                 'pending')
         """), {
             "cid": db_order.customer_id,
             "sid": store_id,
             "oid": db_order.order_id,
             "amt": credit_amount,
+            "due": order.due_date,
         })
 
     db.commit()

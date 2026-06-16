@@ -1,6 +1,9 @@
 import logging
 from typing import Optional, List, TYPE_CHECKING
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request,
+    Response, UploadFile,
+)
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -402,7 +405,90 @@ async def add_udhaar(request: Request, body: UdhaarAddRequest, user: dict = Depe
     sid = user.get("store_id")
     if sid is None:
         raise HTTPException(status_code=403, detail="Store owner login required")
-    return _svc(request).add_udhaar(int(sid), body.customer_name, body.phone, body.amount)
+    return _svc(request).add_udhaar(int(sid), body.customer_name, body.phone, body.amount, body.due_date)
+
+
+# ── Udhaar voice consent (Pro; durable Azure Blob; in-house model analysis) ───
+
+@router.post("/finance/udhaar/consent")
+async def upload_udhaar_consent(
+    request: Request,
+    audio: UploadFile = File(...),
+    order_id: Optional[int] = Form(None),
+    khata_id: Optional[int] = Form(None),
+    customer_id: Optional[int] = Form(None),
+    agreed_total: Optional[float] = Form(None),
+    agreed_udhaar: Optional[float] = Form(None),
+    promised_date: Optional[str] = Form(None),
+    language: Optional[str] = Form(None),
+    duration_sec: Optional[float] = Form(None),
+    user: dict = Depends(_auth),
+):
+    """Receive a customer's voice-consent clip for an udhaar order. The clip
+    persists to Azure Blob (durable legal record) and a 'pending' row is created;
+    the in-house voice model later fills the analysis + speaker-match score.
+    The mobile app uploads this from a persistent background queue, so the owner
+    is never blocked — there is no synchronous AI work here."""
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+
+    from consent import storage as consent_storage
+    if not consent_storage.is_configured():
+        raise HTTPException(status_code=503, detail="Consent storage not configured")
+
+    data = await audio.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty audio clip")
+    try:
+        blob = consent_storage.upload_consent_audio(
+            int(sid), order_id, data, audio.content_type
+        )
+    except (RuntimeError, ImportError):
+        # Not configured, or the azure-storage-blob package isn't installed yet.
+        # Return 503 (not 500) so the client's persistent queue keeps the clip
+        # and retries once the dependency/env is in place — no clips are lost.
+        raise HTTPException(status_code=503, detail="Consent storage unavailable")
+
+    from kirana.repository import KiranaRepository
+    repo = KiranaRepository(request.app.state.engine)
+    rec = repo.create_udhaar_consent(
+        store_id=int(sid), audio_blob=blob, order_id=order_id, khata_id=khata_id,
+        customer_id=customer_id, duration_sec=duration_sec, language=language,
+        agreed_total=agreed_total, agreed_udhaar=agreed_udhaar, promised_date=promised_date,
+    )
+    # TODO(voice-model): enqueue the in-house analysis job here (consent extraction
+    # + speaker match). It writes udhaar_consent.analysis / voice_match_score and
+    # flips status → 'analyzed'. Until that model ships, the row stays 'pending'.
+    return rec
+
+
+@router.get("/finance/udhaar/consent/audio/{blob:path}")
+async def get_udhaar_consent_audio(blob: str, request: Request, user: dict = Depends(_auth)):
+    """Authed proxy that streams a consent clip from the private blob container."""
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    from consent import storage as consent_storage
+    try:
+        data, ctype = consent_storage.download_consent_audio(blob)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Consent clip not found")
+    return Response(content=data, media_type=ctype)
+
+
+@router.get("/finance/udhaar/consent/{order_id}")
+async def get_udhaar_consent(order_id: int, request: Request, user: dict = Depends(_auth)):
+    """Consent record + analysis for an order (order-details screen)."""
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    from kirana.repository import KiranaRepository
+    repo = KiranaRepository(request.app.state.engine)
+    rec = repo.get_consent_for_order(int(sid), order_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="No consent recorded")
+    return rec
 
 
 @router.get("/finance/udhaar/smart")

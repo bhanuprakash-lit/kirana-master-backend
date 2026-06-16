@@ -39,7 +39,7 @@ start returning auth errors.
 >
 > | Vault | RG | Secrets |
 > |---|---|---|
-> | `kv-lohiya-dev` | dev | 9 — adds `firebase-credentials-json`, `db-password` |
+> | `kv-lohiya-dev` | dev | 10 — adds `firebase-credentials-json`, `db-password`, `azure-storage-connection-string` (2026-06-16) |
 > | `kv-lohiya-qa` | dev | 7 |
 > | `kv-lohiya-uat` | UAT | 7 |
 >
@@ -74,7 +74,7 @@ leader, `wa_send=true`.
 | **Database** | `db-kirana-dev` | `db-kirana-qa` | `db-kirana-uat` |
 | **Resource group** | `rg-lohiya-outlet-dev` | *shares* `rg-lohiya-outlet-dev` | `rg-lohiya-uat` (dedicated) |
 | **Container Registry** | `crlohiyakirana` (shared by all envs) | ← | ← |
-| **Replicas** | min 1 / max 3 | min 0 / max 2 (scale-to-zero) | **min 1** / max 4 (always-on) |
+| **Replicas** | **min 1** / max 10 (always-on) | min 0 / max 2 (scale-to-zero) | **min 1** / max 4 (always-on) |
 | **Secrets** | **Key Vault** `kv-lohiya-dev` | **Key Vault** `kv-lohiya-qa` | **Key Vault** `kv-lohiya-uat` |
 | **External APIs** | sandbox | **sandbox** | **sandbox** |
 | **Data** | dev/synthetic | dev/synthetic | scrubbed-from-prod (volume-realistic) |
@@ -82,6 +82,14 @@ leader, `wa_send=true`.
 > **Why the asymmetry:** QA is the *cost-optimized* tier — it reuses DEV's DB server and
 > CAE and scales to zero when idle. UAT is *performance-isolated* — its own server and CAE so a
 > stress test can't disturb anyone, and always-on so there are no cold-start skews in load tests.
+
+> **DEV now always-on (2026-06-16):** DEV was effectively scaling to zero (`minReplicas` was
+> unset → 0), so the first request after idle paid a heavy cold start (the `lifespan` boot loads
+> ML rows, bootstraps schema, inits FCM/WhatsApp/intelligence). Set `--min-replicas 1` to keep one
+> replica warm 24/7 — est. **~$10–15/mo** at idle rates (0.5 vCPU / 1 GiB). Note the per-subscription
+> Container Apps free grant is shared with QA, so keeping QA always-on too would cost closer to full
+> rate. Re-enable scale-to-zero with `az containerapp update --name ca-lohiya-outlet -g
+> rg-lohiya-outlet-dev --min-replicas 0` if the cold start is acceptable for dev.
 
 ---
 

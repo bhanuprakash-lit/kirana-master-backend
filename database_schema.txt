@@ -1,0 +1,723 @@
+================================================================================
+KIRANA-MASTER-BACKEND — DATABASE SCHEMA
+================================================================================
+Source of truth: db_generation/ensure_full_schema.py (idempotent schema script)
+Engine: PostgreSQL
+Schemas: kirana_oltp (transactional), kirana_olap (analytics)
+
+Generated: 2026-06-15
+
+Legend:  PK = primary key   FK = foreign key   UQ = unique   NN = not null
+
+================================================================================
+SCHEMA: kirana_oltp  (transactional / OLTP)
+================================================================================
+
+--------------------------------------------------------------------------------
+store
+--------------------------------------------------------------------------------
+  store_id      BIGSERIAL      PK
+  name          VARCHAR(150)   NN
+  location      VARCHAR(255)
+  region        VARCHAR(100)
+  store_type    VARCHAR(100)   DEFAULT 'kirana'
+  footfall      INT
+  budget        NUMERIC
+  daily_budget  NUMERIC
+  latitude      NUMERIC(10,7)
+  longitude     NUMERIC(10,7)
+  created_at    TIMESTAMP      DEFAULT CURRENT_TIMESTAMP
+  is_deleted    BOOLEAN        DEFAULT FALSE
+
+--------------------------------------------------------------------------------
+category
+--------------------------------------------------------------------------------
+  category_id         BIGSERIAL    PK
+  parent_category_id  BIGINT       FK -> category(category_id)
+  name                VARCHAR(150) NN
+
+--------------------------------------------------------------------------------
+customer
+--------------------------------------------------------------------------------
+  customer_id     BIGSERIAL    PK
+  store_id        BIGINT       FK -> store(store_id)
+  name            VARCHAR(150)
+  phone           VARCHAR(20)
+  email           VARCHAR(150)
+  household_size  INT          DEFAULT 4
+  referral_count  INT          NN DEFAULT 0
+  association_id  INTEGER      FK -> store_association(association_id) ON DELETE SET NULL
+  created_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+
+--------------------------------------------------------------------------------
+users
+--------------------------------------------------------------------------------
+  user_id              BIGSERIAL     PK
+  username             VARCHAR(100)  UQ NN
+  email                VARCHAR(150)
+  role                 VARCHAR(50)
+  store_id             BIGINT        FK -> store(store_id)
+  full_name            VARCHAR(255)  NN DEFAULT ''
+  password_salt        VARCHAR(64)
+  password_hash        VARCHAR(128)
+  password_changed_at  TIMESTAMPTZ
+  is_active            BOOLEAN       NN DEFAULT TRUE
+  fcm_token            VARCHAR(255)
+  phone_number         VARCHAR(20)
+  firebase_uid         VARCHAR(128)
+  created_at           TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+  is_deleted           BOOLEAN       DEFAULT FALSE
+
+--------------------------------------------------------------------------------
+product
+--------------------------------------------------------------------------------
+  product_id        BIGSERIAL     PK
+  category_id       BIGINT        NN FK -> category(category_id)
+  name              VARCHAR(200)  NN
+  brand             VARCHAR(100)
+  unit              VARCHAR(20)
+  weight            NUMERIC(10,2)
+  is_loose          BOOLEAN       DEFAULT FALSE
+  is_perishable     BOOLEAN       DEFAULT FALSE
+  is_private_label  BOOLEAN       DEFAULT FALSE
+  sku               VARCHAR(100)  UQ
+  barcode           VARCHAR(100)  UQ
+  image_url         VARCHAR(500)
+  created_at        TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+
+--------------------------------------------------------------------------------
+supplier
+--------------------------------------------------------------------------------
+  supplier_id  BIGSERIAL    PK
+  name         VARCHAR(150)
+  contact      VARCHAR(150)
+  phone        VARCHAR(20)
+  category     VARCHAR(100)
+  store_id     BIGINT       FK -> store(store_id)
+
+--------------------------------------------------------------------------------
+product_supplier
+--------------------------------------------------------------------------------
+  id              BIGSERIAL      PK
+  product_id      BIGINT         FK -> product(product_id)
+  supplier_id     BIGINT         FK -> supplier(supplier_id)
+  cost_price      NUMERIC(10,2)  CHECK >= 0
+  lead_time_days  INT            CHECK >= 0
+
+--------------------------------------------------------------------------------
+pricing
+--------------------------------------------------------------------------------
+  pricing_id  BIGSERIAL      PK
+  product_id  BIGINT         FK -> product(product_id)
+  store_id    BIGINT         FK -> store(store_id)
+  price       NUMERIC(10,2)  CHECK >= 0
+  mrp         NUMERIC(10,2)  CHECK >= 0
+  valid_from  TIMESTAMP      NN
+  valid_to    TIMESTAMP
+
+--------------------------------------------------------------------------------
+promotion
+--------------------------------------------------------------------------------
+  promotion_id      BIGSERIAL     PK
+  product_id        BIGINT        FK -> product(product_id)
+  store_id          BIGINT        FK -> store(store_id)
+  discount_percent  NUMERIC(5,2)  CHECK >= 0
+  start_date        TIMESTAMP
+  end_date          TIMESTAMP
+
+--------------------------------------------------------------------------------
+inventory
+--------------------------------------------------------------------------------
+  inventory_id  BIGSERIAL  PK
+  store_id      BIGINT     FK -> store(store_id)
+  product_id    BIGINT     FK -> product(product_id)
+  quantity      INT        DEFAULT 0  CHECK >= 0
+  UQ (store_id, product_id)
+
+--------------------------------------------------------------------------------
+inventory_movements
+--------------------------------------------------------------------------------
+  movement_id      BIGSERIAL    PK
+  store_id         BIGINT       FK -> store(store_id)
+  product_id       BIGINT       FK -> product(product_id)
+  change_quantity  INT
+  reason           VARCHAR(50)
+  reference_id     BIGINT
+  created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+
+--------------------------------------------------------------------------------
+inventory_snapshots
+--------------------------------------------------------------------------------
+  snapshot_date  DATE          PK (composite)
+  store_id       BIGINT        PK (composite)  FK -> store(store_id)
+  product_id     BIGINT        PK (composite)  FK -> product(product_id)
+  stock_on_hand  INT           CHECK >= 0
+  upserted_at    TIMESTAMPTZ   NN DEFAULT NOW()
+  PK (snapshot_date, store_id, product_id)
+
+--------------------------------------------------------------------------------
+orders
+--------------------------------------------------------------------------------
+  order_id        BIGSERIAL     PK
+  store_id        BIGINT        NN FK -> store(store_id)
+  user_id         BIGINT        FK -> users(user_id)
+  customer_id     BIGINT        FK -> customer(customer_id)
+  order_status    VARCHAR(50)   DEFAULT 'completed'
+  order_date      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+  total_amount    NUMERIC(12,2) CHECK >= 0
+  udhaar_amount   NUMERIC(12,2)
+  cash_paid       NUMERIC(12,2)
+  order_channel   VARCHAR(20)   DEFAULT 'walk_in'
+  basket_id       BIGINT
+  basket_name     VARCHAR(255)
+  basket_gross    NUMERIC(12,2)
+  basket_savings  NUMERIC(12,2)
+
+--------------------------------------------------------------------------------
+order_item
+--------------------------------------------------------------------------------
+  order_item_id  BIGSERIAL      PK
+  order_id       BIGINT         NN FK -> orders(order_id) ON DELETE CASCADE
+  product_id     BIGINT         NN FK -> product(product_id)
+  quantity       NUMERIC
+  unit_price     NUMERIC(10,2)  CHECK >= 0
+  cost_price     NUMERIC(10,2)  CHECK >= 0
+
+--------------------------------------------------------------------------------
+payments
+--------------------------------------------------------------------------------
+  payment_id      BIGSERIAL      PK
+  order_id        BIGINT         FK -> orders(order_id)
+  amount          NUMERIC(10,2)
+  payment_method  VARCHAR(50)
+  status          VARCHAR(50)    DEFAULT 'paid'
+  created_at      TIMESTAMP      DEFAULT CURRENT_TIMESTAMP
+
+--------------------------------------------------------------------------------
+purchases
+--------------------------------------------------------------------------------
+  purchase_id     BIGSERIAL      PK
+  supplier_id     BIGINT         FK -> supplier(supplier_id)
+  store_id        BIGINT         FK -> store(store_id)
+  order_date      TIMESTAMP
+  arrival_date    TIMESTAMP
+  status          VARCHAR(50)
+  total_amount    NUMERIC(12,2)
+  due_date        DATE
+  payment_status  VARCHAR(20)    DEFAULT 'unpaid'
+  notes           VARCHAR(255)
+
+--------------------------------------------------------------------------------
+purchase_items
+--------------------------------------------------------------------------------
+  purchase_item_id  BIGSERIAL      PK
+  purchase_id       BIGINT         FK -> purchases(purchase_id) ON DELETE CASCADE
+  product_id        BIGINT         FK -> product(product_id)
+  quantity          INT            CHECK > 0
+  cost_price        NUMERIC(10,2)
+  requested_qty     INT
+
+================================================================================
+AUTH / APP TABLES
+================================================================================
+
+--------------------------------------------------------------------------------
+user_sessions
+--------------------------------------------------------------------------------
+  session_id    BIGSERIAL     PK
+  user_id       BIGINT        NN FK -> users(user_id) ON DELETE CASCADE
+  access_token  VARCHAR(128)  UQ NN
+  login_method  VARCHAR(20)   DEFAULT 'password'
+  created_at    TIMESTAMPTZ   NN DEFAULT NOW()
+  revoked_at    TIMESTAMPTZ
+
+--------------------------------------------------------------------------------
+user_prefs
+--------------------------------------------------------------------------------
+  user_id                   BIGINT       PK  FK -> users(user_id) ON DELETE CASCADE
+  forecast_horizon_days     INT          NN DEFAULT 7
+  alert_stockout_threshold  REAL         NN DEFAULT 0.5
+  alert_min_velocity        REAL         NN DEFAULT 0.3
+  alert_reorder_days        INT          NN DEFAULT 3
+  alert_dead_stock_days     INT          NN DEFAULT 21
+  alert_expiry_days         INT          NN DEFAULT 7
+  notify_whatsapp           BOOLEAN      NN DEFAULT FALSE
+  notify_in_app             BOOLEAN      NN DEFAULT TRUE
+  quiet_hours_start         INT          NN DEFAULT 22
+  quiet_hours_end           INT          NN DEFAULT 7
+  subscribed_kpis           TEXT
+  allow_social_marketing    BOOLEAN      NN DEFAULT FALSE
+  updated_at                TIMESTAMPTZ  NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+user_fcm_tokens
+--------------------------------------------------------------------------------
+  token_id    BIGSERIAL     PK
+  user_id     BIGINT        NN FK -> users(user_id) ON DELETE CASCADE
+  fcm_token   VARCHAR(255)  NN  UQ (uq_user_fcm_tokens_token)
+  created_at  TIMESTAMPTZ   NN DEFAULT NOW()
+  last_seen   TIMESTAMPTZ   NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+app_activity
+--------------------------------------------------------------------------------
+  id            BIGSERIAL    PK
+  user_id       BIGINT       NN FK -> users(user_id) ON DELETE CASCADE
+  event         VARCHAR(20)  NN
+  duration_sec  INT
+  created_at    TIMESTAMPTZ  NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+issue_report
+--------------------------------------------------------------------------------
+  report_id    BIGSERIAL     PK
+  user_id      BIGINT        NN FK -> users(user_id)
+  store_id     BIGINT        NN FK -> store(store_id)
+  category     VARCHAR(50)   NN
+  title        VARCHAR(255)  NN
+  description  TEXT          NN
+  status       VARCHAR(20)   DEFAULT 'open'
+  created_at   TIMESTAMPTZ   DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+cashflow_requests
+--------------------------------------------------------------------------------
+  request_id        BIGSERIAL      PK
+  store_id          BIGINT         NN FK -> store(store_id)
+  user_id           BIGINT         NN FK -> users(user_id)
+  amount_requested  NUMERIC(12,2)  NN
+  selected_bank     VARCHAR(100)
+  status            VARCHAR(20)    NN DEFAULT 'pending'
+  store_name        VARCHAR(200)
+  location          VARCHAR(500)
+  avg_footfall      INT
+  created_at        TIMESTAMPTZ    NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+basket
+--------------------------------------------------------------------------------
+  basket_id    BIGSERIAL     PK
+  store_id     BIGINT        NN FK -> store(store_id) ON DELETE CASCADE
+  name         VARCHAR(200)  NN
+  description  TEXT
+  price        NUMERIC
+  valid_from   DATE
+  valid_to     DATE
+  is_active    BOOLEAN       NN DEFAULT TRUE
+  created_at   TIMESTAMPTZ   NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+basket_item
+--------------------------------------------------------------------------------
+  id            BIGSERIAL     PK
+  basket_id     BIGINT        NN FK -> basket(basket_id) ON DELETE CASCADE
+  product_id    BIGINT        NN
+  product_name  VARCHAR(255)
+  qty           NUMERIC       NN DEFAULT 1
+
+--------------------------------------------------------------------------------
+vision_session
+--------------------------------------------------------------------------------
+  session_id     BIGSERIAL    PK
+  store_id       BIGINT       NN FK -> store(store_id) ON DELETE CASCADE
+  session_type   VARCHAR(20)  NN
+  session_date   DATE         NN DEFAULT CURRENT_DATE
+  image_url      TEXT
+  status         VARCHAR(20)  NN DEFAULT 'pending'
+  total_skus     INT          NN DEFAULT 0
+  total_units    INT          NN DEFAULT 0
+  unknown_count  INT          NN DEFAULT 0
+  error          TEXT
+  created_at     TIMESTAMPTZ  NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+vision_item
+--------------------------------------------------------------------------------
+  item_id               BIGSERIAL     PK
+  session_id            BIGINT        NN FK -> vision_session(session_id) ON DELETE CASCADE
+  sku_id                VARCHAR(64)
+  product_id            BIGINT
+  display_name          VARCHAR(255)
+  gemini_name           VARCHAR(255)  NN
+  visible_text          TEXT
+  count                 INT           NN DEFAULT 1
+  match_score           REAL          NN DEFAULT 0
+  is_unknown            BOOLEAN       NN DEFAULT TRUE
+  bbox_json             TEXT
+  corrected_product_id  BIGINT
+  corrected_at          TIMESTAMPTZ
+  created_at            TIMESTAMPTZ   NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+ai_usage
+--------------------------------------------------------------------------------
+  id          BIGSERIAL    PK
+  user_id     BIGINT       NN FK -> users(user_id) ON DELETE CASCADE
+  feature     VARCHAR(20)  NN
+  usage_date  DATE         NN DEFAULT CURRENT_DATE
+  count       INT          NN DEFAULT 0
+  UQ (user_id, feature, usage_date)
+
+--------------------------------------------------------------------------------
+ai_credits
+--------------------------------------------------------------------------------
+  id       BIGSERIAL    PK
+  user_id  BIGINT       NN FK -> users(user_id) ON DELETE CASCADE
+  feature  VARCHAR(20)  NN
+  balance  INT          NN DEFAULT 0  CHECK >= 0
+  UQ (user_id, feature)
+
+--------------------------------------------------------------------------------
+kpi_tier_config
+--------------------------------------------------------------------------------
+  kpi_id         TEXT       PK
+  required_tier  TEXT       NN DEFAULT 'basic'  CHECK IN ('basic','pro')
+  updated_at     TIMESTAMP  NN DEFAULT NOW()
+
+================================================================================
+SUBSCRIPTION
+================================================================================
+
+--------------------------------------------------------------------------------
+subscription
+--------------------------------------------------------------------------------
+  subscription_id  BIGSERIAL      PK
+  store_id         BIGINT         NN FK -> store(store_id)  UQ
+  tier             VARCHAR(40)    NN
+  monthly_price    NUMERIC(10,2)  NN DEFAULT 0
+  started_at       TIMESTAMP      NN DEFAULT NOW()
+  ended_at         TIMESTAMP
+  renewal_count    INT            NN DEFAULT 0
+  savings_to_date  NUMERIC(12,2)  NN DEFAULT 0
+  is_trial         BOOLEAN        NN DEFAULT FALSE
+  trial_ends_at    TIMESTAMP
+  trial_tier       VARCHAR(40)
+  requested_tier   VARCHAR(40)
+  UQ (store_id)
+
+================================================================================
+INTELLIGENCE / CART
+================================================================================
+
+--------------------------------------------------------------------------------
+intelligence_log
+--------------------------------------------------------------------------------
+  id            BIGSERIAL    PK
+  store_id      INTEGER      NN
+  user_id       INTEGER
+  trigger_type  VARCHAR(50)  NN
+  title         TEXT         NN
+  body          TEXT         NN
+  payload       JSONB        NN DEFAULT '{}'
+  sent_at       TIMESTAMPTZ  NN DEFAULT NOW()
+  opened_at     TIMESTAMPTZ
+  status        VARCHAR(20)  NN DEFAULT 'sent'  CHECK IN ('sent','failed','opened','skipped')
+
+--------------------------------------------------------------------------------
+cart_session
+--------------------------------------------------------------------------------
+  store_id      INTEGER      PK
+  item_count    INTEGER      NN DEFAULT 0
+  cart_data     JSONB        NN DEFAULT '[]'
+  updated_at    TIMESTAMPTZ  NN DEFAULT NOW()
+  notified_at   TIMESTAMPTZ
+  converted_at  TIMESTAMPTZ
+
+================================================================================
+STORE ASSOCIATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+store_association
+--------------------------------------------------------------------------------
+  association_id        SERIAL    PK
+  store_id              INTEGER   NN FK -> store(store_id) ON DELETE CASCADE
+  name                  TEXT      NN
+  area_type             TEXT      NN CHECK IN ('apartment','hostel','school','office','colony')
+  estimated_households  INTEGER
+  notes                 TEXT
+  is_active             BOOLEAN   NN DEFAULT TRUE
+  created_at            TIMESTAMP NN DEFAULT NOW()
+
+================================================================================
+KHATA (udhaar / credit)
+================================================================================
+
+--------------------------------------------------------------------------------
+khata
+--------------------------------------------------------------------------------
+  khata_id     BIGSERIAL      PK
+  customer_id  BIGINT         NN FK -> customer(customer_id)
+  store_id     BIGINT         NN FK -> store(store_id)
+  order_id     BIGINT         FK -> orders(order_id)
+  amount       NUMERIC(12,2)  NN CHECK >= 0
+  amount_paid  NUMERIC(12,2)  NN DEFAULT 0
+  issue_date   DATE           NN
+  due_date     DATE           NN
+  status       VARCHAR(20)    NN DEFAULT 'open'
+  notes        TEXT
+
+--------------------------------------------------------------------------------
+khata_payments
+--------------------------------------------------------------------------------
+  payment_id  BIGSERIAL    PK
+  khata_id    BIGINT       NN FK -> khata(khata_id) ON DELETE CASCADE
+  store_id    BIGINT       NN
+  amount      NUMERIC      NN
+  paid_at     TIMESTAMPTZ  NN DEFAULT NOW()
+  notes       TEXT
+
+================================================================================
+REFERRAL SYSTEM
+================================================================================
+
+--------------------------------------------------------------------------------
+referral_campaigns
+--------------------------------------------------------------------------------
+  campaign_id                 BIGSERIAL     PK
+  store_id                    BIGINT        NN FK -> store(store_id)
+  name                        VARCHAR(100)  NN
+  referral_discount_pct       NUMERIC(5,2)  NN DEFAULT 10
+  milestone_every_n           INT           NN DEFAULT 10
+  milestone_reward_pct        NUMERIC(5,2)  NN DEFAULT 5
+  max_referrals_per_referrer  INT           NN DEFAULT 50
+  is_active                   BOOLEAN       NN DEFAULT TRUE
+  created_at                  TIMESTAMPTZ   NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+referral_tokens
+--------------------------------------------------------------------------------
+  token_id              BIGSERIAL     PK
+  store_id              BIGINT        NN FK -> store(store_id)
+  referrer_customer_id  BIGINT        NN FK -> customer(customer_id)
+  campaign_id           BIGINT        NN FK -> referral_campaigns(campaign_id)
+  token_hash            VARCHAR(64)   UQ NN
+  created_at            TIMESTAMPTZ   NN DEFAULT NOW()
+  UQ (referrer_customer_id, campaign_id)
+
+--------------------------------------------------------------------------------
+referrals
+--------------------------------------------------------------------------------
+  referral_id       BIGSERIAL     PK
+  token_id          BIGINT        NN FK -> referral_tokens(token_id)
+  new_customer_id   BIGINT        FK -> customer(customer_id)
+  order_id          BIGINT        FK -> orders(order_id)
+  discount_applied  NUMERIC(5,2)
+  status            VARCHAR(20)   NN DEFAULT 'rewarded'
+  created_at        TIMESTAMPTZ   NN DEFAULT NOW()
+
+--------------------------------------------------------------------------------
+referral_vouchers
+--------------------------------------------------------------------------------
+  voucher_id        BIGSERIAL     PK
+  customer_id       BIGINT        NN FK -> customer(customer_id)
+  store_id          BIGINT        NN FK -> store(store_id)
+  campaign_id       BIGINT        NN FK -> referral_campaigns(campaign_id)
+  discount_pct      NUMERIC(5,2)  NN
+  status            VARCHAR(20)   NN DEFAULT 'pending'
+  earned_at         TIMESTAMPTZ   NN DEFAULT NOW()
+  used_at           TIMESTAMPTZ
+  used_on_order_id  BIGINT        FK -> orders(order_id)
+
+================================================================================
+KPI EXTENSION TABLES
+================================================================================
+
+--------------------------------------------------------------------------------
+footfall
+--------------------------------------------------------------------------------
+  footfall_id  BIGSERIAL  PK
+  store_id     BIGINT     NN FK -> store(store_id) ON DELETE CASCADE
+  ts           TIMESTAMP  NN
+  hour         INT        NN CHECK BETWEEN 0 AND 23
+  visitors     INT        NN CHECK >= 0
+  UQ (store_id, ts)
+
+--------------------------------------------------------------------------------
+scheme
+--------------------------------------------------------------------------------
+  scheme_id    BIGSERIAL      PK
+  supplier_id  BIGINT         FK -> supplier(supplier_id)
+  product_id   BIGINT         FK -> product(product_id)
+  name         VARCHAR(150)   NN
+  scheme_type  VARCHAR(40)    NN
+  value        NUMERIC(12,2)  NN DEFAULT 0
+  min_qty      INT            NN DEFAULT 1
+  start_date   DATE           NN
+  end_date     DATE           NN
+
+--------------------------------------------------------------------------------
+scheme_claim
+--------------------------------------------------------------------------------
+  claim_id      BIGSERIAL      PK
+  scheme_id     BIGINT         NN FK -> scheme(scheme_id) ON DELETE CASCADE
+  store_id      BIGINT         NN FK -> store(store_id)
+  purchase_id   BIGINT         FK -> purchases(purchase_id)
+  claim_date    DATE           NN
+  amount_saved  NUMERIC(12,2)  NN DEFAULT 0
+  status        VARCHAR(20)    NN DEFAULT 'claimed'
+
+--------------------------------------------------------------------------------
+calendar
+--------------------------------------------------------------------------------
+  cal_date  DATE          PK
+  festival  VARCHAR(100)
+  weight    NUMERIC(4,2)  NN DEFAULT 1.0
+
+--------------------------------------------------------------------------------
+inventory_batch
+--------------------------------------------------------------------------------
+  batch_id           BIGSERIAL     PK
+  store_id           BIGINT        NN FK -> store(store_id)
+  product_id         BIGINT        NN FK -> product(product_id)
+  batch_no           VARCHAR(60)
+  manufactured_date  DATE
+  expiry_date        DATE          NN
+  qty_in_stock       INT           NN DEFAULT 0  CHECK >= 0
+  markdown_pct       NUMERIC(5,2)  DEFAULT 0
+  recovered_units    INT           DEFAULT 0
+  wasted_units       INT           DEFAULT 0
+  UQ (store_id, product_id, batch_no)
+
+--------------------------------------------------------------------------------
+shelf_planogram
+--------------------------------------------------------------------------------
+  plano_id    BIGSERIAL     PK
+  store_id    BIGINT        NN FK -> store(store_id)
+  product_id  BIGINT        NN FK -> product(product_id)
+  shelf_id    VARCHAR(40)   NN
+  sq_ft       NUMERIC(6,2)  NN CHECK > 0
+  eye_level   BOOLEAN       NN DEFAULT FALSE
+  UQ (store_id, product_id)
+
+--------------------------------------------------------------------------------
+opex
+--------------------------------------------------------------------------------
+  opex_id      BIGSERIAL      PK
+  store_id     BIGINT         NN FK -> store(store_id)
+  month_start  DATE           NN
+  electricity  NUMERIC(12,2)  DEFAULT 0
+  rent         NUMERIC(12,2)  DEFAULT 0
+  staff        NUMERIC(12,2)  DEFAULT 0
+  other        NUMERIC(12,2)  DEFAULT 0
+  UQ (store_id, month_start)
+
+--------------------------------------------------------------------------------
+return_to_vendor
+--------------------------------------------------------------------------------
+  rtv_id            BIGSERIAL      PK
+  store_id          BIGINT         NN FK -> store(store_id)
+  supplier_id       BIGINT         FK -> supplier(supplier_id)
+  product_id        BIGINT         NN FK -> product(product_id)
+  return_date       DATE           NN
+  qty_returned      INT            NN CHECK > 0
+  unit_cost         NUMERIC(10,2)  NN DEFAULT 0
+  recovery_pct      NUMERIC(5,2)   NN DEFAULT 0
+  amount_recovered  NUMERIC(12,2)  NN DEFAULT 0
+  reason            VARCHAR(60)
+
+--------------------------------------------------------------------------------
+marketing_spend
+--------------------------------------------------------------------------------
+  spend_id              BIGSERIAL      PK
+  store_id              BIGINT         FK -> store(store_id)
+  spend_date            DATE           NN
+  channel               VARCHAR(40)    NN
+  amount                NUMERIC(12,2)  NN
+  attributed_customers  INT            NN DEFAULT 0
+
+================================================================================
+SCHEMA: kirana_olap  (analytics / OLAP)
+================================================================================
+
+--------------------------------------------------------------------------------
+daily_store_sku_metrics  (PARTITIONED BY RANGE (date))
+--------------------------------------------------------------------------------
+  date               DATE           NN  PK (composite)
+  store_id           BIGINT             PK (composite)
+  product_id         BIGINT             PK (composite)
+  units_sold         INT
+  revenue            NUMERIC(12,2)
+  profit             NUMERIC(12,2)
+  stock_on_hand      INT
+  lost_sales         INT
+  price              NUMERIC(10,2)
+  discount           NUMERIC(5,2)
+  promo_flag         BOOLEAN
+  avg_selling_price  NUMERIC(10,2)
+  margin             NUMERIC(5,2)
+  weather_temp       NUMERIC(5,2)
+  rain_flag          BOOLEAN
+  PK (date, store_id, product_id)
+  Partitions: daily_metrics_default (DEFAULT) + monthly partitions
+              created on demand via ensure_daily_metrics_partition()
+
+--------------------------------------------------------------------------------
+mv_store_daily_summary  (MATERIALIZED VIEW)
+--------------------------------------------------------------------------------
+  SELECT date, store_id,
+         SUM(revenue)    AS total_revenue,
+         SUM(profit)     AS total_profit,
+         SUM(units_sold) AS total_units
+  FROM kirana_olap.daily_store_sku_metrics
+  GROUP BY date, store_id
+
+================================================================================
+VIEWS  (kirana_oltp)
+================================================================================
+
+product_catalog
+  SELECT * FROM kirana_oltp.product
+  WHERE (barcode IS NOT NULL OR is_loose = TRUE)
+
+================================================================================
+FUNCTIONS & TRIGGERS
+================================================================================
+
+kirana_olap.ensure_daily_metrics_partition(target_date DATE) -> VOID
+    Creates the monthly partition of daily_store_sku_metrics for the given date.
+
+kirana_olap.populate_daily_metrics(target_date DATE) -> VOID
+    Aggregates orders/order_item/inventory into daily_store_sku_metrics
+    (upsert on conflict).
+
+kirana_oltp.update_inventory_on_sale() -> TRIGGER
+    BEFORE INSERT trigger fn: decrements inventory.quantity, validates stock,
+    and logs an inventory_movements 'sale' row.
+
+TRIGGER trg_inventory_on_sale
+    BEFORE INSERT ON kirana_oltp.order_item
+    FOR EACH ROW EXECUTE kirana_oltp.update_inventory_on_sale()
+
+================================================================================
+INDEXES
+================================================================================
+
+  uidx_users_phone               users(phone_number) WHERE phone_number IS NOT NULL  [UNIQUE]
+  idx_product_category           product(category_id)
+  idx_product_brand              product(brand)
+  idx_product_loose              product(is_loose)
+  idx_product_barcode            product(barcode) WHERE barcode IS NOT NULL
+  idx_orders_store_date          orders(store_id, order_date DESC)
+  idx_inventory_store_product    inventory_snapshots(store_id, product_id)
+  idx_customer_store_id          customer(store_id)
+  idx_customer_store_phone       customer(store_id, phone)
+  idx_user_fcm_tokens_user_id    user_fcm_tokens(user_id)
+  idx_app_activity_user_id       app_activity(user_id, created_at)
+  idx_khata_payments_khata_id    khata_payments(khata_id)
+  idx_store_association_store    store_association(store_id)
+  idx_intel_log_store            intelligence_log(store_id, sent_at DESC)
+  idx_intel_log_trigger          intelligence_log(trigger_type, sent_at DESC)
+  idx_footfall_store_ts          footfall(store_id, ts)
+  idx_scheme_dates               scheme(start_date, end_date)
+  idx_scheme_claim_store         scheme_claim(store_id, claim_date)
+  idx_khata_store_status         khata(store_id, status)
+  idx_khata_due                  khata(due_date)
+  idx_batch_store_expiry         inventory_batch(store_id, expiry_date)
+  idx_rtv_store_date             return_to_vendor(store_id, return_date)
+  idx_subscription_store_active  subscription(store_id) WHERE ended_at IS NULL
+  idx_mv_store_date              mv_store_daily_summary(store_id, date)
+
+================================================================================
+END OF SCHEMA
+================================================================================

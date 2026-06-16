@@ -210,6 +210,54 @@ class KiranaRepository:
                 )
             """))
 
+            # kirana_oltp.vision_session — one shelf-scan (morning/evening) photo + its run
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.vision_session (
+                    session_id    BIGSERIAL PRIMARY KEY,
+                    store_id      BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+                    session_type  VARCHAR(20) NOT NULL,          -- 'morning' | 'evening'
+                    session_date  DATE NOT NULL DEFAULT CURRENT_DATE,
+                    image_url     TEXT,
+                    status        VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | done | failed
+                    total_skus    INT NOT NULL DEFAULT 0,
+                    total_units   INT NOT NULL DEFAULT 0,
+                    unknown_count INT NOT NULL DEFAULT 0,
+                    error         TEXT,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_vision_session_store_date "
+                "ON kirana_oltp.vision_session(store_id, session_date)"
+            ))
+
+            # kirana_oltp.vision_item — one detected product in a session (product_id
+            # NOT FK-constrained, matching basket_item/customer_product_price house style;
+            # null product_id ⇒ unknown / unmatched. corrected_product_id = owner fix → training data).
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
+                    item_id              BIGSERIAL PRIMARY KEY,
+                    session_id           BIGINT NOT NULL
+                                             REFERENCES kirana_oltp.vision_session(session_id) ON DELETE CASCADE,
+                    sku_id               VARCHAR(64),
+                    product_id           BIGINT,
+                    display_name         VARCHAR(255),
+                    gemini_name          VARCHAR(255) NOT NULL,
+                    visible_text         TEXT,
+                    count                INT NOT NULL DEFAULT 1,
+                    match_score          REAL NOT NULL DEFAULT 0,
+                    is_unknown           BOOLEAN NOT NULL DEFAULT TRUE,
+                    bbox_json            TEXT,
+                    corrected_product_id BIGINT,
+                    corrected_at         TIMESTAMPTZ,
+                    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_vision_item_session "
+                "ON kirana_oltp.vision_item(session_id)"
+            ))
+
             # kirana_oltp.store — add app-metadata columns
             for ddl in [
                 "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS store_type   VARCHAR(100) DEFAULT 'kirana'",
@@ -281,12 +329,24 @@ class KiranaRepository:
                 "last_udhaar_reminded_at TIMESTAMP"
             ))
             conn.execute(text(
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS "
+                "is_deleted BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS "
+                "deleted_at TIMESTAMPTZ"
+            ))
+            conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_customer_store_id "
                 "ON kirana_oltp.customer(store_id)"
             ))
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_customer_store_phone "
                 "ON kirana_oltp.customer(store_id, phone)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_customer_store_active "
+                "ON kirana_oltp.customer(store_id) WHERE is_deleted = FALSE"
             ))
             # Performance indexes for high-frequency queries
             conn.execute(text(
@@ -384,6 +444,69 @@ class KiranaRepository:
                     UNIQUE (user_id, feature)
                 )
             """))
+
+            # kirana_oltp.udhaar_consent — voice-consent clip per udhaar order.
+            # audio_blob = Azure Blob name (durable, legal record). analysis is
+            # filled asynchronously by the in-house voice model (consent extract
+            # + speaker match), so status starts 'pending' and the clip uploads
+            # via a persistent client queue (owner is never blocked).
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.udhaar_consent (
+                    consent_id     BIGSERIAL PRIMARY KEY,
+                    store_id       BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    order_id       BIGINT REFERENCES kirana_oltp.orders(order_id),
+                    khata_id       BIGINT REFERENCES kirana_oltp.khata(khata_id),
+                    customer_id    BIGINT REFERENCES kirana_oltp.customer(customer_id),
+                    audio_blob     VARCHAR(500) NOT NULL,
+                    duration_sec   NUMERIC(6,2),
+                    language       VARCHAR(10),
+                    agreed_total   NUMERIC(12,2),
+                    agreed_udhaar  NUMERIC(12,2),
+                    promised_date  DATE,
+                    status         VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    analysis       JSONB,
+                    voice_match_score NUMERIC(5,4),
+                    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    analyzed_at    TIMESTAMPTZ
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_udhaar_consent_order "
+                "ON kirana_oltp.udhaar_consent(order_id)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_udhaar_consent_status "
+                "ON kirana_oltp.udhaar_consent(status)"
+            ))
+
+            # ── One-time data backfills (guarded so they run exactly once) ──────
+            # Tracks which one-off backfills have already been applied, so a
+            # redeploy never re-runs them and clobbers data the user has since
+            # edited (e.g. due dates they set manually).
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.app_migrations (
+                    key        TEXT PRIMARY KEY,
+                    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+
+            # Existing pending udhaars predate the due-date feature, so give them
+            # a single sensible repayment deadline (30 Jun 2026). New udhaars get
+            # a date chosen at sale time. Runs once; future edits are preserved.
+            _due_backfill_key = "backfill_khata_due_2026_06_30"
+            already = conn.execute(text(
+                "SELECT 1 FROM kirana_oltp.app_migrations WHERE key = :k"
+            ), {"k": _due_backfill_key}).first()
+            if not already:
+                conn.execute(text("""
+                    UPDATE kirana_oltp.khata
+                    SET due_date = DATE '2026-06-30'
+                    WHERE status IN ('open', 'pending', 'overdue')
+                """))
+                conn.execute(text(
+                    "INSERT INTO kirana_oltp.app_migrations(key) VALUES (:k) "
+                    "ON CONFLICT (key) DO NOTHING"
+                ), {"k": _due_backfill_key})
 
             conn.commit()
 
@@ -1228,7 +1351,7 @@ class KiranaRepository:
             WHERE store_id = :sid
             GROUP BY customer_id
         ) kh ON kh.customer_id = c.customer_id
-        WHERE c.store_id = :sid
+        WHERE c.store_id = :sid AND COALESCE(c.is_deleted, FALSE) = FALSE
         ORDER BY c.name ASC
         """
         with self._conn() as conn:
@@ -1541,15 +1664,30 @@ class KiranaRepository:
         FROM kirana_oltp.khata
         WHERE store_id = :sid
         """
+        # Credit *extended this month* — the numerator for the Credit-vs-Sales
+        # ratio. This must be scoped to the current month so the ratio answers
+        # "how much of THIS month's sales went on credit", not "all-time
+        # outstanding vs this month's sales" (which let the ratio sit at 100%
+        # even in a month with zero udhaar sales).
+        monthly_credit_sql = """
+        SELECT COALESCE(SUM(amount), 0) AS monthly_credit
+        FROM kirana_oltp.khata
+        WHERE store_id = :sid
+          AND DATE_TRUNC('month', issue_date) =
+              DATE_TRUNC('month', (NOW() AT TIME ZONE 'Asia/Kolkata')::date)
+        """
         with self._conn() as conn:
             sales = conn.execute(text(sales_sql), {"sid": store_id}).mappings().first()
             skus  = conn.execute(text(sku_count_sql), {"sid": store_id}).mappings().first()
             udhaar = conn.execute(text(udhaar_sql), {"sid": store_id}).mappings().first()
-        
+            mcredit = conn.execute(text(monthly_credit_sql), {"sid": store_id}).mappings().first()
+
         return {
             "monthly_sales": {
                 "amount": float(sales["amount"]),
-                "sku_count": int(skus["sku_count"])
+                "sku_count": int(skus["sku_count"]),
+                # Credit given this month (used for the Credit-vs-Sales ratio).
+                "credit_amount": float(mcredit["monthly_credit"])
             },
             "udhaar_stats": {
                 "total_pending": float(udhaar["total_pending"]),
@@ -1570,6 +1708,7 @@ class KiranaRepository:
             k.amount_paid,
             (k.amount - k.amount_paid) AS balance,
             k.issue_date::text AS date_taken,
+            k.due_date::text   AS due_date,
             k.status,
             (CURRENT_DATE - k.issue_date) AS days_pending,
             (c.last_udhaar_reminded_at IS NOT NULL
@@ -2155,27 +2294,39 @@ class KiranaRepository:
             conn.commit()
         return {"product_id": product_id, "price": price, "removed": False}
 
-    def add_udhaar(self, store_id: int, customer_name: str, phone: str, amount: float) -> dict:
+    def add_udhaar(self, store_id: int, customer_name: str, phone: str, amount: float,
+                   due_date: str | None = None) -> dict:
         with self._conn() as conn:
             # 1. Find or create customer (scoped to store_id)
             cust_sql = "SELECT customer_id FROM kirana_oltp.customer WHERE phone = :p AND store_id = :sid"
             cust_row = conn.execute(text(cust_sql), {"p": phone, "sid": store_id}).mappings().first()
-            
+
             if not cust_row:
                 ins_cust = "INSERT INTO kirana_oltp.customer(name, phone, store_id) VALUES(:n, :p, :sid) RETURNING customer_id"
                 customer_id = conn.execute(text(ins_cust), {"n": customer_name, "p": phone, "sid": store_id}).scalar()
             else:
                 customer_id = cust_row["customer_id"]
+                # Re-transacting with this phone revives a soft-deleted customer
+                # (and refreshes the name) — otherwise a "deleted" customer would
+                # silently collect new udhaar while staying hidden from the
+                # customer directory.
+                conn.execute(text(
+                    "UPDATE kirana_oltp.customer "
+                    "SET is_deleted = FALSE, deleted_at = NULL, name = :n "
+                    "WHERE customer_id = :cid"
+                ), {"n": customer_name, "cid": customer_id})
             
             # 2. Create khata entry
             # Note: Using 'pending' as status per request, though 'open' was the previous convention
             ins_khata = """
             INSERT INTO kirana_oltp.khata(customer_id, store_id, amount, amount_paid, issue_date, due_date, status)
-            VALUES(:cid, :sid, :amt, 0, CURRENT_DATE, CURRENT_DATE + INTERVAL '30 days', 'pending')
-            RETURNING khata_id, customer_id, amount, amount_paid, status, issue_date::text AS date_taken
+            VALUES(:cid, :sid, :amt, 0, CURRENT_DATE,
+                   COALESCE(CAST(:due AS DATE), CURRENT_DATE + INTERVAL '30 days'), 'pending')
+            RETURNING khata_id, customer_id, amount, amount_paid, status,
+                      issue_date::text AS date_taken, due_date::text AS due_date
             """
             khata = conn.execute(text(ins_khata), {
-                "cid": customer_id, "sid": store_id, "amt": amount
+                "cid": customer_id, "sid": store_id, "amt": amount, "due": due_date
             }).mappings().first()
             
             conn.commit()
@@ -2188,6 +2339,70 @@ class KiranaRepository:
         })
         return res
 
+    def create_udhaar_consent(
+        self,
+        store_id: int,
+        audio_blob: str,
+        order_id: int | None = None,
+        khata_id: int | None = None,
+        customer_id: int | None = None,
+        duration_sec: float | None = None,
+        language: str | None = None,
+        agreed_total: float | None = None,
+        agreed_udhaar: float | None = None,
+        promised_date: str | None = None,
+    ) -> dict:
+        """Record an uploaded consent clip. Resolves khata_id/customer_id from the
+        order when not supplied. Analysis stays NULL (status 'pending') until the
+        in-house voice model fills it."""
+        sql = """
+        INSERT INTO kirana_oltp.udhaar_consent
+            (store_id, order_id, khata_id, customer_id, audio_blob,
+             duration_sec, language, agreed_total, agreed_udhaar, promised_date, status)
+        VALUES
+            (:sid, :oid,
+             COALESCE(:kid, (SELECT khata_id FROM kirana_oltp.khata
+                             WHERE order_id = :oid ORDER BY khata_id LIMIT 1)),
+             COALESCE(:cid, (SELECT customer_id FROM kirana_oltp.orders
+                             WHERE order_id = :oid)),
+             :blob, :dur, :lang, :atot, :audh, CAST(:pdate AS DATE), 'pending')
+        RETURNING consent_id, status, created_at::text AS created_at
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {
+                "sid": store_id, "oid": order_id, "kid": khata_id, "cid": customer_id,
+                "blob": audio_blob, "dur": duration_sec, "lang": language,
+                "atot": agreed_total, "audh": agreed_udhaar, "pdate": promised_date,
+            }).mappings().first()
+            conn.commit()
+        return dict(row)
+
+    def get_consent_for_order(self, store_id: int, order_id: int) -> dict | None:
+        """Latest consent record for an order (for the order-details screen)."""
+        sql = """
+        SELECT consent_id, order_id, khata_id, customer_id,
+               audio_blob, duration_sec, language,
+               agreed_total::float AS agreed_total,
+               agreed_udhaar::float AS agreed_udhaar,
+               promised_date::text AS promised_date,
+               status, analysis,
+               voice_match_score::float AS voice_match_score,
+               created_at::text AS created_at,
+               analyzed_at::text AS analyzed_at
+        FROM kirana_oltp.udhaar_consent
+        WHERE store_id = :sid AND order_id = :oid
+        ORDER BY consent_id DESC
+        LIMIT 1
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"sid": store_id, "oid": order_id}).mappings().first()
+        if not row:
+            return None
+        d = dict(row)
+        # Expose the authed proxy URL the app fetches the clip through.
+        d["audio_url"] = f"/kirana/finance/udhaar/consent/audio/{d['audio_blob']}"
+        return d
+
     def sync_customers(self, store_id: int, contacts: list[dict]) -> int:
         if not contacts:
             return 0
@@ -2197,6 +2412,7 @@ class KiranaRepository:
         WHERE NOT EXISTS (
             SELECT 1 FROM kirana_oltp.customer
             WHERE store_id = :sid AND phone = :p
+              AND COALESCE(is_deleted, FALSE) = FALSE
         )
         """
         params = [{"n": c["name"], "p": c["phone"], "sid": store_id} for c in contacts]

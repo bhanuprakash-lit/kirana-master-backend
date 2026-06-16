@@ -56,6 +56,10 @@ class Settings:
     google_play_package_name: str     # e.g. com.yourcompany.kirana_ai
     google_play_credentials_json: str # path to service account JSON; empty = skip verification
 
+    # ── Azure Blob (udhaar voice-consent clips — durable, legal record) ───────
+    azure_storage_connection_string: str  # empty = consent upload disabled
+    consent_audio_container: str          # blob container name for consent clips
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -109,4 +113,7 @@ def get_settings() -> Settings:
 
         google_play_package_name=os.getenv("GOOGLE_PLAY_PACKAGE_NAME", ""),
         google_play_credentials_json=os.getenv("GOOGLE_PLAY_CREDENTIALS_JSON", ""),
+
+        azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING", ""),
+        consent_audio_container=os.getenv("CONSENT_AUDIO_CONTAINER", "udhaar-consent"),
     )

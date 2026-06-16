@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import MetaData, Table, and_, delete, exists, inspect, insert, literal, select, update
+from sqlalchemy import MetaData, Table, and_, delete, exists, func, inspect, insert, literal, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
@@ -196,6 +196,21 @@ class OltpRepository:
         with self._engine.begin() as conn:
             # Identity check before delete
             existing = self._fetch_row(conn, table_name, user, keys)
+            if table_name == "customer":
+                if "is_deleted" not in table.c or "deleted_at" not in table.c:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Customer soft-delete columns are not available",
+                    )
+                stmt = (
+                    update(table)
+                    .where(self._row_filter(table_name, table, keys))
+                    .values(is_deleted=True, deleted_at=func.now())
+                )
+                result = conn.execute(stmt)
+                if result.rowcount == 0:
+                    raise HTTPException(status_code=404, detail=f"{table_name} record not found")
+                return {"table": table_name, "deleted": True, "soft_deleted": True, "keys": keys}
             stmt = delete(table).where(self._row_filter(table_name, table, keys))
             try:
                 result = conn.execute(stmt)
@@ -358,6 +373,7 @@ class OltpRepository:
             raise HTTPException(status_code=403, detail=f"Access denied to table {table_name}")
 
     def _apply_scope(self, stmt, table_name: str, user: dict):
+        stmt = self._exclude_soft_deleted(stmt, table_name)
         if user.get("role") == "admin":
             return stmt
 
@@ -402,6 +418,14 @@ class OltpRepository:
             return stmt.where(visible)
 
         return stmt
+
+    def _exclude_soft_deleted(self, stmt, table_name: str):
+        if table_name != "customer":
+            return stmt
+        table = self._table(table_name)
+        if "is_deleted" not in table.c:
+            return stmt
+        return stmt.where(table.c.is_deleted.is_(False))
 
     def _fetch_row(self, conn, table_name: str, user: dict, keys: dict[str, Any]) -> dict[str, Any]:
         table = self._table(table_name)
@@ -486,3 +510,5 @@ def _load_oltp_metadata(engine: Engine):
             column_map=OltpRepository.COLUMN_MAPPINGS.get(name, {}),
         )
     return metadata, tables, metas
+
+

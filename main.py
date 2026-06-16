@@ -195,6 +195,7 @@ def create_app() -> FastAPI:
     from whatsapp.routes import router as wa_router
     from kpis.routes     import router as kpi_router
     from ai.routes       import router as ai_router
+    from vision.routes   import router as vision_router
 
     app.include_router(kirana_router)
     app.include_router(pos_router)
@@ -202,6 +203,7 @@ def create_app() -> FastAPI:
     app.include_router(wa_router)
     app.include_router(kpi_router)
     app.include_router(ai_router)
+    app.include_router(vision_router)
 
     # ── Root ──────────────────────────────────────────────────────────────────
     @app.get("/", tags=["Root"], include_in_schema=False)

@@ -73,6 +73,9 @@ class OrderCreate(BaseModel):
     # Only set when payment_method == "udhaar" and it's a partial split.
     udhaar_amount: Optional[float] = None
     cash_paid: Optional[float] = None
+    # Repayment deadline for the auto-created khata (ISO yyyy-mm-dd). Only used
+    # for udhaar orders; defaults to issue + 30 days when omitted.
+    due_date: Optional[str] = None
     # Basket attribution — set only when the cart was filled from a basket bundle.
     basket_id: Optional[int] = None
     basket_name: Optional[str] = None

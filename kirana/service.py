@@ -758,9 +758,10 @@ class KiranaService:
         from kirana.repository import KiranaRepository
         return KiranaRepository(self._db).record_udhaar_recovery(store_id, khata_id, amount)
 
-    def add_udhaar(self, store_id: int, customer_name: str, phone: str, amount: float) -> dict:
+    def add_udhaar(self, store_id: int, customer_name: str, phone: str, amount: float,
+                   due_date: str | None = None) -> dict:
         from kirana.repository import KiranaRepository
-        return KiranaRepository(self._db).add_udhaar(store_id, customer_name, phone, amount)
+        return KiranaRepository(self._db).add_udhaar(store_id, customer_name, phone, amount, due_date)
 
     def sync_customers(self, store_id: int, contacts: list[dict]) -> int:
         from kirana.repository import KiranaRepository

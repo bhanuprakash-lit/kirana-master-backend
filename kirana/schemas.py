@@ -302,6 +302,8 @@ class UdhaarAddRequest(BaseModel):
     customer_name: str
     phone: str
     amount: float
+    # Optional repayment deadline (ISO yyyy-mm-dd). Defaults to issue + 30 days.
+    due_date: Optional[str] = None
 
 
 class UdhaarRemindRequest(BaseModel):

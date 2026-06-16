@@ -52,7 +52,12 @@
       "PowerShell(az keyvault secret set *)",
       "PowerShell($fqdn=\"ca-lohiya-outlet-uat.ambitiouspond-d8177a23.centralindia.azurecontainerapps.io\"; $ok=$false; for\\($i=0;$i -lt 15;$i++\\){ try { $h=Invoke-RestMethod \"https://$fqdn/health\" -TimeoutSec 15; Write-Host \"status=$\\($h.status\\) pos=$\\($h.pos\\) wa_send=$\\($h.whatsapp.send_enabled\\) mistral=$\\($h.whatsapp.mistral_set\\)\"; $ok=$true; break } catch { Start-Sleep -Seconds 10 } }; if\\(-not $ok\\){ Write-Host \"no health response — checking logs\"; az containerapp logs show -n ca-lohiya-outlet-uat -g rg-lohiya-outlet-UAT --tail 30 --query \"[].Log\" -o tsv 2>$null | Select-Object -Last 15 })",
       "Bash(git stash *)",
-      "Bash(python -m py_compile kirana/repository.py kirana/service.py kirana/routes.py)"
+      "Bash(python -m py_compile kirana/repository.py kirana/service.py kirana/routes.py)",
+      "Bash(az account *)",
+      "Bash(az keyvault secret set *)",
+      "Bash(az containerapp secret set *)",
+      "Bash(az containerapp update *)",
+      "Bash(az containerapp *)"
     ]
   }
 }
