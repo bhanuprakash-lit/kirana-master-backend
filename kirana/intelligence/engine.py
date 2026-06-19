@@ -276,7 +276,8 @@ class IntelligenceEngine:
     async def _run_snapshot_refresh(self) -> None:
         """Write daily inventory snapshots from live orders + inventory tables."""
         from datetime import date
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
 
         # One replica only (Azure Container Apps may run several).
         lock_conn = self._try_lock(_SNAPSHOT_LOCK_KEY)

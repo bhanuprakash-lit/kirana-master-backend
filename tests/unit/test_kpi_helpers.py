@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from kpis.calculator import _period, _prev_period, _trend
+# from kpis.calculator import _period, _prev_period, _trend
+from kpis.calculators.core import _period, _prev_period, _trend
 
 
 class TestPeriod:

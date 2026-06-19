@@ -65,7 +65,8 @@ def _auth(request: Request) -> dict:
 # ── Repo helper ───────────────────────────────────────────────────────────────
 
 def _repo(request: Request):
-    from kirana.repository import KiranaRepository
+    # from kirana.repository import KiranaRepository
+    from kirana.repositories.main import KiranaRepository
     return KiranaRepository(request.app.state.engine)
 
 

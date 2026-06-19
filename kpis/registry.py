@@ -16,7 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from kpis import calculator as calc
+# from kpis import calculator as calc
+from kpis import calculators as calc
 
 
 # ─────────────────────────────────────────────────────────────────────────────

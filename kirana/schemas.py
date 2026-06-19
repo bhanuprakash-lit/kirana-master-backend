@@ -44,6 +44,7 @@ class RegisterStoreOwnerRequest(BaseModel):
     full_name: str
     store_name: str
     store_type: str = "kirana"
+    vertical_code: Optional[str] = None  # coarse vertical switch; None → 'grocery'
     footfall: int = 40
     budget: Optional[float] = None       # owner's monthly sales target (₹)
     location: Optional[str] = None

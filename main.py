@@ -78,7 +78,8 @@ async def lifespan(app: FastAPI):
 
     # Trigger schema bootstrap (adds auth columns, migrates legacy public tables,
     # seeds store defaults) before any request handler runs.
-    from kirana.repository import KiranaRepository
+    # from kirana.repository import KiranaRepository
+    from kirana.repositories.main import KiranaRepository
     KiranaRepository(engine)
     logger.info("kirana_oltp schema bootstrapped")
 
@@ -189,7 +190,8 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=500, content={"success": False, "error": "Internal server error"})
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    from kirana.routes   import router as kirana_router
+    # from kirana.routes   import router as kirana_router
+    from kirana.routers.main import router as kirana_router
     from pos.routes      import router as pos_router
     from oltp.routes     import router as oltp_router
     from whatsapp.routes import router as wa_router

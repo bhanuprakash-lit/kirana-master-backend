@@ -10,7 +10,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from kpis import calculator as calc
+# from kpis import calculator as calc
+from kpis import calculators as calc
 from kpis import registry as kpi_registry
 from kpis.ml_inference import get_kpi_models
 

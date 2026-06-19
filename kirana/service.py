@@ -231,7 +231,8 @@ class KiranaService:
     # ── Auth / Users ──────────────────────────────────────────────────────────
 
     def login(self, req: LoginRequest, telemetry: dict | None = None) -> LoginResponse:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         logger.info(f"Login attempt for user: {req.username}")
         user = repo.authenticate_user(req.username.strip(), req.password)
@@ -249,12 +250,14 @@ class KiranaService:
             raise
 
     def user_by_token(self, token: str) -> dict | None:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_user_by_token(token)
 
     def phone_login(self, req: PhoneLoginRequest, telemetry: dict | None = None) -> LoginResponse:
         """Log in using a Firebase-verified phone number. Raises ValueError if no account found."""
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         user = repo.authenticate_by_phone(req.phone_number, req.firebase_uid)
         if not user:
@@ -264,16 +267,19 @@ class KiranaService:
         return LoginResponse(access_token=token, user=AuthUser(**user))
 
     def check_username_available(self, username: str) -> bool:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).check_username_available(username)
 
     def register_store_owner(self, req: RegisterStoreOwnerRequest, telemetry: dict | None = None) -> RegisterStoreOwnerResponse:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         try:
             store, user = repo.register_store_owner_atomic(
                 store_name=req.store_name,
                 store_type=req.store_type,
+                vertical_code=req.vertical_code,
                 footfall=req.footfall,
                 budget=req.budget,
                 location=req.location,
@@ -298,22 +304,26 @@ class KiranaService:
         return RegisterStoreOwnerResponse(access_token=token, user=AuthUser(**user), store=store)
 
     def create_user(self, req: UserCreateRequest) -> UserCreateResponse:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         user = repo.create_user(req.username.strip(), req.password, req.full_name.strip(),
                                  req.role, req.store_id)
         return UserCreateResponse(**user)
 
     def list_users(self) -> list[dict]:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).list_users()
 
     def delete_user(self, user_id: int) -> bool:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).delete_user(user_id)
 
     def update_my_profile(self, user_id: int, req: ProfileUpdateRequest) -> AuthUser:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         updated = KiranaRepository(self._db).update_user_profile(
             user_id, full_name=req.full_name, password=req.password
         )
@@ -324,7 +334,8 @@ class KiranaService:
     # ── Stores ────────────────────────────────────────────────────────────────
 
     def list_stores(self) -> list[dict]:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         stores = repo.list_store_master()
         df = self.ml.get_frame()
@@ -336,7 +347,8 @@ class KiranaService:
         return result
 
     def update_store_profile(self, store_id: int, req: StoreUpdateRequest) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         updated = KiranaRepository(self._db).update_store(
             store_id, store_name=req.store_name, store_type=req.store_type,
             footfall=req.footfall, budget=req.budget, daily_budget=req.daily_budget,
@@ -520,7 +532,8 @@ class KiranaService:
             customer_insights = 0
 
         try:
-            from kirana.repository import KiranaRepository
+            # from kirana.repository import KiranaRepository
+            from kirana.repositories.main import KiranaRepository
             sales_insights = KiranaRepository(self._db).get_today_items_sold(store_id)
         except Exception as e:
             logger.warning(f"Failed to fetch sales insights for store {store_id}: {e}")
@@ -542,7 +555,8 @@ class KiranaService:
     # ── Inventory Snapshots ───────────────────────────────────────────────────
 
     def ingest_store_snapshot(self, store_id: int, req: InventorySnapshotWriteRequest) -> InventorySnapshotWriteResponse:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         upserted = KiranaRepository(self._db).upsert_inventory_snapshot(
             store_id, req.snapshot_date, [i.model_dump() for i in req.items]
         )
@@ -552,7 +566,8 @@ class KiranaService:
         )
 
     def get_store_snapshot(self, store_id: int) -> StoreSnapshotResponse:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         snapshot = KiranaRepository(self._db).get_store_snapshot(store_id)
         return StoreSnapshotResponse(**snapshot)
 
@@ -594,7 +609,8 @@ class KiranaService:
         )
 
     def report_issue(self, user_id: int, store_id: int, req: IssueReportCreate) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         with repo._conn() as conn:
             sql = """
@@ -610,7 +626,8 @@ class KiranaService:
         return {"report_id": rid, "status": "submitted"}
 
     def update_fcm_token(self, user_id: int, fcm_token: str) -> bool:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         with repo._conn() as conn:
             # Update legacy single-token column for backward compat with intelligence engine
@@ -633,7 +650,8 @@ class KiranaService:
         """
         import logging as _log
         _logger = _log.getLogger("kirana.fcm")
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         from kirana.fcm_sender import send_to_token, UNREGISTERED
         repo = KiranaRepository(self._db)
         with repo._conn() as conn:
@@ -667,7 +685,8 @@ class KiranaService:
 
         # Purge stale tokens so the intelligence engine stops hitting them
         if stale_tokens:
-            from kirana.repository import KiranaRepository
+            # from kirana.repository import KiranaRepository
+            from kirana.repositories.main import KiranaRepository
             repo2 = KiranaRepository(self._db)
             with repo2._conn() as conn:
                 for t in stale_tokens:
@@ -689,37 +708,45 @@ class KiranaService:
     # ── Customer Segments ─────────────────────────────────────────────────────
 
     def list_customers_with_segments(self, store_id: int) -> list[dict]:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).list_customers_with_segments(store_id)
 
     # ── Subscription ──────────────────────────────────────────────────────────
 
     def get_active_subscription(self, store_id: int) -> dict | None:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_active_subscription(store_id)
 
     def request_trial(self, store_id: int, requested_tier: str = "basic") -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).request_trial(store_id, requested_tier)
 
     def approve_trial(self, store_id: int, trial_days: int) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).approve_trial(store_id, trial_days)
 
     def extend_trial(self, store_id: int, days: int) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).extend_trial(store_id, days)
 
     def cancel_subscription(self, store_id: int) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).cancel_subscription(store_id)
 
     def upgrade_subscription(self, store_id: int, tier: str) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).upgrade_subscription(store_id, tier)
 
     def create_razorpay_order(self, store_id: int, tier: str) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         s = self._s
         return KiranaRepository(self._db).create_razorpay_order(
             store_id, tier, s.razorpay_key_id, s.razorpay_key_secret
@@ -727,7 +754,8 @@ class KiranaService:
 
     def verify_razorpay_payment(self, store_id: int, tier: str,
                                  order_id: str, payment_id: str, signature: str) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         s = self._s
         return KiranaRepository(self._db).verify_razorpay_payment(
             store_id, tier, order_id, payment_id, signature, s.razorpay_key_secret
@@ -736,39 +764,47 @@ class KiranaService:
     # ── User preferences ──────────────────────────────────────────────────────
 
     def get_user_prefs(self, user_id: int) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_user_prefs(user_id)
 
     def update_user_prefs(self, user_id: int, body) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         fields = body.model_dump(exclude_none=True) if hasattr(body, "model_dump") else dict(body)
         return KiranaRepository(self._db).upsert_user_prefs(user_id, **fields)
 
     # ── Finance ───────────────────────────────────────────────────────────────
 
     def get_finance_overview(self, store_id: int) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_finance_overview(store_id)
 
     def get_udhaar_list(self, store_id: int, include_recovered: bool = False) -> list[dict]:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_udhaar_list(store_id, include_recovered)
 
     def record_udhaar_recovery(self, store_id: int, khata_id: int, amount: float) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).record_udhaar_recovery(store_id, khata_id, amount)
 
     def add_udhaar(self, store_id: int, customer_name: str, phone: str, amount: float,
                    due_date: str | None = None) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).add_udhaar(store_id, customer_name, phone, amount, due_date)
 
     def sync_customers(self, store_id: int, contacts: list[dict]) -> int:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).sync_customers(store_id, contacts)
 
     def send_udhaar_reminder(self, store_id: int, khata_id: int, wa_client: Any) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         
         # 1. Fetch record
@@ -832,47 +868,57 @@ class KiranaService:
 
     def create_cashflow_request(self, store_id: int, user_id: int,
                                 amount: float, selected_bank: str | None) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         result = KiranaRepository(self._db).create_cashflow_request(
             store_id, user_id, amount, selected_bank
         )
         return result
 
     def get_cashflow_status(self, store_id: int) -> dict:
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_cashflow_status(store_id)
 
     # ── Referral System ───────────────────────────────────────────────────────
 
     def create_referral_campaign(self, store_id, name, referral_discount_pct, milestone_every_n, milestone_reward_pct, max_referrals_per_referrer=50):
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).create_referral_campaign(
             store_id, name, referral_discount_pct, milestone_every_n, milestone_reward_pct, max_referrals_per_referrer)
 
     def list_referral_campaigns(self, store_id):
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).list_referral_campaigns(store_id)
 
     def toggle_referral_campaign(self, campaign_id, is_active):
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).toggle_referral_campaign(campaign_id, is_active)
 
     def get_or_create_referral_token(self, store_id, customer_id, campaign_id):
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_or_create_referral_token(store_id, customer_id, campaign_id)
 
     def get_token_info(self, token_hash):
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_token_info(token_hash)
 
     def process_referral(self, token_hash, new_phone, new_name, order_id=None):
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).process_referral(token_hash, new_phone, new_name, order_id)
 
     def get_pending_vouchers(self, customer_id, store_id):
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).get_pending_vouchers(customer_id, store_id)
 
     def use_voucher(self, voucher_id, order_id=None):
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).use_voucher(voucher_id, order_id)
