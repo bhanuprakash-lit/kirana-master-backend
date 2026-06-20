@@ -530,6 +530,78 @@ class BaseRepositoryMixin:
             """)
             )
 
+            # ── Module M1: Loyalty & Offers (opt-in per store) ───────────────
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS birthday DATE"))
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS anniversary DATE"))
+            # Per-store loyalty settings (off until the owner enables it).
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.loyalty_config (
+                    store_id               BIGINT PRIMARY KEY REFERENCES kirana_oltp.store(store_id),
+                    is_active              BOOLEAN NOT NULL DEFAULT FALSE,
+                    points_per_100         NUMERIC NOT NULL DEFAULT 1,   -- points earned per ₹100 spent
+                    redeem_paise_per_point INT NOT NULL DEFAULT 100,     -- ₹ value of 1 point (100 paise = ₹1)
+                    silver_threshold       INT NOT NULL DEFAULT 500,
+                    gold_threshold         INT NOT NULL DEFAULT 2000,
+                    updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            # Points ledger — balance is SUM(points) per customer (+earn / −redeem).
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.loyalty_transaction (
+                    txn_id      BIGSERIAL PRIMARY KEY,
+                    store_id    BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    customer_id BIGINT NOT NULL REFERENCES kirana_oltp.customer(customer_id),
+                    order_id    BIGINT,
+                    points      NUMERIC NOT NULL,
+                    kind        VARCHAR(20) NOT NULL,   -- earn | redeem | bonus | adjust
+                    note        VARCHAR(255),
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_loyalty_txn_customer "
+                "ON kirana_oltp.loyalty_transaction(customer_id)"))
+            # Discount / coupon rules.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.coupon (
+                    coupon_id     BIGSERIAL PRIMARY KEY,
+                    store_id      BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    code          VARCHAR(40) NOT NULL,
+                    discount_type VARCHAR(10) NOT NULL,   -- percent | flat
+                    value         NUMERIC NOT NULL,
+                    min_order     NUMERIC NOT NULL DEFAULT 0,
+                    max_discount  NUMERIC,
+                    valid_from    DATE,
+                    valid_to      DATE,
+                    usage_limit   INT,
+                    used_count    INT NOT NULL DEFAULT 0,
+                    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (store_id, code)
+                )
+            """)
+            )
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.coupon_redemption (
+                    id          BIGSERIAL PRIMARY KEY,
+                    coupon_id   BIGINT NOT NULL REFERENCES kirana_oltp.coupon(coupon_id) ON DELETE CASCADE,
+                    store_id    BIGINT NOT NULL,
+                    order_id    BIGINT,
+                    customer_id BIGINT,
+                    discount    NUMERIC NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+
             # kirana_oltp.user_prefs
             conn.execute(
                 text("""

@@ -84,6 +84,10 @@ class OrderCreate(BaseModel):
     basket_name: Optional[str] = None
     basket_gross: Optional[float] = None
     basket_savings: Optional[float] = None
+    # M1 — loyalty/offers applied at checkout (recorded against the order).
+    coupon_id: Optional[int] = None
+    coupon_discount: Optional[float] = None
+    redeem_points: Optional[float] = None
 
 
 class OrderItemOut(BaseModel):

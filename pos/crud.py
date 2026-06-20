@@ -2,8 +2,11 @@
 POS CRUD — operates on kirana_oltp schema tables in lit_db.
 Auth users are resolved from kirana_app_users (created by KiranaRepository).
 """
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
+
+logger = logging.getLogger("pos.crud")
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -384,6 +387,26 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
         })
 
     db.commit()
+
+    # M1 — loyalty & offers, all best-effort (never fail the sale):
+    #   1. record a redeemed coupon, 2. redeem points, 3. earn points on the bill.
+    try:
+        from kirana.repositories.main import KiranaRepository
+        repo = KiranaRepository(db.get_bind())
+        if order.coupon_id and (order.coupon_discount or 0) > 0:
+            repo.redeem_coupon(order.coupon_id, store_id, float(order.coupon_discount),
+                               db_order.order_id, db_order.customer_id)
+        if db_order.customer_id is not None:
+            if (order.redeem_points or 0) > 0:
+                try:
+                    repo.redeem_points(store_id, db_order.customer_id,
+                                       float(order.redeem_points), db_order.order_id)
+                except ValueError:
+                    pass  # insufficient balance — skip silently
+            repo.earn_points(store_id, db_order.customer_id, db_order.order_id, final_total)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("loyalty post-order hook failed for order %s: %s", db_order.order_id, e)
+
     return get_order(db, db_order.order_id)
 
 

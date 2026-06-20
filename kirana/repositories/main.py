@@ -11,6 +11,7 @@ from .baskets import BasketsRepositoryMixin
 from .associations import AssociationsRepositoryMixin
 from .variants import VariantsRepositoryMixin
 from .tax import TaxRepositoryMixin
+from .loyalty import LoyaltyRepositoryMixin
 
 class KiranaRepository(
     BaseRepositoryMixin,
@@ -26,6 +27,7 @@ class KiranaRepository(
     AssociationsRepositoryMixin,
     VariantsRepositoryMixin,
     TaxRepositoryMixin,
+    LoyaltyRepositoryMixin,
 ):
     """
     Unified repository combining all domain-specific mixins.
