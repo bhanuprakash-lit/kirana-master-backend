@@ -12,6 +12,7 @@ import Products from './pages/Products';
 import Cashflow from './pages/Cashflow';
 import Vouchers from './pages/Vouchers';
 import KpiTiers from './pages/KpiTiers';
+import KpiVisibility from './pages/KpiVisibility';
 import Intelligence from './pages/Intelligence';
 import Issues from './pages/Issues';
 import Settings from './pages/Settings';
@@ -69,6 +70,7 @@ function App() {
             <Route path="/cashflow" element={<Cashflow />} />
             <Route path="/vouchers" element={<Vouchers />} />
             <Route path="/kpis" element={<KpiTiers />} />
+            <Route path="/kpi-visibility" element={<KpiVisibility />} />
             <Route path="/intelligence" element={<Intelligence />} />
             <Route path="/issues" element={<Issues />} />
             <Route path="/whatsapp" element={<WhatsApp />} />

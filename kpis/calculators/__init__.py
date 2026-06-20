@@ -57,6 +57,12 @@ from .sales import (
     calc_cac_payback,
     calc_private_label,
 )
+from .vertical import (
+    calc_sell_through,
+    calc_size_curve,
+    calc_markdown,
+    calc_gmroi,
+)
 
 __all__ = [
     "_period",
@@ -114,4 +120,8 @@ __all__ = [
     "calc_overhead_ratio",
     "calc_cac_payback",
     "calc_private_label",
+    "calc_sell_through",
+    "calc_size_curve",
+    "calc_markdown",
+    "calc_gmroi",
 ]

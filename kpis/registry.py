@@ -49,6 +49,12 @@ class KPIDef:
     compute: Optional[Callable] = None     # (engine, store_id, **kwargs) -> dict
     primary_field: Optional[str] = None    # field in the result that is "the number"
     missing_data: Optional[str] = None     # human-readable "what we still need"
+    # F4 — vertical_codes this KPI applies to. Empty = all verticals (the common
+    # set, e.g. the existing grocery/common KPIs). Vertical packs list their codes.
+    verticals: list[str] = field(default_factory=list)
+
+    def applies_to(self, vertical_code: str) -> bool:
+        return not self.verticals or vertical_code in self.verticals
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -62,6 +68,12 @@ def _ok(slug: str, fn: Callable, primary: str | None = None, **base) -> KPIDef:
 def _missing(missing: str, **base) -> KPIDef:
     return KPIDef(status=STATUS_DATA_UNAVAILABLE,
                   missing_data=missing, **base)
+
+
+def _soon(missing: str, **base) -> KPIDef:
+    """A registered-but-not-yet-computable KPI (Guru gap). Hidden from stores by
+    default; an admin can switch it on per vertical once data lands."""
+    return KPIDef(status=STATUS_DATA_UNAVAILABLE, missing_data=missing, **base)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -847,6 +859,115 @@ _REGISTRY: list[KPIDef] = [
         ai_agent="ERP · Workflow AI", data_source="Process logs",
         perspective="Universal", spreadsheet_status="Existing"),
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # F4 — Vertical KPI packs (from Guru's Feature Gap Analysis).
+    # Registered + tagged per vertical; shown in the admin panel. Hidden from
+    # stores by default (status=data_unavailable) and switched on per vertical by
+    # an admin once the underlying data lands. `missing_data` records exactly
+    # what each one still needs (see docs/F4_KPI_Packs.md).
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    # ── Fashion (apparel / footwear / boutique / mono-brand) ──────────────────
+    _ok("sell-through", calc.calc_sell_through, "sell_through_pct",
+        kpi_id="V_AP_1", spreadsheet_num="V1", name="Sell-through %", category="Inventory",
+        vertical="Fashion", pl_category="Top Line", theme="Inventory Efficiency",
+        target="50–70% / season", baseline="Units sold ÷ units received",
+        why="Core apparel health metric — how fast a buy sells before markdown.",
+        ai_agent="Stock AI", data_source="order_item (variant), inventory",
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
+
+    _ok("size-curve", calc.calc_size_curve, "sizes_tracked",
+        kpi_id="V_AP_2", spreadsheet_num="V2", name="Size-curve / Size-mix", category="Inventory",
+        vertical="Fashion", pl_category="Operations", theme="Inventory Efficiency",
+        target="Match demand curve", baseline="Sales by size",
+        why="Reveals which sizes sell out first so re-orders match real demand.",
+        ai_agent="Stock AI", data_source="product_variant.attributes, order_item",
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
+
+    _ok("markdown", calc.calc_markdown, "markdown_pct",
+        kpi_id="V_AP_3", spreadsheet_num="V3", name="Markdown %", category="Finance",
+        vertical="Fashion", pl_category="Bottom Line", theme="Margin",
+        target="< 20% of revenue", baseline="Markdown value ÷ revenue",
+        why="Tracks how much margin is lost to discounting.",
+        ai_agent="Pricing AI", data_source="order_item, pricing/mrp",
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
+
+    _ok("gmroi", calc.calc_gmroi, "gmroi",
+        kpi_id="V_AP_4", spreadsheet_num="V4", name="GMROI", category="Finance",
+        vertical="Fashion", pl_category="Bottom Line", theme="Margin",
+        target="> 2.5", baseline="Gross margin ÷ avg inventory cost",
+        why="Return on every rupee tied up in stock — key for fashion/electronics.",
+        ai_agent="Pricing AI", data_source="order_item.cost_price, inventory, pricing",
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear", "electronics"]),
+
+    _soon("Co-purchase / bundle modelling on order baskets; recommender pending.",
+        kpi_id="V_AP_5", spreadsheet_num="V5", name="Outfit / Bundle Uptake", category="Customer",
+        vertical="Fashion", pl_category="Top Line", theme="Revenue & Growth",
+        target="+10% basket", baseline="Bundle attach rate",
+        why="Cross-sell driver for apparel/footwear.",
+        ai_agent="Recommender AI", data_source="order_item co-occurrence",
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
+
+    # ── Electronics / mobile ──────────────────────────────────────────────────
+    _soon("Accessory category mapping + basket co-occurrence; calculator pending.",
+        kpi_id="V_EL_1", spreadsheet_num="V6", name="Accessory Attach-rate", category="Customer",
+        vertical="Electronics", pl_category="Top Line", theme="Revenue & Growth",
+        target="> 30%", baseline="Orders with accessory ÷ device orders",
+        why="High-margin add-on sales on every device sold.",
+        ai_agent="Recommender AI", data_source="order_item, category links",
+        perspective="Owner", spreadsheet_status="New", verticals=["electronics"]),
+
+    _soon("Needs a warranty/serial register (F2 serial flag exists; warranty-claim module not built).",
+        kpi_id="V_EL_2", spreadsheet_num="V7", name="Warranty-claim Rate", category="Operations",
+        vertical="Electronics", pl_category="Operations", theme="Service Quality",
+        target="< 3%", baseline="Claims ÷ units sold",
+        why="Quality + after-sales cost signal for electronics.",
+        ai_agent="Service AI", data_source="warranty_claim (not built), product_serial",
+        perspective="Owner", spreadsheet_status="New", verticals=["electronics"]),
+
+    # ── Optical ───────────────────────────────────────────────────────────────
+    _soon("Needs a prescription register with renewal dates (optical module not built).",
+        kpi_id="V_OP_1", spreadsheet_num="V8", name="Prescription Renewal Due", category="Customer",
+        vertical="Optical", pl_category="Top Line", theme="Revenue & Growth",
+        target="Recall 100% due", baseline="Customers with Rx > 12 months",
+        why="Recurring revenue from lens/eye-test renewals.",
+        ai_agent="Reminder AI", data_source="prescription register (not built)",
+        perspective="Owner", spreadsheet_status="New", verticals=["optical"]),
+
+    # ── Services (salon / fitness) ────────────────────────────────────────────
+    _soon("Needs a services/appointments module (catalogue of services + bookings).",
+        kpi_id="V_SV_1", spreadsheet_num="V9", name="Service-wise Revenue", category="Finance",
+        vertical="Services", pl_category="Top Line", theme="Revenue & Growth",
+        target="Track top services", baseline="Revenue by service",
+        why="Salon/fitness revenue is service-driven, not product-driven.",
+        ai_agent="Service AI", data_source="services + appointments (not built)",
+        perspective="Owner", spreadsheet_status="New", verticals=["services"]),
+
+    _soon("Needs an appointments module (booked vs completed vs no-show).",
+        kpi_id="V_SV_2", spreadsheet_num="V10", name="Appointment Utilisation", category="Operations",
+        vertical="Services", pl_category="Operations", theme="Capacity",
+        target="> 75%", baseline="Booked ÷ available slots",
+        why="Chair/trainer utilisation drives service profitability.",
+        ai_agent="Service AI", data_source="appointments (not built)",
+        perspective="Owner", spreadsheet_status="New", verticals=["services"]),
+
+    # ── Cross-vertical (Guru critical gaps) ───────────────────────────────────
+    _soon("Needs multi-store rollup (one owner, many stores) — module not built.",
+        kpi_id="V_CM_1", spreadsheet_num="V11", name="Zone / City Comparison", category="Operations",
+        vertical="Common (All Verticals)", pl_category="Operations", theme="Growth",
+        target="Benchmark stores", baseline="Revenue by zone/city",
+        why="Guru-flagged Critical gap for chains/supermarkets.",
+        ai_agent="Analytics AI", data_source="multi-store rollup (not built)",
+        perspective="Owner", spreadsheet_status="New"),
+
+    _soon("Needs a staff/roster module with per-staff sales attribution.",
+        kpi_id="V_CM_2", spreadsheet_num="V12", name="Staff Performance", category="Operations",
+        vertical="Common (All Verticals)", pl_category="Operations", theme="Productivity",
+        target="Identify top staff", baseline="Sales per staff",
+        why="Commission, coaching and rostering all need this.",
+        ai_agent="Ops AI", data_source="staff module + order_item.user attribution (not built)",
+        perspective="Owner", spreadsheet_status="New"),
+
 ]
 
 # ── Lookup helpers ──────────────────────────────────────────────────────────
@@ -895,4 +1016,32 @@ def kpi_to_metadata(k: KPIDef) -> dict:
         "endpoint":            f"/kirana/kpis/{k.endpoint_slug}" if k.endpoint_slug else None,
         "primary_field":       k.primary_field,
         "missing_data":        k.missing_data,
+        "verticals":           k.verticals,
     }
+
+
+# ── F4: per-vertical visibility resolution ───────────────────────────────────
+# The coarse vertical codes the app understands (mirror of the backend seed).
+KNOWN_VERTICALS = [
+    "grocery", "apparel", "footwear", "electronics", "optical", "services", "general",
+]
+
+
+def default_visible(k: KPIDef) -> bool:
+    """Default (no admin override): computable KPIs show, coming-soon hide."""
+    return k.status == STATUS_OK
+
+
+def visible_kpis_for(
+    vertical_code: str, overrides: dict[tuple[str, str], bool]
+) -> list[KPIDef]:
+    """KPIs a store on [vertical_code] should see: applicable to the vertical and
+    visible after applying the admin override (else the registry default)."""
+    out = []
+    for k in _REGISTRY:
+        if not k.applies_to(vertical_code):
+            continue
+        ov = overrides.get((k.kpi_id, vertical_code))
+        if (ov if ov is not None else default_visible(k)):
+            out.append(k)
+    return out

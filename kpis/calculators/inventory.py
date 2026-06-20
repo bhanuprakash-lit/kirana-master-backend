@@ -1,6 +1,7 @@
 _HOLDING_RATE = 0.20
 
-from .core import _period, _prev_period, _row, _rows, _scalar, _trend
+from .core import _period, _prev_period, _row, _rows, _scalar, _trend, ml_profile_for
+from datetime import date, timedelta
 
 
 def calc_morning_stock_readiness(engine, store_id: int, ml_adapter=None) -> dict:
@@ -601,7 +602,10 @@ def calc_stockout_rate(engine, store_id: int, days: int = 30) -> dict:
 
 
 def calc_dead_stock(engine, store_id: int, days: int = 30) -> dict:
-    p_from, p_to = _period(days)
+    # F4 — the "not sold in N days = dead" window comes from the store's vertical
+    # ML profile (grocery 21d, apparel 60d seasonal, electronics 45d, …).
+    window = ml_profile_for(engine, store_id)["dead_stock_days"]
+    p_from = date.today() - timedelta(days=window)
 
     sql = """
     WITH sold AS (
@@ -649,7 +653,7 @@ def calc_dead_stock(engine, store_id: int, days: int = 30) -> dict:
         "dead_stock_value": round(dead_value, 2),
         "total_inventory_value": round(total_inv_value, 2),
         "dead_stock_pct": dead_pct,
-        "analysis_days": days,
+        "analysis_days": window,
         "items": [
             {
                 "product_id": int(r["product_id"]),

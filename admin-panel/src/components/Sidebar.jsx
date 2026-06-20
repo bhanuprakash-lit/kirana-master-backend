@@ -11,6 +11,7 @@ const navItems = [
   { path: '/vouchers', label: 'Loyalty / Vouchers', icon: '🎟️' },
   { path: '/intelligence', label: 'AI Intelligence', icon: '🧠' },
   { path: '/kpis', label: 'KPI Config', icon: '🎯' },
+  { path: '/kpi-visibility', label: 'KPI Visibility', icon: '👁️' },
   { path: '/issues', label: 'Support', icon: '🐛' },
   { path: '/whatsapp', label: 'WhatsApp', icon: '💬' },
   { path: '/settings', label: 'Settings', icon: '⚙️' },

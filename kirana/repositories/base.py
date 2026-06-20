@@ -317,31 +317,31 @@ class BaseRepositoryMixin:
                     (vertical_code, features, unit_set, ml_profile, tax_profile, copy_pack)
                 VALUES
                     ('grocery',
-                     '{"expiry": true, "loose": true, "variants": false, "serial": false, "warranty": false, "appointments": false}',
+                     '{"expiry": true, "loose": true, "variants": false, "serial": false, "warranty": false, "appointments": false, "vision": true}',
                      '["pcs","kg","g","L","ml","dozen","pack","box","bundle"]',
                      'grocery', 'grocery', '{}'),
                     ('apparel',
-                     '{"expiry": false, "loose": false, "variants": true, "serial": false, "warranty": false, "appointments": false}',
+                     '{"expiry": false, "loose": false, "variants": true, "serial": false, "warranty": false, "appointments": false, "vision": false}',
                      '["pcs","pair","set"]',
                      'apparel', 'standard', '{}'),
                     ('footwear',
-                     '{"expiry": false, "loose": false, "variants": true, "serial": false, "warranty": false, "appointments": false}',
+                     '{"expiry": false, "loose": false, "variants": true, "serial": false, "warranty": false, "appointments": false, "vision": false}',
                      '["pair","pcs","set"]',
                      'apparel', 'standard', '{}'),
                     ('electronics',
-                     '{"expiry": false, "loose": false, "variants": true, "serial": true, "warranty": true, "appointments": false}',
+                     '{"expiry": false, "loose": false, "variants": true, "serial": true, "warranty": true, "appointments": false, "vision": false}',
                      '["pcs","set"]',
                      'electronics', 'standard', '{}'),
                     ('optical',
-                     '{"expiry": false, "loose": false, "variants": true, "serial": false, "warranty": true, "appointments": true}',
+                     '{"expiry": false, "loose": false, "variants": true, "serial": false, "warranty": true, "appointments": true, "vision": false}',
                      '["pcs","pair"]',
                      'apparel', 'standard', '{}'),
                     ('services',
-                     '{"expiry": false, "loose": false, "variants": false, "serial": false, "warranty": false, "appointments": true}',
+                     '{"expiry": false, "loose": false, "variants": false, "serial": false, "warranty": false, "appointments": true, "vision": false}',
                      '["pcs","session","hour"]',
                      'services', 'standard', '{}'),
                     ('general',
-                     '{"expiry": false, "loose": false, "variants": false, "serial": false, "warranty": false, "appointments": false}',
+                     '{"expiry": false, "loose": false, "variants": false, "serial": false, "warranty": false, "appointments": false, "vision": false}',
                      '["pcs","pack","box","set"]',
                      'grocery', 'standard', '{}')
                 ON CONFLICT (vertical_code) DO NOTHING
@@ -513,6 +513,22 @@ class BaseRepositoryMixin:
                 "ALTER TABLE kirana_oltp.order_item ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(10,2)",
             ]:
                 conn.execute(text(ddl))
+
+            # ── Foundation 4: per-vertical KPI visibility (admin-controlled) ──
+            # Admin overrides which KPIs are shown for each vertical. No row =>
+            # fall back to the registry default (ok = shown, coming-soon = hidden).
+            # Lets the admin panel switch KPIs on/off live without an app update.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.kpi_visibility_config (
+                    kpi_id        TEXT NOT NULL,
+                    vertical_code TEXT NOT NULL,
+                    is_visible    BOOLEAN NOT NULL,
+                    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (kpi_id, vertical_code)
+                )
+            """)
+            )
 
             # kirana_oltp.user_prefs
             conn.execute(

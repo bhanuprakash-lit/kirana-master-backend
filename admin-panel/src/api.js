@@ -105,6 +105,9 @@ export const api = {
   // KPI Config
   getKpiTiers:     ()                     => request('GET',  '/kirana/admin/kpi-tiers'),
   saveKpiTiers:    (configs)              => request('PUT',  '/kirana/admin/kpi-tiers', { configs }),
+  // F4 — per-vertical KPI visibility (show/hide per vertical, live)
+  getKpiVisibility:  ()                   => request('GET',  '/kirana/admin/kpi-visibility'),
+  saveKpiVisibility: (configs)            => request('PUT',  '/kirana/admin/kpi-visibility', { configs }),
   
   // System & ML
   mlStatus:        ()                     => request('GET',  '/kirana/admin/ml/status'),

@@ -357,3 +357,75 @@ def _get_kpi_tier_config(request: Request) -> dict[str, str]:
     from kirana.repositories.main import KiranaRepository
 
     return KiranaRepository(request.app.state.engine).get_kpi_tier_config()
+
+
+# ── F4 — per-vertical KPI visibility (admin-controlled, live) ──────────────────
+
+
+@router.get("/admin/kpi-visibility")
+async def admin_get_kpi_visibility(request: Request, user: dict = Depends(_auth)):
+    """Admin matrix: every KPI × the verticals it applies to, with its default
+    and effective (override-applied) visibility. Drives the admin toggle grid."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from kpis import registry as r
+    from kirana.repositories.main import KiranaRepository
+
+    overrides = KiranaRepository(request.app.state.engine).get_kpi_visibility_config()
+    items = []
+    for k in r.all_kpis():
+        for vc in (k.verticals or r.KNOWN_VERTICALS):
+            ov = overrides.get((k.kpi_id, vc))
+            items.append({
+                "kpi_id": k.kpi_id,
+                "name": k.name,
+                "category": k.category,
+                "status": k.status,
+                "vertical_code": vc,
+                "default_visible": r.default_visible(k),
+                "visible": ov if ov is not None else r.default_visible(k),
+                "overridden": ov is not None,
+                "missing_data": k.missing_data,
+            })
+    return {"verticals": r.KNOWN_VERTICALS, "items": items}
+
+
+@router.put("/admin/kpi-visibility")
+async def admin_save_kpi_visibility(request: Request, user: dict = Depends(_auth)):
+    """Admin: bulk-save visibility. Body: {configs:[{kpi_id, vertical_code, is_visible}]}"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    body = await request.json()
+    configs = body.get("configs", [])
+    if not isinstance(configs, list):
+        raise HTTPException(status_code=400, detail="configs must be a list")
+    clean = []
+    for c in configs:
+        if not c.get("kpi_id") or not c.get("vertical_code") or not isinstance(c.get("is_visible"), bool):
+            raise HTTPException(status_code=400, detail="each config needs kpi_id, vertical_code, is_visible(bool)")
+        clean.append({
+            "kpi_id": c["kpi_id"],
+            "vertical_code": c["vertical_code"],
+            "is_visible": c["is_visible"],
+        })
+    from kirana.repositories.main import KiranaRepository
+
+    KiranaRepository(request.app.state.engine).upsert_kpi_visibility_config(clean)
+    return {"saved": len(clean)}
+
+
+@router.get("/kpis/visible")
+async def get_visible_kpis(request: Request, user: dict = Depends(_auth)):
+    """App: the KPI set this store should show — applicable to its vertical and
+    visible after admin overrides. Reflects admin changes live (no app update)."""
+    from kpis import registry as r
+    from kirana.repositories.main import KiranaRepository
+
+    repo = KiranaRepository(request.app.state.engine)
+    vc = repo.get_vertical_config(user.get("store_id") or 0).get("vertical_code", "grocery")
+    overrides = repo.get_kpi_visibility_config()
+    kpis = r.visible_kpis_for(vc, overrides)
+    return {
+        "vertical_code": vc,
+        "kpis": [r.kpi_to_metadata(k) for k in kpis],
+    }

@@ -149,3 +149,26 @@ class AssociationsRepositoryMixin:
         with self._conn() as conn:
             conn.execute(text(sql), configs)
             conn.commit()
+
+    # F4 — per-vertical KPI visibility overrides ───────────────────────────────
+    def get_kpi_visibility_config(self) -> dict[tuple[str, str], bool]:
+        """{(kpi_id, vertical_code): is_visible} for every admin override."""
+        sql = "SELECT kpi_id, vertical_code, is_visible FROM kirana_oltp.kpi_visibility_config"
+        with self._conn() as conn:
+            rows = conn.execute(text(sql)).mappings().all()
+        return {(r["kpi_id"], r["vertical_code"]): r["is_visible"] for r in rows}
+
+    def upsert_kpi_visibility_config(self, configs: list[dict]) -> None:
+        """Bulk upsert [{kpi_id, vertical_code, is_visible}]."""
+        if not configs:
+            return
+        sql = """
+        INSERT INTO kirana_oltp.kpi_visibility_config (kpi_id, vertical_code, is_visible, updated_at)
+        VALUES (:kpi_id, :vertical_code, :is_visible, NOW())
+        ON CONFLICT (kpi_id, vertical_code) DO UPDATE
+            SET is_visible = EXCLUDED.is_visible,
+                updated_at = NOW()
+        """
+        with self._conn() as conn:
+            conn.execute(text(sql), configs)
+            conn.commit()
