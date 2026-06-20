@@ -11,6 +11,8 @@ from .subscriptions import router as subscriptions_router
 from .admin import router as admin_router
 from .baskets import router as baskets_router
 from .marketing import router as marketing_router
+from .variants import router as variants_router
+from .tax import router as tax_router
 
 router = APIRouter()
 
@@ -25,3 +27,5 @@ router.include_router(subscriptions_router)
 router.include_router(admin_router)
 router.include_router(baskets_router)
 router.include_router(marketing_router)
+router.include_router(variants_router)
+router.include_router(tax_router)

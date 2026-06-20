@@ -9,6 +9,8 @@ from .subscription import SubscriptionRepositoryMixin
 from .referral import ReferralRepositoryMixin
 from .baskets import BasketsRepositoryMixin
 from .associations import AssociationsRepositoryMixin
+from .variants import VariantsRepositoryMixin
+from .tax import TaxRepositoryMixin
 
 class KiranaRepository(
     BaseRepositoryMixin,
@@ -22,6 +24,8 @@ class KiranaRepository(
     ReferralRepositoryMixin,
     BasketsRepositoryMixin,
     AssociationsRepositoryMixin,
+    VariantsRepositoryMixin,
+    TaxRepositoryMixin,
 ):
     """
     Unified repository combining all domain-specific mixins.

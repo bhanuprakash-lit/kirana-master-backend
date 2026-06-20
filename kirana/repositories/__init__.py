@@ -9,6 +9,8 @@ from .subscription import SubscriptionRepositoryMixin
 from .referral import ReferralRepositoryMixin
 from .baskets import BasketsRepositoryMixin
 from .associations import AssociationsRepositoryMixin
+from .variants import VariantsRepositoryMixin
+from .tax import TaxRepositoryMixin
 
 __all__ = [
     "BaseRepositoryMixin",
@@ -22,4 +24,6 @@ __all__ = [
     "ReferralRepositoryMixin",
     "BasketsRepositoryMixin",
     "AssociationsRepositoryMixin",
+    "VariantsRepositoryMixin",
+    "TaxRepositoryMixin",
 ]

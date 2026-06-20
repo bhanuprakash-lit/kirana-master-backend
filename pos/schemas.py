@@ -46,6 +46,8 @@ class ProductOut(BaseModel):
     is_loose: bool = False
     category_id: int
     image_url: Optional[str] = None
+    hsn_code: Optional[str] = None       # F3 — GST HSN/SAC
+    gst_rate: Optional[float] = None     # F3 — per-product GST %
     # joined from pricing
     price: Optional[float] = None
     mrp: Optional[float] = None
@@ -59,6 +61,7 @@ class ProductOut(BaseModel):
 
 class OrderItemCreate(BaseModel):
     product_id: int
+    variant_id: Optional[int] = None  # F2 — chosen variant (None = implicit/grocery)
     quantity: float
     unit_price: Optional[float] = None
     selling_price: Optional[float] = None
@@ -91,6 +94,9 @@ class OrderItemOut(BaseModel):
     unit_price: float
     selling_price: Optional[float] = None
     cost_price: Optional[float] = None
+    variant_id: Optional[int] = None     # F2
+    gst_rate: Optional[float] = None      # F3
+    tax_amount: Optional[float] = None    # F3
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -112,6 +118,9 @@ class OrderOut(BaseModel):
     basket_name: Optional[str] = None
     basket_gross: Optional[float] = None
     basket_savings: Optional[float] = None
+    # F3 — GST breakup (null when no taxable items)
+    tax_amount: Optional[float] = None
+    taxable_amount: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 
 

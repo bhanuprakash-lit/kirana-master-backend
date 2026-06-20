@@ -356,6 +356,164 @@ class BaseRepositoryMixin:
                 )
             )
 
+            # ── Foundation 2: product variants + dynamic attributes ───────────
+            # product_attribute_def: per-vertical attributes (size, colour, …),
+            # and which of them are variant axes the add-product grid uses.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.product_attribute_def (
+                    id              BIGSERIAL PRIMARY KEY,
+                    vertical_code   TEXT NOT NULL,
+                    attr_code       TEXT NOT NULL,
+                    label           TEXT NOT NULL,
+                    type            TEXT NOT NULL DEFAULT 'text',
+                    options         JSONB,
+                    is_variant_axis BOOLEAN NOT NULL DEFAULT FALSE,
+                    sort            INT NOT NULL DEFAULT 0,
+                    UNIQUE (vertical_code, attr_code)
+                )
+            """)
+            )
+            # product_variant: one sellable variant of a product. Grocery keeps
+            # exactly one *implicit* variant so all existing queries keep working.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.product_variant (
+                    variant_id  BIGSERIAL PRIMARY KEY,
+                    product_id  BIGINT NOT NULL
+                                    REFERENCES kirana_oltp.product(product_id) ON DELETE CASCADE,
+                    sku         VARCHAR(100),
+                    barcode     VARCHAR(100),
+                    attributes  JSONB NOT NULL DEFAULT '{}',
+                    price       NUMERIC(10,2),
+                    mrp         NUMERIC(10,2),
+                    cost        NUMERIC(10,2),
+                    stock       NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    is_implicit BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.product_variant ADD COLUMN IF NOT EXISTS "
+                    "stock NUMERIC(12,2) NOT NULL DEFAULT 0"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_product_variant_product "
+                    "ON kirana_oltp.product_variant(product_id)"
+                )
+            )
+            # Stock + sales reference a variant; NULL means the implicit one, so
+            # legacy rows and grocery flows are unaffected.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.inventory ADD COLUMN IF NOT EXISTS "
+                    "variant_id BIGINT REFERENCES kirana_oltp.product_variant(variant_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.order_item ADD COLUMN IF NOT EXISTS "
+                    "variant_id BIGINT REFERENCES kirana_oltp.product_variant(variant_id)"
+                )
+            )
+            # Migration: give every existing product one implicit variant, then
+            # point its stock + past sales at it. All guards make this a no-op
+            # after the first boot (grocery = one implicit variant rule).
+            conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.product_variant
+                    (product_id, sku, barcode, is_implicit, is_active)
+                SELECT p.product_id, p.sku, p.barcode, TRUE, TRUE
+                FROM kirana_oltp.product p
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM kirana_oltp.product_variant v
+                    WHERE v.product_id = p.product_id
+                )
+            """)
+            )
+            conn.execute(
+                text("""
+                UPDATE kirana_oltp.inventory inv
+                SET variant_id = v.variant_id
+                FROM kirana_oltp.product_variant v
+                WHERE v.product_id = inv.product_id
+                  AND v.is_implicit = TRUE
+                  AND inv.variant_id IS NULL
+            """)
+            )
+            conn.execute(
+                text("""
+                UPDATE kirana_oltp.order_item oi
+                SET variant_id = v.variant_id
+                FROM kirana_oltp.product_variant v
+                WHERE v.product_id = oi.product_id
+                  AND v.is_implicit = TRUE
+                  AND oi.variant_id IS NULL
+            """)
+            )
+            # Seed the variant axes each vertical exposes (idempotent).
+            conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.product_attribute_def
+                    (vertical_code, attr_code, label, type, options, is_variant_axis, sort)
+                VALUES
+                    ('apparel','size','Size','enum','["XS","S","M","L","XL","XXL"]',TRUE,1),
+                    ('apparel','colour','Colour','text',NULL,TRUE,2),
+                    ('footwear','size','Size','enum','["5","6","7","8","9","10","11","12"]',TRUE,1),
+                    ('footwear','colour','Colour','text',NULL,TRUE,2),
+                    ('electronics','model','Model','text',NULL,TRUE,1),
+                    ('electronics','storage','Storage','enum','["64GB","128GB","256GB","512GB","1TB"]',TRUE,2),
+                    ('electronics','colour','Colour','text',NULL,TRUE,3),
+                    ('optical','frame_size','Frame Size','text',NULL,TRUE,1),
+                    ('optical','lens_type','Lens Type','enum','["single_vision","bifocal","progressive"]',TRUE,2),
+                    ('optical','colour','Colour','text',NULL,TRUE,3)
+                ON CONFLICT (vertical_code, attr_code) DO NOTHING
+            """)
+            )
+
+            # ── Foundation 3: tax / GST ───────────────────────────────────────
+            # Per-product HSN + GST rate, with store-level fallback rules by
+            # category / price band. Retail prices are GST-inclusive; the tax
+            # component is extracted at sale time for a compliant bill breakup.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.product ADD COLUMN IF NOT EXISTS "
+                    "hsn_code VARCHAR(20)"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.product ADD COLUMN IF NOT EXISTS "
+                    "gst_rate NUMERIC(5,2)"
+                )
+            )
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.tax_rule (
+                    rule_id     BIGSERIAL PRIMARY KEY,
+                    store_id    BIGINT REFERENCES kirana_oltp.store(store_id),
+                    category_id BIGINT,
+                    hsn_code    VARCHAR(20),
+                    min_price   NUMERIC(12,2),
+                    max_price   NUMERIC(12,2),
+                    gst_rate    NUMERIC(5,2) NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            for ddl in [
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12,2)",
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS taxable_amount NUMERIC(12,2)",
+                "ALTER TABLE kirana_oltp.order_item ADD COLUMN IF NOT EXISTS gst_rate NUMERIC(5,2)",
+                "ALTER TABLE kirana_oltp.order_item ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(10,2)",
+            ]:
+                conn.execute(text(ddl))
+
             # kirana_oltp.user_prefs
             conn.execute(
                 text("""

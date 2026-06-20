@@ -119,6 +119,7 @@ def get_products(db: Session, store_id: int, skip: int = 0, limit: int = 100) ->
         SELECT p.product_id, p.name, p.brand, p.unit,
                p.weight::float            AS weight,
                p.sku, p.barcode, p.is_perishable, p.is_loose, p.image_url, p.category_id,
+               p.hsn_code, p.gst_rate::float AS gst_rate,
                COALESCE(pr.price,    0.0)::float AS price,
                pr.mrp::float                     AS mrp,
                COALESCE(inv.quantity, 0)          AS stock_quantity,
@@ -140,7 +141,7 @@ def get_products(db: Session, store_id: int, skip: int = 0, limit: int = 100) ->
                   AND ib.qty_in_stock > 0
         GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight,
                   p.sku, p.barcode, p.is_perishable, p.is_loose,
-                  p.image_url, p.category_id, pr.price, pr.mrp, inv.quantity
+                  p.image_url, p.category_id, p.hsn_code, p.gst_rate, pr.price, pr.mrp, inv.quantity
         ORDER  BY p.product_id
         LIMIT  :limit OFFSET :skip
     """), {"sid": store_id, "limit": limit, "skip": skip}).mappings().all()
@@ -154,6 +155,7 @@ def get_product(db: Session, product_id: int, store_id: int) -> dict | None:
             SELECT p.product_id, p.name, p.brand, p.unit,
                    p.weight::float            AS weight,
                    p.sku, p.barcode, p.is_perishable, p.is_loose, p.image_url, p.category_id,
+                   p.hsn_code, p.gst_rate::float AS gst_rate,
                    COALESCE(pr.price,    0.0)::float AS price,
                    pr.mrp::float                     AS mrp,
                    COALESCE(inv.quantity, 0)          AS stock_quantity,
@@ -176,7 +178,7 @@ def get_product(db: Session, product_id: int, store_id: int) -> dict | None:
             WHERE  p.product_id = :pid
             GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight,
                       p.sku, p.barcode, p.is_perishable, p.is_loose,
-                      p.image_url, p.category_id, pr.price, pr.mrp, inv.quantity
+                      p.image_url, p.category_id, p.hsn_code, p.gst_rate, pr.price, pr.mrp, inv.quantity
             LIMIT  1
         """), {"sid": store_id, "pid": product_id}).mappings().first()
         return dict(row) if row else None
@@ -200,6 +202,7 @@ def get_product_by_barcode(db: Session, barcode: str, store_id: int) -> dict | N
             p.product_id, p.name, p.brand, p.unit,
             p.weight::float            AS weight,
             p.sku, p.barcode, p.is_perishable, p.is_loose, p.category_id,
+            p.hsn_code, p.gst_rate::float AS gst_rate,
             COALESCE(pr.price, 0.0)::float  AS price,
             pr.mrp::float                   AS mrp,
             COALESCE(inv.quantity, 0)        AS stock_quantity,
@@ -223,7 +226,7 @@ def get_product_by_barcode(db: Session, barcode: str, store_id: int) -> dict | N
         WHERE  p.barcode = :barcode
         GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight, p.sku,
                   p.barcode, p.is_perishable, p.is_loose, p.category_id,
-                  pr.price, pr.mrp, inv.quantity
+                  p.hsn_code, p.gst_rate, pr.price, pr.mrp, inv.quantity
         LIMIT  1
     """
     row = db.execute(text(sql), {"barcode": barcode, "sid": store_id}).mappings().first()
@@ -231,6 +234,22 @@ def get_product_by_barcode(db: Session, barcode: str, store_id: int) -> dict | N
 
 
 # ── Orders ────────────────────────────────────────────────────────────────────
+
+def _gst_rate(db: Session, product, store_id: int, price: float) -> float:
+    """F3 — resolve a line's GST %: product.gst_rate → store tax_rule → 0."""
+    if getattr(product, "gst_rate", None) is not None:
+        return float(product.gst_rate)
+    rule = db.execute(text("""
+        SELECT gst_rate FROM kirana_oltp.tax_rule
+        WHERE (store_id = :sid OR store_id IS NULL)
+          AND (category_id IS NULL OR category_id = :cid)
+          AND (min_price IS NULL OR :price >= min_price)
+          AND (max_price IS NULL OR :price <= max_price)
+        ORDER BY store_id NULLS LAST, category_id NULLS LAST, hsn_code NULLS LAST
+        LIMIT 1
+    """), {"sid": store_id, "cid": product.category_id, "price": price}).first()
+    return float(rule[0]) if rule else 0.0
+
 
 def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -> KiranaOrder:
     db_order = KiranaOrder(
@@ -251,20 +270,40 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
     db.flush()
 
     total = 0.0
+    order_tax = 0.0
     for item in order.items:
         product = db.query(KiranaProduct).filter(KiranaProduct.product_id == item.product_id).first()
         if not product:
             db.rollback()
             raise HTTPException(status_code=404, detail=f"Product {item.product_id} not found")
 
-        inv = _inventory(db, item.product_id, store_id)
-        if not inv or inv.quantity < item.quantity:
-            db.rollback()
-            stock = inv.quantity if inv else 0
-            raise HTTPException(
-                status_code=400,
-                detail=f"Insufficient stock for {product.name} (have {stock}, need {item.quantity})",
-            )
+        # F2: real (non-implicit) variants track their own stock on
+        # product_variant.stock; grocery / implicit variants use the
+        # product-level inventory table exactly as before.
+        variant_row = None
+        if item.variant_id:
+            variant_row = db.execute(text(
+                "SELECT stock, is_implicit FROM kirana_oltp.product_variant "
+                "WHERE variant_id = :vid AND product_id = :pid"
+            ), {"vid": item.variant_id, "pid": item.product_id}).first()
+        use_variant_stock = variant_row is not None and not variant_row[1]
+
+        if use_variant_stock:
+            if float(variant_row[0]) < item.quantity:
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient stock for {product.name} (have {variant_row[0]}, need {item.quantity})",
+                )
+        else:
+            inv = _inventory(db, item.product_id, store_id)
+            if not inv or inv.quantity < item.quantity:
+                db.rollback()
+                stock = inv.quantity if inv else 0
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient stock for {product.name} (have {stock}, need {item.quantity})",
+                )
 
         pricing = _current_price(db, item.product_id, store_id)
         unit_price = item.unit_price if item.unit_price is not None else (item.selling_price if item.selling_price is not None else (float(pricing.selling_price) if pricing else 0.0))
@@ -275,19 +314,40 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
         if sp:
             cost_price = float(sp[0])
 
-        total += unit_price * item.quantity
+        line_total = unit_price * item.quantity
+        total += line_total
+
+        # F3 — GST is inclusive in retail prices; extract the tax component
+        # for the bill breakup (the amount the customer pays is unchanged).
+        rate = _gst_rate(db, product, store_id, unit_price)
+        line_tax = line_total - (line_total / (1 + rate / 100.0)) if rate > 0 else 0.0
+        order_tax += line_tax
 
         db.add(KiranaOrderItem(
             order_id=db_order.order_id,
             product_id=item.product_id,
+            variant_id=item.variant_id,
             quantity=item.quantity,
             unit_price=unit_price,
             cost_price=cost_price,
+            gst_rate=rate if rate > 0 else None,
+            tax_amount=line_tax if rate > 0 else None,
         ))
+
+        # Decrement variant stock at sale time (grocery inventory is unchanged).
+        if use_variant_stock:
+            db.execute(text(
+                "UPDATE kirana_oltp.product_variant SET stock = stock - :q "
+                "WHERE variant_id = :vid"
+            ), {"q": item.quantity, "vid": item.variant_id})
 
     # Use caller-supplied total if provided (e.g. after referral discount), else sum from items
     final_total = float(order.total_amount) if order.total_amount is not None else total
     db_order.total_amount = final_total
+    # F3 — store the GST breakup (tax is inclusive, so taxable = total − tax).
+    if order_tax > 0:
+        db_order.tax_amount = round(order_tax, 2)
+        db_order.taxable_amount = round(final_total - order_tax, 2)
     db.flush()
 
     # Auto-create payment record so payment_method filter works correctly
