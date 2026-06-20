@@ -14,6 +14,12 @@ from .tax import TaxRepositoryMixin
 from .loyalty import LoyaltyRepositoryMixin
 from .services import ServicesRepositoryMixin
 from .multistore import MultiStoreRepositoryMixin
+from .staff import StaffRepositoryMixin
+from .fulfilment import FulfilmentRepositoryMixin
+from .stocklocations import StockLocationsRepositoryMixin
+from .warranty import WarrantyRepositoryMixin
+from .customer360 import Customer360RepositoryMixin
+from .jobcards import JobCardsRepositoryMixin
 
 __all__ = [
     "BaseRepositoryMixin",
@@ -32,4 +38,10 @@ __all__ = [
     "LoyaltyRepositoryMixin",
     "ServicesRepositoryMixin",
     "MultiStoreRepositoryMixin",
+    "StaffRepositoryMixin",
+    "FulfilmentRepositoryMixin",
+    "StockLocationsRepositoryMixin",
+    "WarrantyRepositoryMixin",
+    "Customer360RepositoryMixin",
+    "JobCardsRepositoryMixin",
 ]

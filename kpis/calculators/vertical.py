@@ -176,3 +176,18 @@ def calc_zone_comparison(engine, store_id: int, days: int = 30) -> dict:
     out["primary"] = out.get("store_count", 1)
     out["trend"] = _trend(None, None)
     return out
+
+
+# ── M5 staff performance + M7 warranty-claim KPIs ────────────────────────────
+def calc_staff_performance(engine, store_id: int, days: int = 30) -> dict:
+    from kirana.repositories.main import KiranaRepository
+    out = KiranaRepository(engine).staff_performance(store_id, days)
+    out["trend"] = _trend(None, None)
+    return out
+
+
+def calc_warranty_claim_rate(engine, store_id: int, days: int = 90) -> dict:
+    from kirana.repositories.main import KiranaRepository
+    out = KiranaRepository(engine).warranty_claim_rate(store_id, days)
+    out["trend"] = _trend(None, None)
+    return out

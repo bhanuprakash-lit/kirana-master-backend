@@ -65,6 +65,8 @@ from .vertical import (
     calc_service_revenue,
     calc_appointment_utilisation,
     calc_zone_comparison,
+    calc_staff_performance,
+    calc_warranty_claim_rate,
 )
 
 __all__ = [
@@ -130,4 +132,6 @@ __all__ = [
     "calc_service_revenue",
     "calc_appointment_utilisation",
     "calc_zone_comparison",
+    "calc_staff_performance",
+    "calc_warranty_claim_rate",
 ]

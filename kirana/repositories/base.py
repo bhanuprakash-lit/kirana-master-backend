@@ -680,6 +680,168 @@ class BaseRepositoryMixin:
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_store_group ON kirana_oltp.store(group_id)"))
 
+            # ── Module M5: Staff Operations ───────────────────────────────────
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.staff (
+                    staff_id       BIGSERIAL PRIMARY KEY,
+                    store_id       BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    user_id        BIGINT REFERENCES kirana_oltp.users(user_id),
+                    name           VARCHAR(150) NOT NULL,
+                    phone          VARCHAR(20),
+                    role           VARCHAR(50),
+                    commission_pct NUMERIC(5,2) NOT NULL DEFAULT 0,
+                    is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.staff_attendance (
+                    id        BIGSERIAL PRIMARY KEY,
+                    staff_id  BIGINT NOT NULL REFERENCES kirana_oltp.staff(staff_id) ON DELETE CASCADE,
+                    store_id  BIGINT NOT NULL,
+                    att_date  DATE NOT NULL,
+                    status    VARCHAR(12) NOT NULL DEFAULT 'present',  -- present|absent|half_day|leave
+                    check_in  TIMESTAMPTZ,
+                    check_out TIMESTAMPTZ,
+                    UNIQUE (staff_id, att_date)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.staff_task (
+                    task_id    BIGSERIAL PRIMARY KEY,
+                    store_id   BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    staff_id   BIGINT REFERENCES kirana_oltp.staff(staff_id) ON DELETE SET NULL,
+                    title      VARCHAR(255) NOT NULL,
+                    due_date   DATE,
+                    is_done    BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+
+            # ── Module M6: Orders & Fulfilment (estimate, returns, delivery) ──
+            for ddl in [
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS delivery_status VARCHAR(20)",
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS delivery_address VARCHAR(500)",
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(10,2)",
+            ]:
+                conn.execute(text(ddl))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.estimate (
+                    estimate_id   BIGSERIAL PRIMARY KEY,
+                    store_id      BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    customer_id   BIGINT,
+                    customer_name VARCHAR(150),
+                    total         NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    status        VARCHAR(20) NOT NULL DEFAULT 'draft',  -- draft|sent|converted|expired
+                    valid_until   DATE,
+                    order_id      BIGINT,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.estimate_item (
+                    id          BIGSERIAL PRIMARY KEY,
+                    estimate_id BIGINT NOT NULL REFERENCES kirana_oltp.estimate(estimate_id) ON DELETE CASCADE,
+                    product_id  BIGINT,
+                    name        VARCHAR(200) NOT NULL,
+                    quantity    NUMERIC NOT NULL DEFAULT 1,
+                    unit_price  NUMERIC(10,2) NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.sales_return (
+                    return_id     BIGSERIAL PRIMARY KEY,
+                    store_id      BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    order_id      BIGINT,
+                    customer_id   BIGINT,
+                    reason        VARCHAR(50),
+                    refund_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    is_exchange   BOOLEAN NOT NULL DEFAULT FALSE,
+                    notes         VARCHAR(255),
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+
+            # ── Module M3: Multi-location / multi-rack stock ──────────────────
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.inventory_location (
+                    id          BIGSERIAL PRIMARY KEY,
+                    store_id    BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    product_id  BIGINT NOT NULL REFERENCES kirana_oltp.product(product_id),
+                    variant_id  BIGINT,
+                    rack        VARCHAR(60) NOT NULL,
+                    quantity    NUMERIC NOT NULL DEFAULT 0,
+                    UNIQUE (store_id, product_id, variant_id, rack)
+                )
+            """))
+
+            # ── Module M7: Warranty & Serial (electronics) ────────────────────
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.product_serial (
+                    serial_id   BIGSERIAL PRIMARY KEY,
+                    store_id    BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    product_id  BIGINT NOT NULL REFERENCES kirana_oltp.product(product_id),
+                    variant_id  BIGINT,
+                    serial_no   VARCHAR(120) NOT NULL,
+                    order_id    BIGINT,
+                    customer_id BIGINT,
+                    status      VARCHAR(16) NOT NULL DEFAULT 'in_stock',  -- in_stock|sold|returned
+                    warranty_until DATE,
+                    sold_at     TIMESTAMPTZ,
+                    UNIQUE (store_id, serial_no)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.warranty_claim (
+                    claim_id    BIGSERIAL PRIMARY KEY,
+                    store_id    BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    product_id  BIGINT,
+                    serial_id   BIGINT REFERENCES kirana_oltp.product_serial(serial_id),
+                    customer_id BIGINT,
+                    issue       VARCHAR(255),
+                    status      VARCHAR(16) NOT NULL DEFAULT 'open',  -- open|resolved|rejected
+                    claim_date  DATE NOT NULL DEFAULT CURRENT_DATE,
+                    resolved_at TIMESTAMPTZ,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+
+            # ── Module M8: Customer 360+ (wishlist + profiles) ────────────────
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.wishlist (
+                    id          BIGSERIAL PRIMARY KEY,
+                    store_id    BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    customer_id BIGINT NOT NULL REFERENCES kirana_oltp.customer(customer_id),
+                    product_id  BIGINT,
+                    note        VARCHAR(200),
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            for ddl in [
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS prescription TEXT",
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS style_profile VARCHAR(255)",
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS size_profile VARCHAR(120)",
+            ]:
+                conn.execute(text(ddl))
+
+            # ── Module M9: Job Cards / Repair / Pre-order ─────────────────────
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.job_card (
+                    job_id         BIGSERIAL PRIMARY KEY,
+                    store_id       BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    customer_id    BIGINT,
+                    customer_name  VARCHAR(150),
+                    customer_phone VARCHAR(20),
+                    job_type       VARCHAR(20) NOT NULL DEFAULT 'repair',  -- alteration|repair|preorder
+                    item_desc      VARCHAR(255),
+                    details        VARCHAR(500),
+                    charge         NUMERIC(10,2),
+                    status         VARCHAR(16) NOT NULL DEFAULT 'received',  -- received|in_progress|ready|delivered|cancelled
+                    promised_date  DATE,
+                    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+
             # kirana_oltp.user_prefs
             conn.execute(
                 text("""

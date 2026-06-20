@@ -917,12 +917,12 @@ _REGISTRY: list[KPIDef] = [
         ai_agent="Recommender AI", data_source="order_item, category links",
         perspective="Owner", spreadsheet_status="New", verticals=["electronics"]),
 
-    _soon("Needs a warranty/serial register (F2 serial flag exists; warranty-claim module not built).",
+    _ok("warranty-claim-rate", calc.calc_warranty_claim_rate, "claim_rate_pct",
         kpi_id="V_EL_2", spreadsheet_num="V7", name="Warranty-claim Rate", category="Operations",
         vertical="Electronics", pl_category="Operations", theme="Service Quality",
         target="< 3%", baseline="Claims ÷ units sold",
         why="Quality + after-sales cost signal for electronics.",
-        ai_agent="Service AI", data_source="warranty_claim (not built), product_serial",
+        ai_agent="Service AI", data_source="product_serial + warranty_claim (M7)",
         perspective="Owner", spreadsheet_status="New", verticals=["electronics"]),
 
     # ── Optical ───────────────────────────────────────────────────────────────
@@ -960,7 +960,7 @@ _REGISTRY: list[KPIDef] = [
         ai_agent="Analytics AI", data_source="store_group rollup (M2)",
         perspective="Owner", spreadsheet_status="New"),
 
-    _soon("Needs a staff/roster module with per-staff sales attribution.",
+    _ok("staff-performance", calc.calc_staff_performance, "staff_count",
         kpi_id="V_CM_2", spreadsheet_num="V12", name="Staff Performance", category="Operations",
         vertical="Common (All Verticals)", pl_category="Operations", theme="Productivity",
         target="Identify top staff", baseline="Sales per staff",
