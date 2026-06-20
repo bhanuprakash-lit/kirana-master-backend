@@ -602,6 +602,64 @@ class BaseRepositoryMixin:
             """)
             )
 
+            # ── Module M4: Services & Appointments (salon/fitness/optical) ────
+            # Priced service catalogue per store.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.service (
+                    service_id   BIGSERIAL PRIMARY KEY,
+                    store_id     BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    name         VARCHAR(150) NOT NULL,
+                    price        NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    duration_min INT NOT NULL DEFAULT 30,
+                    category     VARCHAR(80),
+                    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            # Appointments / bookings.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.appointment (
+                    appointment_id BIGSERIAL PRIMARY KEY,
+                    store_id       BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    customer_id    BIGINT REFERENCES kirana_oltp.customer(customer_id),
+                    service_id     BIGINT REFERENCES kirana_oltp.service(service_id),
+                    staff_user_id  BIGINT,
+                    customer_name  VARCHAR(150),
+                    customer_phone VARCHAR(20),
+                    starts_at      TIMESTAMPTZ NOT NULL,
+                    duration_min   INT NOT NULL DEFAULT 30,
+                    status         VARCHAR(20) NOT NULL DEFAULT 'booked',  -- booked|completed|cancelled|no_show
+                    price          NUMERIC(10,2),
+                    order_id       BIGINT,
+                    notes          VARCHAR(255),
+                    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_appointment_store_day "
+                "ON kirana_oltp.appointment(store_id, starts_at)"))
+            # Membership / package: prepaid bundle of sessions for a customer.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.membership (
+                    membership_id   BIGSERIAL PRIMARY KEY,
+                    store_id        BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    customer_id     BIGINT NOT NULL REFERENCES kirana_oltp.customer(customer_id),
+                    name            VARCHAR(150) NOT NULL,
+                    total_sessions  INT NOT NULL DEFAULT 0,   -- 0 = unlimited / validity-based
+                    used_sessions   INT NOT NULL DEFAULT 0,
+                    price           NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    valid_until     DATE,
+                    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+
             # kirana_oltp.user_prefs
             conn.execute(
                 text("""

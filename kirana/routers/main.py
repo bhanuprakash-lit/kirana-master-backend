@@ -14,6 +14,7 @@ from .marketing import router as marketing_router
 from .variants import router as variants_router
 from .tax import router as tax_router
 from .loyalty import router as loyalty_router
+from .services import router as services_router
 
 router = APIRouter()
 
@@ -31,3 +32,4 @@ router.include_router(marketing_router)
 router.include_router(variants_router)
 router.include_router(tax_router)
 router.include_router(loyalty_router)
+router.include_router(services_router)

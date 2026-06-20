@@ -152,3 +152,18 @@ def calc_gmroi(engine, store_id: int, days: int = 30) -> dict:
         "avg_inventory_cost": round(avg_inv, 2),
         "trend": _trend(gmroi, prev_gmroi),
     }
+
+
+# ── M4 Services KPIs — thin wrappers over the services repository ─────────────
+def calc_service_revenue(engine, store_id: int, days: int = 30) -> dict:
+    from kirana.repositories.main import KiranaRepository
+    out = KiranaRepository(engine).service_revenue(store_id, days)
+    out["trend"] = _trend(None, None)
+    return out
+
+
+def calc_appointment_utilisation(engine, store_id: int, days: int = 30) -> dict:
+    from kirana.repositories.main import KiranaRepository
+    out = KiranaRepository(engine).appointment_utilisation(store_id, days)
+    out["trend"] = _trend(None, None)
+    return out

@@ -935,20 +935,20 @@ _REGISTRY: list[KPIDef] = [
         perspective="Owner", spreadsheet_status="New", verticals=["optical"]),
 
     # ── Services (salon / fitness) ────────────────────────────────────────────
-    _soon("Needs a services/appointments module (catalogue of services + bookings).",
+    _ok("service-revenue", calc.calc_service_revenue, "total_revenue",
         kpi_id="V_SV_1", spreadsheet_num="V9", name="Service-wise Revenue", category="Finance",
         vertical="Services", pl_category="Top Line", theme="Revenue & Growth",
         target="Track top services", baseline="Revenue by service",
         why="Salon/fitness revenue is service-driven, not product-driven.",
-        ai_agent="Service AI", data_source="services + appointments (not built)",
+        ai_agent="Service AI", data_source="service + appointment (M4)",
         perspective="Owner", spreadsheet_status="New", verticals=["services"]),
 
-    _soon("Needs an appointments module (booked vs completed vs no-show).",
+    _ok("appointment-utilisation", calc.calc_appointment_utilisation, "utilisation_pct",
         kpi_id="V_SV_2", spreadsheet_num="V10", name="Appointment Utilisation", category="Operations",
         vertical="Services", pl_category="Operations", theme="Capacity",
-        target="> 75%", baseline="Booked ÷ available slots",
+        target="> 75%", baseline="Completed ÷ booked",
         why="Chair/trainer utilisation drives service profitability.",
-        ai_agent="Service AI", data_source="appointments (not built)",
+        ai_agent="Service AI", data_source="appointment (M4)",
         perspective="Owner", spreadsheet_status="New", verticals=["services"]),
 
     # ── Cross-vertical (Guru critical gaps) ───────────────────────────────────
