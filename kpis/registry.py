@@ -952,12 +952,12 @@ _REGISTRY: list[KPIDef] = [
         perspective="Owner", spreadsheet_status="New", verticals=["services"]),
 
     # ── Cross-vertical (Guru critical gaps) ───────────────────────────────────
-    _soon("Needs multi-store rollup (one owner, many stores) — module not built.",
+    _ok("zone-comparison", calc.calc_zone_comparison, "store_count",
         kpi_id="V_CM_1", spreadsheet_num="V11", name="Zone / City Comparison", category="Operations",
         vertical="Common (All Verticals)", pl_category="Operations", theme="Growth",
         target="Benchmark stores", baseline="Revenue by zone/city",
         why="Guru-flagged Critical gap for chains/supermarkets.",
-        ai_agent="Analytics AI", data_source="multi-store rollup (not built)",
+        ai_agent="Analytics AI", data_source="store_group rollup (M2)",
         perspective="Owner", spreadsheet_status="New"),
 
     _soon("Needs a staff/roster module with per-staff sales attribution.",

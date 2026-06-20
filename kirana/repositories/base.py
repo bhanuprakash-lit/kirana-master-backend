@@ -660,6 +660,26 @@ class BaseRepositoryMixin:
             """)
             )
 
+            # ── Module M2: Multi-store rollup (chains / multi-outlet owners) ──
+            # A group is one owner's chain; member stores link via store.group_id.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.store_group (
+                    group_id      BIGSERIAL PRIMARY KEY,
+                    name          VARCHAR(150) NOT NULL,
+                    owner_user_id BIGINT REFERENCES kirana_oltp.users(user_id),
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS "
+                "group_id BIGINT REFERENCES kirana_oltp.store_group(group_id)"))
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS city VARCHAR(100)"))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_store_group ON kirana_oltp.store(group_id)"))
+
             # kirana_oltp.user_prefs
             conn.execute(
                 text("""

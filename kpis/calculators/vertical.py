@@ -167,3 +167,12 @@ def calc_appointment_utilisation(engine, store_id: int, days: int = 30) -> dict:
     out = KiranaRepository(engine).appointment_utilisation(store_id, days)
     out["trend"] = _trend(None, None)
     return out
+
+
+# ── M2 cross-vertical KPI — multi-store rollup ───────────────────────────────
+def calc_zone_comparison(engine, store_id: int, days: int = 30) -> dict:
+    from kirana.repositories.main import KiranaRepository
+    out = KiranaRepository(engine).store_rollup(store_id, days)
+    out["primary"] = out.get("store_count", 1)
+    out["trend"] = _trend(None, None)
+    return out

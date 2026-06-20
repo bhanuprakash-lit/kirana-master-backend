@@ -13,6 +13,7 @@ from .variants import VariantsRepositoryMixin
 from .tax import TaxRepositoryMixin
 from .loyalty import LoyaltyRepositoryMixin
 from .services import ServicesRepositoryMixin
+from .multistore import MultiStoreRepositoryMixin
 
 __all__ = [
     "BaseRepositoryMixin",
@@ -30,4 +31,5 @@ __all__ = [
     "TaxRepositoryMixin",
     "LoyaltyRepositoryMixin",
     "ServicesRepositoryMixin",
+    "MultiStoreRepositoryMixin",
 ]
