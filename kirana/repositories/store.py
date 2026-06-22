@@ -71,6 +71,7 @@ class StoreRepositoryMixin:
         username: str,
         password: str,
         full_name: str,
+        city: str | None = None,
         budget: float | None = None,
         email: str | None = None,
         phone_number: str | None = None,
@@ -96,14 +97,15 @@ class StoreRepositoryMixin:
             store_row = (
                 conn.execute(
                     text("""
-                INSERT INTO kirana_oltp.store(name, location, region, store_type, vertical_code, footfall, budget, daily_budget, latitude, longitude)
-                VALUES(:sn, :location, :region, :st, COALESCE(:vc, 'grocery'), :fp, :budget, :daily_budget, :lat, :lng)
-                RETURNING store_id, name, location, region, store_type, vertical_code, footfall, budget, daily_budget, latitude, longitude
+                INSERT INTO kirana_oltp.store(name, location, region, city, store_type, vertical_code, footfall, budget, daily_budget, latitude, longitude)
+                VALUES(:sn, :location, :region, :city, :st, COALESCE(:vc, 'grocery'), :fp, :budget, :daily_budget, :lat, :lng)
+                RETURNING store_id, name, location, region, city, store_type, vertical_code, footfall, budget, daily_budget, latitude, longitude
             """),
                     {
                         "sn": store_name,
                         "location": location,
                         "region": region,
+                        "city": city,
                         "st": store_type,
                         "vc": vertical_code,
                         "fp": footfall,
@@ -143,6 +145,17 @@ class StoreRepositoryMixin:
                 .first()
             )
 
+            # Multi-store membership: the owner is a member of the store they
+            # just created (their active store is also this one).
+            conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.store_user (user_id, store_id, role)
+                VALUES (:uid, :sid, 'owner')
+                ON CONFLICT (user_id, store_id) DO NOTHING
+                """),
+                {"uid": user_row["user_id"], "sid": store_id},
+            )
+
             # Advance sequence so auto-inserts never collide with the explicit id
             conn.execute(
                 text(
@@ -155,6 +168,112 @@ class StoreRepositoryMixin:
 
         store = {**dict(store_row), "store_name": store_row["name"]}
         return store, dict(user_row)
+
+    # ── Multi-store: one user → many stores ─────────────────────────────────────
+    def list_user_stores(self, user_id: int) -> list[dict]:
+        """All stores the user owns, with the active one flagged (active = the
+        store_id currently on the users row, read live by token auth)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                text("""
+                SELECT s.store_id, s.name AS store_name, s.store_type,
+                       COALESCE(s.vertical_code, 'grocery') AS vertical_code,
+                       s.city, s.location, s.region,
+                       (s.store_id = u.store_id) AS is_active
+                FROM kirana_oltp.store_user su
+                JOIN kirana_oltp.store s ON s.store_id = su.store_id
+                JOIN kirana_oltp.users u ON u.user_id = su.user_id
+                WHERE su.user_id = :uid AND NOT COALESCE(s.is_deleted, FALSE)
+                ORDER BY is_active DESC, s.store_id
+                """),
+                {"uid": user_id},
+            ).mappings().all()
+        return [dict(r) for r in rows]
+
+    def user_owns_store(self, user_id: int, store_id: int) -> bool:
+        with self._conn() as conn:
+            n = conn.execute(
+                text("SELECT 1 FROM kirana_oltp.store_user "
+                     "WHERE user_id = :uid AND store_id = :sid"),
+                {"uid": user_id, "sid": store_id},
+            ).first()
+        return n is not None
+
+    def set_active_store(self, user_id: int, store_id: int) -> bool:
+        """Switch the user's active store (membership-checked). Updates the live
+        pointer every token-authed request reads, so the switch is immediate."""
+        if not self.user_owns_store(user_id, store_id):
+            return False
+        with self._conn() as conn:
+            conn.execute(
+                text("UPDATE kirana_oltp.users SET store_id = :sid WHERE user_id = :uid"),
+                {"sid": store_id, "uid": user_id},
+            )
+            conn.commit()
+        return True
+
+    def add_store_for_user(
+        self, user_id: int, store_name: str, store_type: str,
+        vertical_code: str | None = None, footfall: int = 40,
+        budget: float | None = None, location: str | None = None,
+        region: str | None = None, city: str | None = None,
+        make_active: bool = True,
+    ) -> dict:
+        """Create an additional store owned by an existing user + membership row.
+        Optionally make it the active store. Reuses the same store shape as
+        registration (minus the user-creation half)."""
+        daily_budget = (budget / 30.0) if budget else None
+        with self._conn() as conn:
+            row = conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.store
+                    (name, location, region, city, store_type, vertical_code,
+                     footfall, budget, daily_budget)
+                VALUES (:sn, :loc, :reg, :city, :st, COALESCE(:vc, 'grocery'),
+                        :fp, :budget, :daily)
+                RETURNING store_id, name AS store_name, store_type, vertical_code,
+                          city, location, region, footfall, budget
+                """),
+                {"sn": store_name, "loc": location, "reg": region, "city": city,
+                 "st": store_type, "vc": vertical_code, "fp": footfall,
+                 "budget": budget, "daily": daily_budget},
+            ).mappings().first()
+            store_id = row["store_id"]
+            conn.execute(
+                text("INSERT INTO kirana_oltp.store_user (user_id, store_id, role) "
+                     "VALUES (:uid, :sid, 'owner') ON CONFLICT DO NOTHING"),
+                {"uid": user_id, "sid": store_id},
+            )
+            # Inherit the owner's active plan so a newly-added store is usable
+            # immediately (no re-request/approval per store). Mirrors tier + trial
+            # window from any active subscription on the owner's other stores. If
+            # the owner has none active, the new store stays subscription-less and
+            # falls through to the normal request-trial flow.
+            conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.subscription
+                    (store_id, tier, monthly_price, started_at, is_trial,
+                     trial_tier, trial_ends_at, requested_tier)
+                SELECT :new_sid, s.tier, s.monthly_price, NOW(), s.is_trial,
+                       s.trial_tier, s.trial_ends_at, s.requested_tier
+                FROM kirana_oltp.subscription s
+                JOIN kirana_oltp.store_user su ON su.store_id = s.store_id
+                WHERE su.user_id = :uid AND s.store_id <> :new_sid
+                  AND (s.ended_at IS NULL OR s.ended_at > NOW())
+                ORDER BY s.started_at DESC
+                LIMIT 1
+                """),
+                {"new_sid": store_id, "uid": user_id},
+            )
+            if make_active:
+                conn.execute(
+                    text("UPDATE kirana_oltp.users SET store_id = :sid WHERE user_id = :uid"),
+                    {"sid": store_id, "uid": user_id},
+                )
+            conn.commit()
+        out = dict(row)
+        out["is_active"] = make_active
+        return out
 
     def create_store(
         self,
@@ -198,6 +317,8 @@ class StoreRepositoryMixin:
             daily_budget,
             location,
             region,
+            city,
+            COALESCE(vertical_code, 'grocery') AS vertical_code,
             (SELECT COUNT(DISTINCT product_id)
              FROM kirana_oltp.inventory
              WHERE store_id = s.store_id)     AS sku_count
@@ -228,6 +349,8 @@ class StoreRepositoryMixin:
             "daily_budget": "daily_budget",
             "location": "location",
             "region": "region",
+            "city": "city",
+            "vertical_code": "vertical_code",
         }
         sets, params = [], {"sid": store_id}
         for k, v in kwargs.items():
@@ -239,7 +362,7 @@ class StoreRepositoryMixin:
             return None
         sql = (
             f"UPDATE kirana_oltp.store SET {', '.join(sets)} WHERE store_id = :sid "
-            f"RETURNING store_id, name AS store_name, store_type, footfall, budget, daily_budget, location, region"
+            f"RETURNING store_id, name AS store_name, store_type, footfall, budget, daily_budget, location, region, city, vertical_code"
         )
         with self._conn() as conn:
             row = conn.execute(text(sql), params).mappings().first()

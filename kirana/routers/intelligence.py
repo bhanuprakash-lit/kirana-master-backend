@@ -10,6 +10,16 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+# Default log path = the same file the logger writes to (main.py:
+# <repo-root>/logs/master.log). In the container the repo root IS /app, so this
+# still resolves to /app/logs/master.log; locally it resolves to the real path
+# instead of the hardcoded container path. LOG_FILE env still overrides.
+import os as _os_mod
+_DEFAULT_LOG_FILE = _os_mod.path.join(
+    _os_mod.path.dirname(_os_mod.path.dirname(_os_mod.path.dirname(_os_mod.path.abspath(__file__)))),
+    "logs", "master.log",
+)
+
 if TYPE_CHECKING:
     from kirana.intelligence.engine import IntelligenceEngine
 
@@ -194,7 +204,7 @@ async def admin_logs(
 
     import os as _os
 
-    log_path = _os.environ.get("LOG_FILE", "/app/logs/master.log")
+    log_path = _os.environ.get("LOG_FILE", _DEFAULT_LOG_FILE)
 
     if not _os.path.exists(log_path):
         return {
@@ -248,7 +258,7 @@ async def stream_logs(
     import asyncio
     import json as _json
 
-    log_path = _os.environ.get("LOG_FILE", "/app/logs/master.log")
+    log_path = _os.environ.get("LOG_FILE", _DEFAULT_LOG_FILE)
     tail = max(10, min(tail, 500))
 
     def _level(line: str) -> str:
@@ -258,15 +268,18 @@ async def stream_logs(
         return "INFO"
 
     async def _gen():
+        # Always emit the {raw, level} shape the client renders; a bare {error}
+        # object has no `raw` and crashes the log row (e.g. when LOG_FILE is unset
+        # locally and points at a path that doesn't exist).
         if not _os.path.exists(log_path):
-            yield f"data: {_json.dumps({'error': 'Log file not found'})}\n\n"
+            yield f"data: {_json.dumps({'raw': f'Log file not found: {log_path}', 'level': 'ERROR'})}\n\n"
             return
         try:
             with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
                 lines = fh.readlines()
                 end_pos = fh.tell()
         except OSError as exc:
-            yield f"data: {_json.dumps({'error': str(exc)})}\n\n"
+            yield f"data: {_json.dumps({'raw': f'Could not read log file: {exc}', 'level': 'ERROR'})}\n\n"
             return
 
         for line in lines[-tail:]:

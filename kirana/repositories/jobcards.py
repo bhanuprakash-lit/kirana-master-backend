@@ -49,3 +49,14 @@ class JobCardsRepositoryMixin:
                 {"st": status, "id": job_id, "sid": store_id}).rowcount
             conn.commit()
         return n > 0
+
+    def link_job_to_order(self, job_id: int, store_id: int, order_id: int) -> bool:
+        """POS deep-link: attach a finished job card to the sale that billed it
+        and mark it delivered."""
+        with self._conn() as conn:
+            n = conn.execute(text(
+                "UPDATE kirana_oltp.job_card SET order_id = :oid, status = 'delivered' "
+                "WHERE job_id = :id AND store_id = :sid"),
+                {"oid": order_id, "id": job_id, "sid": store_id}).rowcount
+            conn.commit()
+        return n > 0

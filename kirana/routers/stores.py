@@ -25,6 +25,20 @@ def _svc(request: Request) -> KiranaService:
     return request.app.state.kirana_service
 
 
+def _repo(request: Request):
+    from kirana.repositories.main import KiranaRepository
+    return KiranaRepository(request.app.state.engine)
+
+
+def _require_user(user: dict) -> int:
+    """Multi-store endpoints act on the logged-in owner — admin API-key has no
+    user context, so it can't manage personal stores."""
+    uid = user.get("user_id")
+    if not uid:
+        raise HTTPException(status_code=403, detail="Owner login required")
+    return int(uid)
+
+
 def _auth(request: Request):
     s = request.app.state.settings
     api_key = request.headers.get("X-API-Key", "")
@@ -65,6 +79,53 @@ async def list_stores(request: Request, user: dict = Depends(_auth)):
     # Non-admins only see their own store
     filtered = [s for s in stores if s["store_id"] == user.get("store_id")]
     return {"stores": filtered}
+
+
+# ── Multi-store: one owner → many stores (add / list / switch) ────────────────
+
+
+@router.get("/my-stores")
+async def my_stores(request: Request, user: dict = Depends(_auth)):
+    """All stores the logged-in owner can switch between (active one flagged)."""
+    uid = _require_user(user)
+    return {"stores": _repo(request).list_user_stores(uid)}
+
+
+@router.post("/stores/add")
+async def add_store(request: Request, user: dict = Depends(_auth)):
+    """Create an additional store for the current owner and (by default) switch
+    to it. Body: store_name, store_type, vertical_code, city, location, region,
+    footfall, budget, make_active."""
+    uid = _require_user(user)
+    b = await request.json()
+    if not b.get("store_name"):
+        raise HTTPException(status_code=400, detail="store_name required")
+    store = _repo(request).add_store_for_user(
+        uid,
+        store_name=b["store_name"],
+        store_type=b.get("store_type") or "kirana",
+        vertical_code=b.get("vertical_code"),
+        footfall=b.get("footfall") or 40,
+        budget=b.get("budget"),
+        location=b.get("location"),
+        region=b.get("region"),
+        city=b.get("city"),
+        make_active=b.get("make_active", True),
+    )
+    return store
+
+
+@router.post("/stores/switch")
+async def switch_store(request: Request, user: dict = Depends(_auth)):
+    """Switch the owner's active store. Body: {store_id}. Membership-checked."""
+    uid = _require_user(user)
+    b = await request.json()
+    sid = b.get("store_id")
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id required")
+    if not _repo(request).set_active_store(uid, int(sid)):
+        raise HTTPException(status_code=403, detail="You don't own this store")
+    return {"active_store_id": int(sid)}
 
 
 @router.patch("/stores/{store_id}")

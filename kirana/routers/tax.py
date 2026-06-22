@@ -41,6 +41,16 @@ async def set_product_tax(product_id: int, request: Request, user: dict = Depend
     )
 
 
+@router.get("/tax/gst-summary")
+async def gst_summary(request: Request, date_from: str, date_to: str,
+                      user: dict = Depends(_auth)):
+    """GSTR-style GST summary for a period (per-rate slab breakup + totals)."""
+    sid = user.get("store_id")
+    if not sid:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    return _repo(request).gst_summary(int(sid), date_from, date_to)
+
+
 @router.get("/tax-rules")
 async def list_tax_rules(request: Request, user: dict = Depends(_auth)):
     return {"rules": _repo(request).list_tax_rules(user.get("store_id") or 0)}

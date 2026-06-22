@@ -86,8 +86,32 @@ def get_store(db: Session, store_id: int) -> KiranaStore | None:
 
 # ── Categories ────────────────────────────────────────────────────────────────
 
-def get_categories(db: Session) -> list[KiranaCategory]:
-    return db.query(KiranaCategory).order_by(KiranaCategory.name).all()
+def store_vertical(db: Session, store_id: int | None) -> str:
+    """The store's coarse vertical (default grocery)."""
+    if not store_id:
+        return "grocery"
+    r = db.execute(text(
+        "SELECT COALESCE(vertical_code, 'grocery') FROM kirana_oltp.store WHERE store_id = :sid"
+    ), {"sid": store_id}).scalar()
+    return r or "grocery"
+
+
+def get_categories(db: Session, vertical_code: str | None = None) -> list[dict]:
+    """Categories for a store's vertical (+ shared NULL ones). No vertical → all
+    (admin/global)."""
+    if vertical_code:
+        rows = db.execute(text("""
+            SELECT category_id, name, parent_category_id
+            FROM kirana_oltp.category
+            WHERE vertical_code = :vc OR vertical_code IS NULL
+            ORDER BY name
+        """), {"vc": vertical_code}).mappings().all()
+    else:
+        rows = db.execute(text(
+            "SELECT category_id, name, parent_category_id "
+            "FROM kirana_oltp.category ORDER BY name"
+        )).mappings().all()
+    return [dict(r) for r in rows]
 
 
 # ── Products ──────────────────────────────────────────────────────────────────
@@ -338,11 +362,19 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
         ))
 
         # Decrement variant stock at sale time (grocery inventory is unchanged).
+        # F2 — keep both the operational truth (product_variant.stock) and the
+        # store-scoped per-variant inventory row in sync so reorder/dashboards
+        # see the same number.
         if use_variant_stock:
             db.execute(text(
                 "UPDATE kirana_oltp.product_variant SET stock = stock - :q "
                 "WHERE variant_id = :vid"
             ), {"q": item.quantity, "vid": item.variant_id})
+            db.execute(text(
+                "UPDATE kirana_oltp.inventory SET quantity = GREATEST(quantity - :q, 0) "
+                "WHERE store_id = :sid AND product_id = :pid AND variant_id = :vid"
+            ), {"q": int(item.quantity), "sid": store_id,
+                "pid": item.product_id, "vid": item.variant_id})
 
     # Use caller-supplied total if provided (e.g. after referral discount), else sum from items
     final_total = float(order.total_amount) if order.total_amount is not None else total
@@ -406,6 +438,25 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
             repo.earn_points(store_id, db_order.customer_id, db_order.order_id, final_total)
     except Exception as e:  # noqa: BLE001
         logger.warning("loyalty post-order hook failed for order %s: %s", db_order.order_id, e)
+
+    # POS deep-links — link module records to the sale (best-effort):
+    #   M7 mark serials sold, M4 consume membership + complete appointment,
+    #   M9 bill the job card.
+    try:
+        from kirana.repositories.main import KiranaRepository
+        repo = KiranaRepository(db.get_bind())
+        for sn in (order.serials or []):
+            if sn and sn.strip():
+                repo.mark_serial_sold(store_id, sn.strip(), db_order.order_id, db_order.customer_id)
+        if order.membership_id:
+            repo.use_membership_session(int(order.membership_id), store_id)
+        if order.appointment_id:
+            repo.update_appointment_status(int(order.appointment_id), store_id,
+                                           "completed", db_order.order_id)
+        if order.job_card_id:
+            repo.link_job_to_order(int(order.job_card_id), store_id, db_order.order_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("POS deep-link hook failed for order %s: %s", db_order.order_id, e)
 
     return get_order(db, db_order.order_id)
 

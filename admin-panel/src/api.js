@@ -109,6 +109,20 @@ export const api = {
   getKpiVisibility:  ()                   => request('GET',  '/kirana/admin/kpi-visibility'),
   saveKpiVisibility: (configs)            => request('PUT',  '/kirana/admin/kpi-visibility', { configs }),
   
+  // M2 — Store groups (multi-store rollup)
+  listStoreGroups: ()                     => request('GET',  '/kirana/admin/store-groups'),
+  createStoreGroup:(name, storeIds, ownerUserId) => request('POST', '/kirana/admin/store-groups', { name, store_ids: storeIds, owner_user_id: ownerUserId }),
+  assignStoreGroup:(storeId, groupId)     => request('POST', `/kirana/admin/stores/${storeId}/group`, { group_id: groupId }),
+
+  // M1 — Loyalty overview
+  loyaltyOverview: ()                     => request('GET',  '/kirana/admin/loyalty/overview'),
+
+  // M5 / M7 — per-store staff & serial ops (back-office)
+  adminStaff:      (storeId)              => request('GET',  `/kirana/admin/stores/${storeId}/staff`),
+  adminBulkStaff:  (storeId, staff)       => request('POST', `/kirana/admin/stores/${storeId}/staff/bulk`, { staff }),
+  adminSerials:    (storeId, params)      => request('GET',  `/kirana/admin/stores/${storeId}/serials`, null, params),
+  adminBulkSerials:(storeId, body)        => request('POST', `/kirana/admin/stores/${storeId}/serials/bulk`, body),
+
   // System & ML
   mlStatus:        ()                     => request('GET',  '/kirana/admin/ml/status'),
   mlRetrain:       ()                     => request('POST', '/kirana/admin/ml/retrain'),

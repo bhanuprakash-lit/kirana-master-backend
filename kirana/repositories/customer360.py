@@ -44,13 +44,15 @@ class Customer360RepositoryMixin:
     def get_customer_profile(self, store_id: int, customer_id: int) -> dict:
         with self._conn() as conn:
             row = conn.execute(text("""
-                SELECT customer_id, name, phone, prescription, style_profile, size_profile
+                SELECT customer_id, name, phone, prescription, style_profile, size_profile,
+                       prescription_date, prescription_valid_months
                 FROM kirana_oltp.customer WHERE customer_id = :cid AND store_id = :sid
             """), {"cid": customer_id, "sid": store_id}).mappings().first()
         return dict(row) if row else {}
 
     def update_customer_profile(self, store_id: int, customer_id: int, **fields) -> dict:
-        allowed = {"prescription", "style_profile", "size_profile"}
+        allowed = {"prescription", "style_profile", "size_profile",
+                   "prescription_date", "prescription_valid_months"}
         sets, params = [], {"cid": customer_id, "sid": store_id}
         for k, v in fields.items():
             # None = field omitted (skip); '' is allowed to clear a value.

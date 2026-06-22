@@ -172,6 +172,17 @@ def catalog_search(
         else "kirana_oltp.product"
     )
 
+    # Vertical scope: only show catalog products whose category matches the
+    # store's vertical (or shared NULL categories), so a mobile store searching
+    # never gets grocery items. Skipped for admin/no-store callers.
+    vertical_clause = ""
+    if store_id:
+        vertical_clause = (
+            " AND (c.vertical_code IS NULL OR c.vertical_code = "
+            "(SELECT COALESCE(s.vertical_code, 'grocery') "
+            "FROM kirana_oltp.store s WHERE s.store_id = :store_id))"
+        )
+
     sql = f"""
     SELECT p.product_id, p.name, p.brand, p.unit, p.weight,
            p.barcode, p.is_perishable, p.is_loose, p.image_url, p.sku,
@@ -192,7 +203,7 @@ def catalog_search(
         ORDER BY pr.valid_from DESC
         LIMIT 1
     ) lp ON TRUE
-    WHERE {where}
+    WHERE ({where}){vertical_clause}
     ORDER BY p.name
     LIMIT :limit OFFSET :offset
     """

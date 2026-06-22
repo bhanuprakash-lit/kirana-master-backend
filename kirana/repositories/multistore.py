@@ -66,6 +66,35 @@ class MultiStoreRepositoryMixin:
             conn.commit()
         return n > 0
 
+    def list_store_groups(self) -> list[dict]:
+        """Admin: every group with its member stores (for the back-office UI)."""
+        with self._conn() as conn:
+            groups = conn.execute(
+                text("""
+                SELECT g.group_id, g.name, g.owner_user_id,
+                       COALESCE(u.full_name, u.username) AS owner_name
+                FROM kirana_oltp.store_group g
+                LEFT JOIN kirana_oltp.users u ON u.user_id = g.owner_user_id
+                ORDER BY g.group_id DESC
+                """)
+            ).mappings().all()
+            members = conn.execute(
+                text("""
+                SELECT store_id, name AS store_name,
+                       COALESCE(city, region, location, '—') AS area, group_id
+                FROM kirana_oltp.store
+                WHERE group_id IS NOT NULL AND NOT is_deleted
+                ORDER BY name
+                """)
+            ).mappings().all()
+        by_group: dict[int, list] = {}
+        for m in members:
+            by_group.setdefault(m["group_id"], []).append(dict(m))
+        return [
+            {**dict(g), "stores": by_group.get(g["group_id"], [])}
+            for g in groups
+        ]
+
     # ── Rollup ──────────────────────────────────────────────────────────────
     def store_rollup(self, store_id: int, days: int = 30) -> dict:
         """Per-store and per-city/region sales comparison across the group."""

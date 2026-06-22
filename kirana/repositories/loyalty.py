@@ -240,6 +240,45 @@ class LoyaltyRepositoryMixin:
             )
             conn.commit()
 
+    # ── Admin overview ──────────────────────────────────────────────────────────
+    def loyalty_admin_overview(self) -> list[dict]:
+        """Admin: per-store loyalty snapshot — adoption, rates, members, liability,
+        coupon counts. One row per store that has a loyalty_config row."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                text("""
+                SELECT
+                    s.store_id, s.name AS store_name,
+                    COALESCE(lc.is_active, FALSE)         AS is_active,
+                    COALESCE(lc.points_per_100, 0)        AS points_per_100,
+                    COALESCE(lc.redeem_paise_per_point, 0) AS redeem_paise_per_point,
+                    COALESCE(lc.silver_threshold, 0)      AS silver_threshold,
+                    COALESCE(lc.gold_threshold, 0)        AS gold_threshold,
+                    (SELECT COUNT(DISTINCT lt.customer_id)
+                       FROM kirana_oltp.loyalty_transaction lt
+                       WHERE lt.store_id = s.store_id)    AS members,
+                    (SELECT COALESCE(SUM(lt.points), 0)
+                       FROM kirana_oltp.loyalty_transaction lt
+                       WHERE lt.store_id = s.store_id)    AS points_outstanding,
+                    (SELECT COUNT(*) FROM kirana_oltp.coupon c
+                       WHERE c.store_id = s.store_id)     AS coupons_total,
+                    (SELECT COUNT(*) FROM kirana_oltp.coupon c
+                       WHERE c.store_id = s.store_id AND c.is_active) AS coupons_active
+                FROM kirana_oltp.store s
+                JOIN kirana_oltp.loyalty_config lc ON lc.store_id = s.store_id
+                WHERE NOT s.is_deleted
+                ORDER BY is_active DESC, members DESC
+                """)
+            ).mappings().all()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["liability"] = round(
+                float(d["points_outstanding"] or 0)
+                * float(d["redeem_paise_per_point"] or 0) / 100.0, 2)
+            out.append(d)
+        return out
+
     # ── Occasions (birthday / anniversary offers) ──────────────────────────────
     def offers_due(self, store_id: int, days: int = 7) -> list[dict]:
         """Customers whose birthday or anniversary falls in the next [days]."""

@@ -284,6 +284,7 @@ class KiranaService:
                 budget=req.budget,
                 location=req.location,
                 region=req.region,
+                city=req.city,
                 username=req.username.strip(),
                 password=req.password,
                 full_name=req.full_name.strip(),
@@ -353,6 +354,7 @@ class KiranaService:
             store_id, store_name=req.store_name, store_type=req.store_type,
             footfall=req.footfall, budget=req.budget, daily_budget=req.daily_budget,
             location=req.location, region=req.region,
+            city=req.city, vertical_code=req.vertical_code,
         )
         if not updated:
             raise ValueError("Store not found")

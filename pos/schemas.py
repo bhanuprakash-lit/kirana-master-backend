@@ -88,6 +88,13 @@ class OrderCreate(BaseModel):
     coupon_id: Optional[int] = None
     coupon_discount: Optional[float] = None
     redeem_points: Optional[float] = None
+    # POS deep-links (best-effort, never fail the sale):
+    #   M7 serials sold on this bill, M4 membership session used + appointment
+    #   billed, M9 job card billed.
+    serials: Optional[List[str]] = None
+    membership_id: Optional[int] = None
+    appointment_id: Optional[int] = None
+    job_card_id: Optional[int] = None
 
 
 class OrderItemOut(BaseModel):

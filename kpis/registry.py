@@ -900,7 +900,7 @@ _REGISTRY: list[KPIDef] = [
         ai_agent="Pricing AI", data_source="order_item.cost_price, inventory, pricing",
         perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear", "electronics"]),
 
-    _soon("Co-purchase / bundle modelling on order baskets; recommender pending.",
+    _ok("outfit-uptake", calc.calc_outfit_uptake, "attach_pct",
         kpi_id="V_AP_5", spreadsheet_num="V5", name="Outfit / Bundle Uptake", category="Customer",
         vertical="Fashion", pl_category="Top Line", theme="Revenue & Growth",
         target="+10% basket", baseline="Bundle attach rate",
@@ -909,7 +909,7 @@ _REGISTRY: list[KPIDef] = [
         perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
 
     # ── Electronics / mobile ──────────────────────────────────────────────────
-    _soon("Accessory category mapping + basket co-occurrence; calculator pending.",
+    _ok("attach-rate", calc.calc_attach_rate, "attach_rate_pct",
         kpi_id="V_EL_1", spreadsheet_num="V6", name="Accessory Attach-rate", category="Customer",
         vertical="Electronics", pl_category="Top Line", theme="Revenue & Growth",
         target="> 30%", baseline="Orders with accessory ÷ device orders",
@@ -926,12 +926,12 @@ _REGISTRY: list[KPIDef] = [
         perspective="Owner", spreadsheet_status="New", verticals=["electronics"]),
 
     # ── Optical ───────────────────────────────────────────────────────────────
-    _soon("Needs a prescription register with renewal dates (optical module not built).",
+    _ok("rx-renewal", calc.calc_rx_renewal, "due_count",
         kpi_id="V_OP_1", spreadsheet_num="V8", name="Prescription Renewal Due", category="Customer",
         vertical="Optical", pl_category="Top Line", theme="Revenue & Growth",
         target="Recall 100% due", baseline="Customers with Rx > 12 months",
         why="Recurring revenue from lens/eye-test renewals.",
-        ai_agent="Reminder AI", data_source="prescription register (not built)",
+        ai_agent="Reminder AI", data_source="customer.prescription_date (M8+F4)",
         perspective="Owner", spreadsheet_status="New", verticals=["optical"]),
 
     # ── Services (salon / fitness) ────────────────────────────────────────────

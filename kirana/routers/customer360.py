@@ -67,4 +67,6 @@ async def update_profile(customer_id: int, request: Request, user: dict = Depend
         _sid(user), customer_id,
         prescription=b.get("prescription"),
         style_profile=b.get("style_profile"),
-        size_profile=b.get("size_profile"))
+        size_profile=b.get("size_profile"),
+        prescription_date=b.get("prescription_date"),
+        prescription_valid_months=b.get("prescription_valid_months"))

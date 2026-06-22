@@ -134,6 +134,16 @@ async def validate_coupon(request: Request, user: dict = Depends(_auth)):
     )
 
 
+# ── Admin overview ────────────────────────────────────────────────────────────
+
+
+@router.get("/admin/loyalty/overview")
+async def admin_loyalty_overview(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return {"stores": _repo(request).loyalty_admin_overview()}
+
+
 # ── Occasions ─────────────────────────────────────────────────────────────────
 
 

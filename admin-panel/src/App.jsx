@@ -13,6 +13,9 @@ import Cashflow from './pages/Cashflow';
 import Vouchers from './pages/Vouchers';
 import KpiTiers from './pages/KpiTiers';
 import KpiVisibility from './pages/KpiVisibility';
+import StoreGroups from './pages/StoreGroups';
+import LoyaltyOverview from './pages/LoyaltyOverview';
+import StoreOps from './pages/StoreOps';
 import Intelligence from './pages/Intelligence';
 import Issues from './pages/Issues';
 import Settings from './pages/Settings';
@@ -71,6 +74,9 @@ function App() {
             <Route path="/vouchers" element={<Vouchers />} />
             <Route path="/kpis" element={<KpiTiers />} />
             <Route path="/kpi-visibility" element={<KpiVisibility />} />
+            <Route path="/store-groups" element={<StoreGroups />} />
+            <Route path="/loyalty-overview" element={<LoyaltyOverview />} />
+            <Route path="/store-ops" element={<StoreOps />} />
             <Route path="/intelligence" element={<Intelligence />} />
             <Route path="/issues" element={<Issues />} />
             <Route path="/whatsapp" element={<WhatsApp />} />

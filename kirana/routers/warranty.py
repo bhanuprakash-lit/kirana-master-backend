@@ -88,3 +88,40 @@ async def set_claim(claim_id: int, request: Request, user: dict = Depends(_auth)
     if not _repo(request).set_claim_status(claim_id, _sid(user), status):
         raise HTTPException(status_code=404, detail="Claim not found")
     return {"updated": True}
+
+
+# ── Admin: per-store serial view + bulk register ──────────────────────────────
+
+
+@router.get("/admin/stores/{store_id}/serials")
+async def admin_list_serials(store_id: int, request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    qp = request.query_params
+    pid = qp.get("product_id")
+    return {"serials": _repo(request).list_serials(
+        store_id, int(pid) if pid else None, qp.get("status"))}
+
+
+@router.post("/admin/stores/{store_id}/serials/bulk")
+async def admin_bulk_serials(store_id: int, request: Request, user: dict = Depends(_auth)):
+    """Register many serials at once for one product (warehouse intake)."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    b = await request.json()
+    product_id = b.get("product_id")
+    if not product_id:
+        raise HTTPException(status_code=400, detail="product_id required")
+    serials = [s.strip() for s in (b.get("serials") or []) if s and s.strip()]
+    if not serials:
+        raise HTTPException(status_code=400, detail="serials required")
+    added, skipped = 0, 0
+    for sn in serials:
+        try:
+            _repo(request).add_serial(
+                store_id, int(product_id), sn,
+                variant_id=b.get("variant_id"), warranty_until=b.get("warranty_until"))
+            added += 1
+        except Exception:
+            skipped += 1
+    return {"added": added, "skipped": skipped, "total": len(serials)}

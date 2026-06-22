@@ -49,6 +49,13 @@ async def store_rollup(request: Request, days: int = 30, user: dict = Depends(_a
 # ── Admin group management ────────────────────────────────────────────────────
 
 
+@router.get("/admin/store-groups")
+async def list_store_groups(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return {"groups": _repo(request).list_store_groups()}
+
+
 @router.post("/admin/store-groups")
 async def create_store_group(request: Request, user: dict = Depends(_auth)):
     if user.get("role") != "admin":

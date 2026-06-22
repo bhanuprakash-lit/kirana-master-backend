@@ -191,3 +191,143 @@ def calc_warranty_claim_rate(engine, store_id: int, days: int = 90) -> dict:
     out = KiranaRepository(engine).warranty_claim_rate(store_id, days)
     out["trend"] = _trend(None, None)
     return out
+
+
+# ── F4 V_AP_5 — Outfit / Bundle uptake (recommender-lite via co-purchase) ─────
+def _multi_item_attach(engine, store_id: int, p_from, p_to) -> tuple[int, int]:
+    r = _row(engine, """
+        WITH per_order AS (
+            SELECT o.order_id, COUNT(DISTINCT oi.product_id) AS distinct_products
+            FROM kirana_oltp.orders o
+            JOIN kirana_oltp.order_item oi ON o.order_id = oi.order_id
+            WHERE o.store_id = :sid AND o.order_status = 'completed'
+              AND o.order_date BETWEEN :p_from AND :p_to
+            GROUP BY o.order_id
+        )
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE distinct_products >= 2) AS multi
+        FROM per_order
+    """, {"sid": store_id, "p_from": p_from, "p_to": p_to})
+    return int(r.get("total") or 0), int(r.get("multi") or 0)
+
+
+def calc_outfit_uptake(engine, store_id: int, days: int = 30) -> dict:
+    """Bundle/outfit attach: share of bills with 2+ distinct items, plus the
+    products most often bought together (a lightweight recommender seed)."""
+    p_from, p_to = _period(days)
+    total, multi = _multi_item_attach(engine, store_id, p_from, p_to)
+    pct = round(multi / total * 100, 2) if total else 0.0
+
+    pairs = _rows(engine, """
+        SELECT pa.name AS product_a, pb.name AS product_b, COUNT(*) AS together
+        FROM kirana_oltp.orders o
+        JOIN kirana_oltp.order_item ia ON ia.order_id = o.order_id
+        JOIN kirana_oltp.order_item ib ON ib.order_id = o.order_id
+                                       AND ib.product_id > ia.product_id
+        JOIN kirana_oltp.product pa ON pa.product_id = ia.product_id
+        JOIN kirana_oltp.product pb ON pb.product_id = ib.product_id
+        WHERE o.store_id = :sid AND o.order_status = 'completed'
+          AND o.order_date BETWEEN :p_from AND :p_to
+        GROUP BY pa.name, pb.name
+        ORDER BY together DESC
+        LIMIT 5
+    """, {"sid": store_id, "p_from": p_from, "p_to": p_to})
+
+    pp_from, pp_to = _prev_period(days)
+    prev_total, prev_multi = _multi_item_attach(engine, store_id, pp_from, pp_to)
+    prev_pct = round(prev_multi / prev_total * 100, 2) if prev_total else None
+
+    return {
+        "attach_pct": pct,
+        "multi_item_orders": multi,
+        "total_orders": total,
+        "top_pairs": [
+            {"a": r["product_a"], "b": r["product_b"], "count": int(r["together"])}
+            for r in pairs
+        ],
+        "trend": _trend(pct, prev_pct),
+    }
+
+
+# ── F4 V_EL_1 — Accessory attach-rate (category-keyword device↔accessory map) ──
+# Categories whose name matches these are treated as accessories; everything else
+# sold in the same electronics order counts as the "device".
+_ACCESSORY_RX = (
+    r"case|cover|charger|cable|screen|guard|protector|tempered|earphone|headphone|"
+    r"earbud|adapter|memory|sd\s?card|power\s?bank|mount|stand|pouch|strap|"
+    r"warranty|insurance"
+)
+
+
+def _attach_counts(engine, store_id: int, p_from, p_to) -> tuple[int, int]:
+    r = _row(engine, """
+        WITH flags AS (
+            SELECT o.order_id,
+                   BOOL_OR(c.name ~* :rx)       AS has_accessory,
+                   BOOL_OR(NOT (c.name ~* :rx)) AS has_device
+            FROM kirana_oltp.orders o
+            JOIN kirana_oltp.order_item oi ON oi.order_id = o.order_id
+            JOIN kirana_oltp.product p ON p.product_id = oi.product_id
+            JOIN kirana_oltp.category c ON c.category_id = p.category_id
+            WHERE o.store_id = :sid AND o.order_status = 'completed'
+              AND o.order_date BETWEEN :p_from AND :p_to
+            GROUP BY o.order_id
+        )
+        SELECT COUNT(*) FILTER (WHERE has_device) AS device_orders,
+               COUNT(*) FILTER (WHERE has_device AND has_accessory) AS attached
+        FROM flags
+    """, {"sid": store_id, "rx": _ACCESSORY_RX, "p_from": p_from, "p_to": p_to})
+    return int(r.get("device_orders") or 0), int(r.get("attached") or 0)
+
+
+def calc_attach_rate(engine, store_id: int, days: int = 30) -> dict:
+    """Device orders that also carried an accessory ÷ device orders."""
+    p_from, p_to = _period(days)
+    device_orders, attached = _attach_counts(engine, store_id, p_from, p_to)
+    pct = round(attached / device_orders * 100, 2) if device_orders else 0.0
+
+    pp_from, pp_to = _prev_period(days)
+    prev_dev, prev_att = _attach_counts(engine, store_id, pp_from, pp_to)
+    prev_pct = round(prev_att / prev_dev * 100, 2) if prev_dev else None
+
+    return {
+        "attach_rate_pct": pct,
+        "device_orders": device_orders,
+        "orders_with_accessory": attached,
+        "trend": _trend(pct, prev_pct),
+    }
+
+
+# ── F4 V_OP_1 — Prescription renewal due (structured Rx dates) ─────────────────
+def calc_rx_renewal(engine, store_id: int, days: int = 30) -> dict:
+    """Optical customers whose prescription validity has lapsed or lapses within
+    the lookahead window — drives recall/renewal outreach."""
+    rows = _rows(engine, """
+        SELECT customer_id, name, phone, prescription_date,
+               COALESCE(prescription_valid_months, 12) AS valid_months,
+               (prescription_date
+                + (COALESCE(prescription_valid_months, 12) || ' months')::interval)::date AS due_date
+        FROM kirana_oltp.customer
+        WHERE store_id = :sid AND is_deleted = FALSE
+          AND prescription_date IS NOT NULL
+          AND (prescription_date
+               + (COALESCE(prescription_valid_months, 12) || ' months')::interval)::date
+              <= CURRENT_DATE + (:days || ' days')::interval
+        ORDER BY due_date
+        LIMIT 200
+    """, {"sid": store_id, "days": days})
+    customers = [
+        {
+            "customer_id": int(r["customer_id"]),
+            "name": r["name"],
+            "phone": r["phone"],
+            "prescription_date": str(r["prescription_date"]),
+            "due_date": str(r["due_date"]),
+        }
+        for r in rows
+    ]
+    return {
+        "due_count": len(customers),
+        "customers": customers,
+        "trend": _trend(None, None),
+    }

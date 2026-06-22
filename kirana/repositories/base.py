@@ -347,6 +347,21 @@ class BaseRepositoryMixin:
                 ON CONFLICT (vertical_code) DO NOTHING
             """)
             )
+            # Backfill feature keys added to the seed AFTER the rows were first
+            # inserted (e.g. F4 added `vision`/`appointments`). ON CONFLICT DO
+            # NOTHING above never updates existing rows, so without this the
+            # `vision` key is absent and Vision shows for every vertical. We merge
+            # the canonical flags UNDER the existing JSON (`built || features`), so
+            # any present key wins and only missing keys are filled. Idempotent.
+            conn.execute(
+                text("""
+                UPDATE kirana_oltp.vertical_config SET features =
+                    jsonb_build_object(
+                        'vision',       vertical_code = 'grocery',
+                        'appointments', vertical_code IN ('optical','services')
+                    ) || features
+                """)
+            )
             # Backfill existing stores → grocery (all current store_types are
             # grocery-family). Self-limiting via the NULL guard, safe every boot.
             conn.execute(
@@ -355,6 +370,120 @@ class BaseRepositoryMixin:
                     "WHERE vertical_code IS NULL"
                 )
             )
+
+            # ── Vertical-scoped categories ────────────────────────────────────
+            # Each category belongs to a vertical so a mobile store doesn't see
+            # grocery categories (and vice-versa). NULL = shared/all verticals.
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.category "
+                "ADD COLUMN IF NOT EXISTS vertical_code TEXT"))
+            # One-time backfill: the entire existing category set is grocery seed
+            # data. Guard on "nothing tagged yet" so it runs ONCE — afterwards a
+            # store's custom NULL category is never force-tagged grocery.
+            conn.execute(text("""
+                UPDATE kirana_oltp.category SET vertical_code = 'grocery'
+                WHERE vertical_code IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM kirana_oltp.category
+                                  WHERE vertical_code IS NOT NULL)
+            """))
+            # Seed a starter category set per non-grocery vertical (idempotent by
+            # name+vertical). Owners can still add their own.
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.category (name, vertical_code)
+                SELECT v.name, v.vc FROM (VALUES
+                    ('Mobiles','electronics'), ('Laptops & Computers','electronics'),
+                    ('Audio','electronics'), ('Wearables','electronics'),
+                    ('Cables & Chargers','electronics'), ('Power Banks','electronics'),
+                    ('Memory & Storage','electronics'), ('Accessories','electronics'),
+                    ('TV & Appliances','electronics'), ('Cameras','electronics'),
+                    ('Men','apparel'), ('Women','apparel'), ('Kids','apparel'),
+                    ('Innerwear','apparel'), ('Ethnic Wear','apparel'),
+                    ('Winter Wear','apparel'), ('Accessories','apparel'),
+                    ('Men''s Footwear','footwear'), ('Women''s Footwear','footwear'),
+                    ('Kids'' Footwear','footwear'), ('Sports Shoes','footwear'),
+                    ('Sandals & Slippers','footwear'), ('Formal Shoes','footwear'),
+                    ('Eyeglasses','optical'), ('Sunglasses','optical'),
+                    ('Contact Lenses','optical'), ('Lens Solutions','optical'),
+                    ('Frames','optical'), ('Reading Glasses','optical'),
+                    ('Hair','services'), ('Skin','services'), ('Spa','services'),
+                    ('Nails','services'), ('Grooming','services'),
+                    ('Gifts','general'), ('Stationery','general'), ('Toys','general'),
+                    ('Home & Decor','general'), ('Party Supplies','general')
+                ) AS v(name, vc)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM kirana_oltp.category c
+                    WHERE c.name = v.name AND c.vertical_code = v.vc
+                )
+            """))
+            # Starter products per non-grocery vertical, linked to the vertical's
+            # categories, so a new store has a relevant catalog to pick from on
+            # day one. Global catalog (no store scope). Idempotent by name+category.
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.product (category_id, name, brand, unit)
+                SELECT c.category_id, v.pname, v.brand, v.unit
+                FROM (VALUES
+                    ('electronics','Mobiles','Smartphone 64GB','Generic','pcs'),
+                    ('electronics','Mobiles','Smartphone 128GB','Generic','pcs'),
+                    ('electronics','Audio','Wired Earphones','Generic','pcs'),
+                    ('electronics','Audio','Bluetooth Earbuds','Generic','pcs'),
+                    ('electronics','Cables & Chargers','USB-C Cable 1m','Generic','pcs'),
+                    ('electronics','Cables & Chargers','Fast Charger 20W','Generic','pcs'),
+                    ('electronics','Power Banks','Power Bank 10000mAh','Generic','pcs'),
+                    ('electronics','Accessories','Tempered Glass','Generic','pcs'),
+                    ('electronics','Accessories','Phone Back Cover','Generic','pcs'),
+                    ('electronics','Memory & Storage','microSD 64GB','Generic','pcs'),
+                    ('apparel','Men','Mens T-Shirt','Generic','pcs'),
+                    ('apparel','Men','Mens Jeans','Generic','pcs'),
+                    ('apparel','Men','Mens Formal Shirt','Generic','pcs'),
+                    ('apparel','Women','Womens Kurti','Generic','pcs'),
+                    ('apparel','Women','Womens Leggings','Generic','pcs'),
+                    ('apparel','Kids','Kids T-Shirt','Generic','pcs'),
+                    ('apparel','Innerwear','Mens Vest','Generic','pcs'),
+                    ('apparel','Winter Wear','Sweater','Generic','pcs'),
+                    ('footwear','Sports Shoes','Running Shoes','Generic','pair'),
+                    ('footwear','Sports Shoes','Casual Sneakers','Generic','pair'),
+                    ('footwear','Sandals & Slippers','Flip Flops','Generic','pair'),
+                    ('footwear','Sandals & Slippers','Sandals','Generic','pair'),
+                    ('footwear','Formal Shoes','Formal Black Shoes','Generic','pair'),
+                    ('optical','Eyeglasses','Single Vision Eyeglasses','Generic','pcs'),
+                    ('optical','Sunglasses','Sunglasses UV400','Generic','pcs'),
+                    ('optical','Contact Lenses','Monthly Contact Lenses','Generic','pair'),
+                    ('optical','Lens Solutions','Lens Cleaning Solution 120ml','Generic','pcs'),
+                    ('optical','Frames','Metal Frame','Generic','pcs'),
+                    ('optical','Reading Glasses','Reading Glasses +1.5','Generic','pcs'),
+                    ('services','Hair','Shampoo 200ml','Generic','pcs'),
+                    ('services','Hair','Hair Serum 100ml','Generic','pcs'),
+                    ('services','Skin','Face Wash 100ml','Generic','pcs'),
+                    ('services','Grooming','Beard Oil 50ml','Generic','pcs'),
+                    ('general','Gifts','Gift Box','Generic','pcs'),
+                    ('general','Stationery','Notebook','Generic','pcs'),
+                    ('general','Stationery','Pen Pack','Generic','pcs'),
+                    ('general','Toys','Toy Car','Generic','pcs'),
+                    ('general','Home & Decor','Wall Clock','Generic','pcs'),
+                    ('general','Party Supplies','Balloons Pack','Generic','pcs')
+                ) AS v(vc, catname, pname, brand, unit)
+                JOIN kirana_oltp.category c ON c.name = v.catname AND c.vertical_code = v.vc
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM kirana_oltp.product p
+                    WHERE p.name = v.pname AND p.category_id = c.category_id
+                )
+            """))
+            # Per-vertical UI copy (copyPack). Merge so existing keys are kept and
+            # new keys backfilled. The app reads these with a fallback, so wording
+            # adapts (e.g. "Search devices" instead of "Search products").
+            conn.execute(text("""
+                UPDATE kirana_oltp.vertical_config vc SET copy_pack = vc.copy_pack || d.cp::jsonb
+                FROM (VALUES
+                    ('grocery',    '{"add_title":"Add Product","search_hint":"Search products","item_plural":"products","empty_inventory":"No products in inventory"}'),
+                    ('electronics','{"add_title":"Add Item","search_hint":"Search devices & accessories","item_plural":"items","empty_inventory":"No items in inventory"}'),
+                    ('apparel',    '{"add_title":"Add Item","search_hint":"Search garments","item_plural":"items","empty_inventory":"No items in inventory"}'),
+                    ('footwear',   '{"add_title":"Add Item","search_hint":"Search footwear","item_plural":"items","empty_inventory":"No items in inventory"}'),
+                    ('optical',    '{"add_title":"Add Item","search_hint":"Search frames & lenses","item_plural":"items","empty_inventory":"No items in inventory"}'),
+                    ('services',   '{"add_title":"Add Item","search_hint":"Search products","item_plural":"items","empty_inventory":"No items in inventory"}'),
+                    ('general',    '{"add_title":"Add Item","search_hint":"Search products","item_plural":"items","empty_inventory":"No items in inventory"}')
+                ) AS d(vertical_code, cp)
+                WHERE vc.vertical_code = d.vertical_code
+            """))
 
             # ── Foundation 2: product variants + dynamic attributes ───────────
             # product_attribute_def: per-vertical attributes (size, colour, …),
@@ -456,6 +585,53 @@ class BaseRepositoryMixin:
                   AND oi.variant_id IS NULL
             """)
             )
+            # F2 — widen inventory uniqueness from (store_id, product_id) to
+            # (store_id, product_id, variant_id) so each variant tracks its own
+            # stock. COALESCE(variant_id, 0) keeps grocery's NULL/implicit rows
+            # deduped. Drop the legacy 2-col constraint (the oltp upsert no longer
+            # references it by name) and add a version-agnostic functional index.
+            # Drop the legacy 2-col unique constraint regardless of its generated
+            # name (find the UNIQUE constraint on exactly (store_id, product_id)).
+            conn.execute(text("""
+                DO $$
+                DECLARE c text;
+                BEGIN
+                    SELECT con.conname INTO c
+                    FROM pg_constraint con
+                    JOIN pg_class rel ON rel.oid = con.conrelid
+                    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+                    WHERE ns.nspname = 'kirana_oltp' AND rel.relname = 'inventory'
+                      AND con.contype = 'u'
+                      AND (SELECT array_agg(att.attname::text ORDER BY att.attname::text)
+                           FROM unnest(con.conkey) k
+                           JOIN pg_attribute att
+                             ON att.attrelid = con.conrelid AND att.attnum = k)
+                          = ARRAY['product_id','store_id'];
+                    IF c IS NOT NULL THEN
+                        EXECUTE format('ALTER TABLE kirana_oltp.inventory DROP CONSTRAINT %I', c);
+                    END IF;
+                END $$;
+            """))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_store_product_variant "
+                "ON kirana_oltp.inventory (store_id, product_id, COALESCE(variant_id, 0))"))
+            # Seed a per-variant inventory row for every real (non-implicit)
+            # variant, taking the store from the product's existing inventory and
+            # the qty from product_variant.stock. Idempotent (skips existing rows).
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.inventory (store_id, product_id, variant_id, quantity)
+                SELECT DISTINCT inv.store_id, v.product_id, v.variant_id,
+                       COALESCE(v.stock, 0)::int
+                FROM kirana_oltp.product_variant v
+                JOIN kirana_oltp.inventory inv ON inv.product_id = v.product_id
+                WHERE v.is_implicit = FALSE
+                  AND NOT EXISTS (
+                      SELECT 1 FROM kirana_oltp.inventory i2
+                      WHERE i2.store_id = inv.store_id
+                        AND i2.product_id = v.product_id
+                        AND i2.variant_id = v.variant_id
+                  )
+            """))
             # Seed the variant axes each vertical exposes (idempotent).
             conn.execute(
                 text("""
@@ -680,6 +856,29 @@ class BaseRepositoryMixin:
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_store_group ON kirana_oltp.store(group_id)"))
 
+            # ── Multi-store ownership: one user → many stores ─────────────────
+            # users.store_id stays as the ACTIVE store pointer (read live by
+            # get_user_by_token), so switching = updating that column. store_user
+            # is the membership list the owner picks/switches/adds from.
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.store_user (
+                    user_id    BIGINT NOT NULL REFERENCES kirana_oltp.users(user_id) ON DELETE CASCADE,
+                    store_id   BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+                    role       VARCHAR(20) NOT NULL DEFAULT 'owner',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (user_id, store_id)
+                )
+            """))
+            # Backfill: every existing single-store user becomes a member of their
+            # store. Idempotent (PK + ON CONFLICT). Safe every boot.
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.store_user (user_id, store_id, role)
+                SELECT user_id, store_id, 'owner'
+                FROM kirana_oltp.users
+                WHERE store_id IS NOT NULL
+                ON CONFLICT (user_id, store_id) DO NOTHING
+            """))
+
             # ── Module M5: Staff Operations ───────────────────────────────────
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS kirana_oltp.staff (
@@ -821,6 +1020,10 @@ class BaseRepositoryMixin:
                 "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS prescription TEXT",
                 "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS style_profile VARCHAR(255)",
                 "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS size_profile VARCHAR(120)",
+                # F4 V_OP_1 — structured prescription dates so the renewal-due KPI
+                # can compute who's due (optical eye-test / lens recall).
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS prescription_date DATE",
+                "ALTER TABLE kirana_oltp.customer ADD COLUMN IF NOT EXISTS prescription_valid_months INT DEFAULT 12",
             ]:
                 conn.execute(text(ddl))
 
@@ -841,6 +1044,10 @@ class BaseRepositoryMixin:
                     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """))
+            # M9 POS deep-link: bill a finished job card into a sale.
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.job_card "
+                "ADD COLUMN IF NOT EXISTS order_id BIGINT"))
 
             # kirana_oltp.user_prefs
             conn.execute(

@@ -102,3 +102,29 @@ async def set_task(task_id: int, request: Request, user: dict = Depends(_auth)):
 @router.get("/staff/performance")
 async def staff_performance(request: Request, days: int = 30, user: dict = Depends(_auth)):
     return _repo(request).staff_performance(_sid(user), days)
+
+
+# ── Admin: per-store staff view + bulk add ────────────────────────────────────
+
+
+@router.get("/admin/stores/{store_id}/staff")
+async def admin_list_staff(store_id: int, request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return {"staff": _repo(request).list_staff(store_id)}
+
+
+@router.post("/admin/stores/{store_id}/staff/bulk")
+async def admin_bulk_staff(store_id: int, request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    b = await request.json()
+    rows = b.get("staff") or []
+    created = []
+    for r in rows:
+        if not r.get("name"):
+            continue
+        created.append(_repo(request).create_staff(
+            store_id, name=r["name"], phone=r.get("phone"), role=r.get("role"),
+            commission_pct=r.get("commission_pct") or 0, user_id=r.get("user_id")))
+    return {"created": len(created), "staff": created}

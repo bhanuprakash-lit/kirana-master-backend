@@ -130,7 +130,10 @@ def get_store(request: Request, store_id: int, current: dict = Depends(_current_
 @router.get("/categories", response_model=List[schemas.CategoryOut], summary="List all product categories")
 def list_categories(request: Request, current: dict = Depends(_current_user)):
     with request.app.state.db_session() as db:
-        return crud.get_categories(db)
+        # Scope to the active store's vertical so a mobile store doesn't see
+        # grocery categories. Admin (no store) sees all.
+        vc = crud.store_vertical(db, current.get("store_id")) if current.get("store_id") else None
+        return crud.get_categories(db, vc)
 
 
 # ── Products ──────────────────────────────────────────────────────────────────

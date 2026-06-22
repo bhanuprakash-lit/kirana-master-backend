@@ -109,7 +109,23 @@ class VariantsRepositoryMixin:
                 },
             ).mappings().first()
             conn.commit()
+        self._sync_variant_inventory(product_id, int(row["variant_id"]), stock or 0)
         return dict(row)
+
+    def _sync_variant_inventory(self, product_id: int, variant_id: int, stock: float) -> None:
+        """F2 — mirror a real variant's stock into a store-scoped inventory row so
+        reorder/dashboards (which read inventory) see per-variant stock. Derives
+        the store from the product's existing inventory; no-op if the product has
+        no inventory yet (e.g. mid add-product)."""
+        with self._conn() as conn:
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.inventory (store_id, product_id, variant_id, quantity)
+                SELECT DISTINCT store_id, :pid, :vid, :qty
+                FROM kirana_oltp.inventory WHERE product_id = :pid
+                ON CONFLICT (store_id, product_id, COALESCE(variant_id, 0))
+                DO UPDATE SET quantity = EXCLUDED.quantity
+            """), {"pid": product_id, "vid": variant_id, "qty": int(stock or 0)})
+            conn.commit()
 
     def update_variant(self, variant_id: int, **fields) -> dict | None:
         """Patch a variant. Accepts attributes/sku/barcode/price/mrp/cost/is_active."""
@@ -134,6 +150,9 @@ class VariantsRepositoryMixin:
         with self._conn() as conn:
             row = conn.execute(text(sql), params).mappings().first()
             conn.commit()
+        if row and not row["is_implicit"] and "stock" in params:
+            self._sync_variant_inventory(
+                int(row["product_id"]), variant_id, float(params["stock"]))
         return dict(row) if row else None
 
     def get_variant(self, variant_id: int) -> dict | None:
