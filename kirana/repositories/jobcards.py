@@ -42,6 +42,32 @@ class JobCardsRepositoryMixin:
             conn.commit()
         return dict(row)
 
+    def update_job_card(self, job_id: int, store_id: int, **fields) -> dict | None:
+        """Patch editable job-card fields (item_desc/details/charge/promised_date/
+        customer_*/status). Ignores None values. promised_date is cast to DATE."""
+        allowed = {"item_desc", "details", "charge", "promised_date", "status",
+                   "customer_id", "customer_name", "customer_phone"}
+        sets, params = [], {"id": job_id, "sid": store_id}
+        for k, v in fields.items():
+            if k not in allowed or v is None:
+                continue
+            if k == "promised_date":
+                sets.append("promised_date = CAST(:promised_date AS DATE)")
+                params["promised_date"] = v
+            else:
+                sets.append(f"{k} = :{k}")
+                params[k] = v
+        if not sets:
+            return None
+        sql = ("UPDATE kirana_oltp.job_card SET " + ", ".join(sets) +
+               " WHERE job_id = :id AND store_id = :sid "
+               "RETURNING job_id, customer_id, customer_name, customer_phone, "
+               "job_type, item_desc, details, charge, status, promised_date, created_at")
+        with self._conn() as conn:
+            row = conn.execute(text(sql), params).mappings().first()
+            conn.commit()
+        return dict(row) if row else None
+
     def set_job_status(self, job_id: int, store_id: int, status: str) -> bool:
         with self._conn() as conn:
             n = conn.execute(text(

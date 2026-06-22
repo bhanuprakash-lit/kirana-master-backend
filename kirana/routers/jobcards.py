@@ -55,11 +55,22 @@ async def create_job_card(request: Request, user: dict = Depends(_auth)):
 
 
 @router.patch("/job-cards/{job_id}")
-async def set_job_status(job_id: int, request: Request, user: dict = Depends(_auth)):
+async def update_job_card(job_id: int, request: Request, user: dict = Depends(_auth)):
+    """Update a job card. Accepts a status change and/or editable fields
+    (item_desc/details/charge/promised_date/customer_*)."""
     b = await request.json()
     status = b.get("status")
-    if status not in ("received", "in_progress", "ready", "delivered", "cancelled"):
+    if status is not None and status not in (
+        "received", "in_progress", "ready", "delivered", "cancelled"
+    ):
         raise HTTPException(status_code=400, detail="invalid status")
-    if not _repo(request).set_job_status(job_id, _sid(user), status):
-        raise HTTPException(status_code=404, detail="Job card not found")
-    return {"updated": True}
+    updated = _repo(request).update_job_card(
+        job_id, _sid(user),
+        status=status,
+        item_desc=b.get("item_desc"), details=b.get("details"),
+        charge=b.get("charge"), promised_date=b.get("promised_date"),
+        customer_id=b.get("customer_id"), customer_name=b.get("customer_name"),
+        customer_phone=b.get("customer_phone"))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Job card not found or no changes")
+    return updated

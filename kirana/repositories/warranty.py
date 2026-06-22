@@ -39,11 +39,13 @@ class WarrantyRepositoryMixin:
 
     def mark_serial_sold(self, store_id: int, serial_no: str, order_id: int | None,
                          customer_id: int | None) -> bool:
+        """Mark a registered serial as sold. Refuses to re-sell one already sold
+        (IMEI uniqueness) so the same serial can't be billed on two orders."""
         with self._conn() as conn:
             n = conn.execute(text("""
                 UPDATE kirana_oltp.product_serial
                 SET status = 'sold', order_id = :oid, customer_id = :cid, sold_at = NOW()
-                WHERE store_id = :sid AND serial_no = :sn
+                WHERE store_id = :sid AND serial_no = :sn AND status <> 'sold'
             """), {"oid": order_id, "cid": customer_id, "sid": store_id, "sn": serial_no}).rowcount
             conn.commit()
         return n > 0
