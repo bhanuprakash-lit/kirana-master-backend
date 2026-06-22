@@ -24,9 +24,8 @@ class StoreRepositoryMixin:
         """
         with self._conn() as conn:
             row = conn.execute(text(sql), {"sid": store_id}).mappings().first()
-            if row is None or row["unit_set"] is None:
-                # Store unknown, or store points at a vertical with no config row
-                # yet — return the grocery defaults straight from the table.
+            if row is None:
+                # Store unknown — return the grocery defaults straight from table.
                 row = (
                     conn.execute(
                         text("""
@@ -39,6 +38,18 @@ class StoreRepositoryMixin:
                     .mappings()
                     .first()
                 )
+            elif row["unit_set"] is None:
+                # The store's vertical row exists but has no unit_set yet — default
+                # ONLY the units to grocery's, keeping this vertical's own features
+                # (variants/serial/…). Previously the whole row was swapped for
+                # grocery's, silently downgrading the vertical to grocery behaviour.
+                grocery_units = conn.execute(
+                    text(
+                        "SELECT unit_set FROM kirana_oltp.vertical_config "
+                        "WHERE vertical_code = 'grocery'"
+                    )
+                ).scalar()
+                row = {**dict(row), "unit_set": grocery_units}
         if row is None:
             return {
                 "vertical_code": "grocery",
@@ -244,27 +255,11 @@ class StoreRepositoryMixin:
                      "VALUES (:uid, :sid, 'owner') ON CONFLICT DO NOTHING"),
                 {"uid": user_id, "sid": store_id},
             )
-            # Inherit the owner's active plan so a newly-added store is usable
-            # immediately (no re-request/approval per store). Mirrors tier + trial
-            # window from any active subscription on the owner's other stores. If
-            # the owner has none active, the new store stays subscription-less and
-            # falls through to the normal request-trial flow.
-            conn.execute(
-                text("""
-                INSERT INTO kirana_oltp.subscription
-                    (store_id, tier, monthly_price, started_at, is_trial,
-                     trial_tier, trial_ends_at, requested_tier)
-                SELECT :new_sid, s.tier, s.monthly_price, NOW(), s.is_trial,
-                       s.trial_tier, s.trial_ends_at, s.requested_tier
-                FROM kirana_oltp.subscription s
-                JOIN kirana_oltp.store_user su ON su.store_id = s.store_id
-                WHERE su.user_id = :uid AND s.store_id <> :new_sid
-                  AND (s.ended_at IS NULL OR s.ended_at > NOW())
-                ORDER BY s.started_at DESC
-                LIMIT 1
-                """),
-                {"new_sid": store_id, "uid": user_id},
-            )
+            # NOTE: each store has its OWN independent subscription (per-store
+            # billing), even when one owner runs several stores. We deliberately
+            # do NOT copy/share a plan here — a new store starts with no
+            # subscription and goes through its own request-trial -> approve flow,
+            # exactly like a freshly-registered store.
             if make_active:
                 conn.execute(
                     text("UPDATE kirana_oltp.users SET store_id = :sid WHERE user_id = :uid"),

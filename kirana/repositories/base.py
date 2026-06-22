@@ -344,7 +344,16 @@ class BaseRepositoryMixin:
                      '{"expiry": false, "loose": false, "variants": false, "serial": false, "warranty": false, "appointments": false, "vision": false}',
                      '["pcs","pack","box","set"]',
                      'grocery', 'standard', '{}')
-                ON CONFLICT (vertical_code) DO NOTHING
+                ON CONFLICT (vertical_code) DO UPDATE SET
+                    features    = EXCLUDED.features,
+                    unit_set    = EXCLUDED.unit_set,
+                    ml_profile  = EXCLUDED.ml_profile,
+                    tax_profile = EXCLUDED.tax_profile
+                -- copy_pack intentionally NOT overwritten (may hold custom wording).
+                -- Self-heals rows seeded before unit_set / the variants/serial/
+                -- warranty feature keys existed; the old DO NOTHING left those
+                -- stale, which surfaced as grocery units (ml/L) and stray variant
+                -- UI in every vertical.
             """)
             )
             # Backfill feature keys added to the seed AFTER the rows were first
@@ -483,6 +492,17 @@ class BaseRepositoryMixin:
                     ('general',    '{"add_title":"Add Item","search_hint":"Search products","item_plural":"items","empty_inventory":"No items in inventory"}')
                 ) AS d(vertical_code, cp)
                 WHERE vc.vertical_code = d.vertical_code
+            """))
+            # Trigram index for catalog search (name ILIKE '%q%' can't use a btree).
+            # Fully guarded: CREATE EXTENSION needs privilege on managed PG, so we
+            # swallow any failure — search still works (just without the index).
+            conn.execute(text("""
+                DO $$ BEGIN
+                    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+                    CREATE INDEX IF NOT EXISTS idx_product_name_trgm
+                        ON kirana_oltp.product USING gin (name gin_trgm_ops);
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END $$;
             """))
 
             # ── Foundation 2: product variants + dynamic attributes ───────────
