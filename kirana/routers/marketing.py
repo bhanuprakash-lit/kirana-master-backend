@@ -86,7 +86,15 @@ async def list_campaigns(request: Request, store_id: int, user: dict = Depends(_
 async def toggle_campaign(
     campaign_id: int, is_active: bool, request: Request, user: dict = Depends(_auth)
 ):
-    return _svc(request).toggle_referral_campaign(campaign_id, is_active)
+    # Owners may only toggle their own store's campaign; admins (store_id None)
+    # can toggle any. Prevents cross-store toggling by guessed campaign_id.
+    store_id = None if user.get("role") == "admin" else user.get("store_id")
+    if user.get("role") != "admin" and not store_id:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    res = _svc(request).toggle_referral_campaign(campaign_id, is_active, store_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return res
 
 
 @router.post("/referral/token")

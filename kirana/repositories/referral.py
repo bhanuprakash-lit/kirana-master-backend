@@ -68,17 +68,19 @@ class ReferralRepositoryMixin:
             rows = conn.execute(text(sql), {"sid": store_id}).mappings().all()
         return [dict(r) for r in rows]
 
-    def toggle_referral_campaign(self, campaign_id: int, is_active: bool) -> dict:
-        sql = """
-        UPDATE kirana_oltp.referral_campaigns SET is_active = :active
-        WHERE campaign_id = :cid RETURNING *
-        """
+    def toggle_referral_campaign(
+        self, campaign_id: int, is_active: bool, store_id: int | None = None
+    ) -> dict:
+        # Scope to the caller's store so one owner can't toggle another store's
+        # campaign by id (admins pass store_id=None for cross-store access).
+        sql = "UPDATE kirana_oltp.referral_campaigns SET is_active = :active WHERE campaign_id = :cid"
+        params: dict = {"cid": campaign_id, "active": is_active}
+        if store_id is not None:
+            sql += " AND store_id = :sid"
+            params["sid"] = store_id
+        sql += " RETURNING *"
         with self._conn() as conn:
-            row = (
-                conn.execute(text(sql), {"cid": campaign_id, "active": is_active})
-                .mappings()
-                .first()
-            )
+            row = conn.execute(text(sql), params).mappings().first()
             conn.commit()
         return dict(row) if row else {}
 

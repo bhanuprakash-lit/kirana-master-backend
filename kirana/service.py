@@ -334,16 +334,20 @@ class KiranaService:
 
     # ── Stores ────────────────────────────────────────────────────────────────
 
-    def list_stores(self) -> list[dict]:
+    def list_stores(self, only_store_ids: list[int] | None = None) -> list[dict]:
+        """Stores with their ML summary. Pass `only_store_ids` to summarise just
+        those (the common case: a store owner only needs their own store) instead
+        of computing a summary for every store and discarding the rest."""
         # from kirana.repository import KiranaRepository
         from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(self._db)
         stores = repo.list_store_master()
-        df = self.ml.get_frame()
+        if only_store_ids is not None:
+            wanted = {int(s) for s in only_store_ids}
+            stores = [s for s in stores if int(s["store_id"]) in wanted]
         result = []
         for s in stores:
-            sid = int(s["store_id"])
-            summary = self.ml.store_summary(sid)
+            summary = self.ml.store_summary(int(s["store_id"]))
             result.append({**s, **summary})
         return result
 
@@ -895,10 +899,11 @@ class KiranaService:
         from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).list_referral_campaigns(store_id)
 
-    def toggle_referral_campaign(self, campaign_id, is_active):
+    def toggle_referral_campaign(self, campaign_id, is_active, store_id=None):
         # from kirana.repository import KiranaRepository
         from kirana.repositories.main import KiranaRepository
-        return KiranaRepository(self._db).toggle_referral_campaign(campaign_id, is_active)
+        return KiranaRepository(self._db).toggle_referral_campaign(
+            campaign_id, is_active, store_id)
 
     def get_or_create_referral_token(self, store_id, customer_id, campaign_id):
         # from kirana.repository import KiranaRepository
