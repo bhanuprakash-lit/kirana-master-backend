@@ -167,14 +167,21 @@ def create_app() -> FastAPI:
         logger.info("[%s] %s %s → %d  (%dms)", rid, request.method, request.url.path, response.status_code, ms)
         return response
 
+    # Error responses are produced by Starlette's outermost handler, OUTSIDE the
+    # CORS middleware — so without this they'd lack Access-Control-Allow-Origin
+    # and a browser would report a 4xx/5xx as a misleading "CORS error". The
+    # admin panel authenticates with an X-API-Key header (no cookies), so a
+    # wildcard origin is safe here.
+    _CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
+
     @app.exception_handler(ValueError)
     async def value_error(request: Request, exc: ValueError):
         logger.warning("Bad request on %s: %s", request.url.path, exc)
-        return JSONResponse(status_code=400, content={"success": False, "error": "Invalid request"})
+        return JSONResponse(status_code=400, content={"success": False, "error": "Invalid request"}, headers=_CORS_HEADERS)
 
     @app.exception_handler(PermissionError)
     async def perm_error(request: Request, exc: PermissionError):
-        return JSONResponse(status_code=403, content={"success": False, "error": str(exc)})
+        return JSONResponse(status_code=403, content={"success": False, "error": str(exc)}, headers=_CORS_HEADERS)
 
     @app.exception_handler(ClientDisconnect)
     async def client_disconnect(request: Request, exc: ClientDisconnect):
@@ -187,7 +194,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def generic_error(request: Request, exc: Exception):
         logger.exception("Unhandled: %s", exc)
-        return JSONResponse(status_code=500, content={"success": False, "error": "Internal server error"})
+        return JSONResponse(status_code=500, content={"success": False, "error": "Internal server error"}, headers=_CORS_HEADERS)
 
     # ── Routers ───────────────────────────────────────────────────────────────
     # from kirana.routes   import router as kirana_router

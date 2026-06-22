@@ -332,6 +332,7 @@ async def admin_list_products(
     request: Request,
     q: str = "",
     category_id: int = 0,
+    vertical: str = "",  # filter by the category's vertical_code
     has_barcode: str = "",  # "yes" | "no" | ""
     is_loose: str = "",  # "yes" | "no" | ""
     limit: int = 50,
@@ -355,6 +356,9 @@ async def admin_list_products(
     if category_id:
         conditions.append("p.category_id = :cat_id")
         base_params["cat_id"] = category_id
+    if vertical.strip():
+        conditions.append("c.vertical_code = :vertical")
+        base_params["vertical"] = vertical.strip()
     if has_barcode == "yes":
         conditions.append("p.barcode IS NOT NULL AND p.barcode <> ''")
     elif has_barcode == "no":
@@ -368,7 +372,8 @@ async def admin_list_products(
 
     with request.app.state.engine.connect() as conn:
         total = conn.execute(
-            _text(f"SELECT COUNT(*) FROM kirana_oltp.product p {where}"),
+            _text(f"SELECT COUNT(*) FROM kirana_oltp.product p "
+                  f"LEFT JOIN kirana_oltp.category c ON p.category_id = c.category_id {where}"),
             base_params,
         ).scalar()
         rows = (
@@ -378,7 +383,7 @@ async def admin_list_products(
                    p.barcode, p.sku, p.image_url,
                    p.is_loose, p.is_perishable, p.is_private_label,
                    p.category_id, p.created_at,
-                   c.name AS category_name
+                   c.name AS category_name, c.vertical_code
             FROM   kirana_oltp.product p
             LEFT   JOIN kirana_oltp.category c ON p.category_id = c.category_id
             {where}

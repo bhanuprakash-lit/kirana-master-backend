@@ -135,16 +135,31 @@ async def admin_list_stores(request: Request, user: dict = Depends(_auth)):
         rows = (
             conn.execute(
                 _text("""
+            -- Owner comes from the store_user membership table (true ownership),
+            -- NOT users.store_id (that's the owner's *active* store pointer — using
+            -- it showed an owner against only their last-opened store).
             SELECT s.store_id, s.name AS store_name, s.location, s.created_at,
-                   u.user_id, u.username, u.phone_number,
-                   COALESCE(u.full_name, u.username) AS owner_name,
+                   COALESCE(s.vertical_code, 'grocery') AS vertical_code,
+                   o.user_id, o.username, o.phone_number,
+                   COALESCE(o.full_name, o.username) AS owner_name,
+                   COALESCE(o.store_count, 0) AS owner_store_count,
                    sub.tier, sub.trial_tier,
                    sub.trial_ends_at, sub.ended_at,
                    COALESCE(up.allow_social_marketing, FALSE) AS allow_social_marketing
             FROM kirana_oltp.store s
-            LEFT JOIN kirana_oltp.users u
-                ON u.store_id = s.store_id AND NOT COALESCE(u.is_deleted, FALSE)
-            LEFT JOIN kirana_oltp.user_prefs up ON up.user_id = u.user_id
+            LEFT JOIN LATERAL (
+                SELECT u.user_id, u.username, u.phone_number, u.full_name,
+                       (SELECT COUNT(*) FROM kirana_oltp.store_user su2
+                        JOIN kirana_oltp.store s2 ON s2.store_id = su2.store_id
+                         AND NOT COALESCE(s2.is_deleted, FALSE)
+                        WHERE su2.user_id = u.user_id AND su2.role = 'owner') AS store_count
+                FROM kirana_oltp.store_user su
+                JOIN kirana_oltp.users u ON u.user_id = su.user_id
+                 AND NOT COALESCE(u.is_deleted, FALSE)
+                WHERE su.store_id = s.store_id AND su.role = 'owner'
+                ORDER BY u.user_id LIMIT 1
+            ) o ON TRUE
+            LEFT JOIN kirana_oltp.user_prefs up ON up.user_id = o.user_id
             LEFT JOIN kirana_oltp.subscription sub ON sub.store_id = s.store_id
             WHERE NOT s.is_deleted
             ORDER BY s.created_at DESC
@@ -176,8 +191,10 @@ async def admin_store_deep_dive(
 async def admin_list_triggers(request: Request, user: dict = Depends(_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
-    engine: "IntelligenceEngine" = request.app.state.intelligence
-    return {"triggers": engine.handlers}
+    engine = getattr(request.app.state, "intelligence", None)
+    if engine is None:
+        return {"triggers": []}
+    return {"triggers": engine.available_triggers()}
 
 
 @router.get("/admin/sessions")
@@ -389,7 +406,14 @@ async def admin_user_activity(request: Request, user: dict = Depends(_auth)):
                     SELECT COUNT(*)::int FROM kirana_oltp.orders o
                     WHERE o.store_id = u.store_id
                       AND DATE(o.order_date AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE
-                ), 0) AS sales_today
+                ), 0) AS sales_today,
+                -- How many stores this owner runs (store_user membership)
+                COALESCE((
+                    SELECT COUNT(*)::int FROM kirana_oltp.store_user su
+                    JOIN kirana_oltp.store s2 ON s2.store_id = su.store_id
+                     AND NOT COALESCE(s2.is_deleted, FALSE)
+                    WHERE su.user_id = u.user_id AND su.role = 'owner'
+                ), 0) AS stores_owned
             FROM kirana_oltp.users u
             LEFT JOIN kirana_oltp.store s
                 ON s.store_id = u.store_id AND NOT s.is_deleted
