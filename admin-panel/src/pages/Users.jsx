@@ -37,8 +37,8 @@ export default function Users() {
     <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">User Analytics</h1>
-          <p className="text-slate-500 text-sm mt-1">Detailed store owner engagement and app interaction metrics.</p>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">User Analytics</h1>
+          <p className="text-slate-500 text-xs mt-0.5">Store-owner engagement, app interaction, and how many stores each owner runs.</p>
         </div>
         <div className="flex items-center gap-3">
           {loading && <span className="text-[10px] font-bold text-indigo-500 animate-pulse uppercase">Syncing...</span>}
@@ -54,7 +54,7 @@ export default function Users() {
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200">
                 <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Store Owner</th>
-                <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Store Name</th>
+                <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Stores Handled</th>
                 <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Last Seen / Login</th>
                 <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest text-center">App Engagement (Today)</th>
                 <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest text-right">Lifetime</th>
@@ -76,8 +76,14 @@ export default function Users() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-700">{u.store_name || '—'}</div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">Linked Store</div>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-1.5 rounded-md bg-indigo-50 text-indigo-700 text-sm font-black">
+                          {u.stores_owned ?? 1}
+                        </span>
+                        <div className="text-xs text-slate-500">
+                          active: <span className="font-semibold text-slate-700">{u.store_name || '—'}</span>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-xs font-medium text-slate-900">{formatDateTime(u.last_seen)}</div>

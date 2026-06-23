@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
+import { useUI } from '../components/UIProvider';
 
 // F4 — per-vertical KPI visibility. Toggle which KPIs each vertical shows.
 // Coming-soon KPIs (data_unavailable) are hidden by default; flip them on here
 // and the shopkeeper app reflects it live (no app update needed).
-export default function KpiVisibility() {
+export default function KpiVisibility({ embedded = false }) {
+  const ui = useUI();
   const [items, setItems] = useState([]);
   const [verticals, setVerticals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -44,7 +46,7 @@ export default function KpiVisibility() {
     try {
       await api.saveKpiVisibility([{ kpi_id: kpiId, vertical_code: vc, is_visible: next }]);
     } catch (e) {
-      alert(`Failed to save: ${e.message}`);
+      ui.toast(`Failed to save: ${e.message}`, 'error');
       fetchData();
     }
   };
@@ -52,16 +54,18 @@ export default function KpiVisibility() {
   if (loading) return <div className="p-12 text-center text-slate-400">Loading…</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">KPI Visibility by Vertical</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Show / hide each KPI per store vertical. Coming-soon KPIs are off by default; turning one on makes it appear in the shopkeeper app instantly.
-          </p>
+    <div className="space-y-4">
+      {!embedded && (
+        <div className="flex justify-between items-end">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">KPI Visibility by Vertical</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              Show / hide each KPI per store vertical. Coming-soon KPIs are off by default; turning one on makes it appear in the shopkeeper app instantly.
+            </p>
+          </div>
+          <button onClick={fetchData} className="text-sm font-medium text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100">Refresh</button>
         </div>
-        <button onClick={fetchData} className="text-sm font-medium text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100">Refresh</button>
-      </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
         <table className="w-full text-sm">

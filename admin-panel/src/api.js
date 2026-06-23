@@ -2,6 +2,8 @@
 
 let _baseUrl = '';
 let _apiKey  = '';
+let _onUnauthorized = null;     // set by App → clears session + redirects to login
+const REQUEST_TIMEOUT_MS = 20000;
 
 export function configure(baseUrl, apiKey) {
   _baseUrl = baseUrl.replace(/\/+$/, '');
@@ -12,6 +14,11 @@ export function isConfigured() {
   return !!_baseUrl && !!_apiKey;
 }
 
+/** Register a handler invoked when any request returns 401/403 (bad/revoked key). */
+export function onUnauthorized(fn) {
+  _onUnauthorized = fn;
+}
+
 async function request(method, path, body, params) {
   let url = `${_baseUrl}${path}`;
   if (params) {
@@ -20,8 +27,11 @@ async function request(method, path, body, params) {
     if (qs.toString()) url += `?${qs.toString()}`;
   }
 
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   const options = {
     method,
+    signal: ctrl.signal,
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': _apiKey,
@@ -31,10 +41,23 @@ async function request(method, path, body, params) {
     options.body = JSON.stringify(body);
   }
 
-  const res = await fetch(url, options);
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error('Request timed out — is the backend reachable?');
+    throw new Error('Network error — could not reach the backend.');
+  }
+  clearTimeout(timer);
+
+  if (res.status === 401 || res.status === 403) {
+    if (_onUnauthorized) _onUnauthorized();
+    throw new Error('Session expired or unauthorized. Please reconnect.');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+    throw new Error(err.detail || err.error || `HTTP ${res.status}`);
   }
   return res.json();
 }

@@ -4,12 +4,12 @@ import { api } from '../api';
 
 function StatCard({ label, value, color = 'text-indigo-600', icon }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label}</span>
-        <span className="text-lg">{icon}</span>
+    <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-sm">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">{label}</span>
+        <span className="text-base">{icon}</span>
       </div>
-      <p className={`text-3xl font-black ${color}`}>{value}</p>
+      <p className={`text-2xl font-black ${color}`}>{value}</p>
     </div>
   );
 }
@@ -108,14 +108,14 @@ export default function Dashboard() {
   if (error) return <div className="text-red-500 p-8 border border-red-200 bg-red-50 rounded-xl">Error: {error}</div>;
 
   return (
-    <div className="space-y-8 pb-12">
+    <div className="space-y-5 pb-10">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Executive Overview</h1>
-        <p className="text-slate-500 text-sm mt-1">Platform health, user engagement, and growth metrics.</p>
+        <h1 className="text-xl font-bold text-slate-900 tracking-tight">Executive Overview</h1>
+        <p className="text-slate-500 text-xs mt-0.5">Platform health, user engagement, and growth metrics.</p>
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard label="Total Stores" value={stats.total_stores} icon="🏪" />
         <StatCard label="Active Trials" value={stats.active_trials} color="text-blue-600" icon="⏳" />
         <StatCard label="Pending Trials" value={stats.pending_trials} color="text-amber-600" icon="📋" />
@@ -125,9 +125,9 @@ export default function Dashboard() {
       </div>
 
       {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         {/* Subscription Distribution */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[380px]">
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[300px]">
           <h3 className="text-sm font-bold text-slate-900 mb-6 flex items-center gap-2">
             <span className="text-indigo-600 font-serif">💳</span> Subscription Distribution
           </h3>
@@ -137,7 +137,7 @@ export default function Dashboard() {
         </div>
 
         {/* User Engagement */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[380px]">
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[300px]">
           <h3 className="text-sm font-bold text-slate-900 mb-6 flex items-center gap-2">
             <span className="text-emerald-600">⚡</span> Active vs Inactive Users
           </h3>
@@ -148,7 +148,7 @@ export default function Dashboard() {
         </div>
 
         {/* Daily Performance Heatmap / Table summary */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[380px]">
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[300px]">
           <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
             <span className="text-indigo-600">🔥</span> Top Performers (Today)
           </h3>

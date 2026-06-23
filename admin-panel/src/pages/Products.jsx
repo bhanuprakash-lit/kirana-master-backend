@@ -9,8 +9,11 @@ export default function Products() {
   // Filters
   const [query, setQuery] = useState('');
   const [categoryId, setCategoryId] = useState('');
+  const [vertical, setVertical] = useState('');
   const [hasBarcode, setHasBarcode] = useState('');
   const [isLoose, setIsLoose] = useState('');
+
+  const VERTICALS = ['grocery', 'apparel', 'footwear', 'electronics', 'optical', 'services', 'general'];
 
   useEffect(() => {
     fetchCategories();
@@ -32,6 +35,7 @@ export default function Products() {
       const params = { limit: 50, offset: 0 };
       if (query) params.q = query;
       if (categoryId) params.category_id = categoryId;
+      if (vertical) params.vertical = vertical;
       if (hasBarcode) params.has_barcode = hasBarcode;
       if (isLoose) params.is_loose = isLoose;
 
@@ -53,8 +57,8 @@ export default function Products() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Product Catalog</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage global product catalog and taxonomy.</p>
+          <h1 className="text-xl font-bold text-slate-900">Product Catalog</h1>
+          <p className="text-slate-500 text-xs mt-0.5">Global catalog across all verticals — filter by vertical, category or type.</p>
         </div>
         
         <form onSubmit={handleSearch} className="flex gap-2">
@@ -75,9 +79,18 @@ export default function Products() {
         {/* Filter Bar */}
         <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex flex-wrap gap-4 items-center">
           <span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Filters:</span>
-          
-          <select 
-            value={categoryId} 
+
+          <select
+            value={vertical}
+            onChange={(e) => { setVertical(e.target.value); setTimeout(fetchProducts, 0); }}
+            className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white capitalize"
+          >
+            <option value="">All Verticals</option>
+            {VERTICALS.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+
+          <select
+            value={categoryId}
             onChange={(e) => { setCategoryId(e.target.value); setTimeout(fetchProducts, 0); }}
             className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
           >
@@ -114,15 +127,16 @@ export default function Products() {
               <tr>
                 <th className="px-6 py-4">Image</th>
                 <th className="px-6 py-4">Name & Brand</th>
+                <th className="px-6 py-4">Vertical</th>
                 <th className="px-6 py-4">Category</th>
                 <th className="px-6 py-4">Barcode / SKU</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan="4" className="px-6 py-4 text-center text-slate-400">Loading products...</td></tr>
+                <tr><td colSpan="5" className="px-6 py-4 text-center text-slate-400">Loading products...</td></tr>
               ) : products.length === 0 ? (
-                <tr><td colSpan="4" className="px-6 py-4 text-center text-slate-400">No products found matching filters.</td></tr>
+                <tr><td colSpan="5" className="px-6 py-4 text-center text-slate-400">No products found matching filters.</td></tr>
               ) : (
                 products.map(product => (
                   <tr key={product.product_id} className="hover:bg-slate-50/50">
@@ -136,6 +150,11 @@ export default function Products() {
                     <td className="px-6 py-4 font-medium text-slate-900">
                       {product.name}
                       <div className="text-xs text-slate-500 font-normal">{product.brand || 'No brand'} • {product.weight} {product.unit}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 capitalize">
+                        {product.vertical_code || 'grocery'}
+                      </span>
                     </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
