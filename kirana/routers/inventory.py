@@ -316,7 +316,7 @@ async def admin_list_categories(request: Request, user: dict = Depends(_auth)):
         rows = (
             conn.execute(
                 _text("""
-            SELECT category_id, name, parent_category_id
+            SELECT category_id, name, parent_category_id, vertical_code
             FROM   kirana_oltp.category
             ORDER  BY name
         """)

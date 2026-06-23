@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 
 export default function Products() {
@@ -17,8 +17,21 @@ export default function Products() {
 
   useEffect(() => {
     fetchCategories();
-    fetchProducts();
   }, []);
+
+  // Re-fetch whenever a dropdown filter changes. Using an effect (not an inline
+  // setTimeout) means we always read the latest filter values — the old code
+  // fetched one change behind.
+  useEffect(() => {
+    fetchProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryId, vertical, hasBarcode, isLoose]);
+
+  // Categories relevant to the selected vertical (plus shared/global ones).
+  const visibleCategories = useMemo(() => {
+    if (!vertical) return categories;
+    return categories.filter(c => !c.vertical_code || c.vertical_code === vertical);
+  }, [categories, vertical]);
 
   const fetchCategories = async () => {
     try {
@@ -82,7 +95,7 @@ export default function Products() {
 
           <select
             value={vertical}
-            onChange={(e) => { setVertical(e.target.value); setTimeout(fetchProducts, 0); }}
+            onChange={(e) => { setVertical(e.target.value); setCategoryId(''); }}
             className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white capitalize"
           >
             <option value="">All Verticals</option>
@@ -91,18 +104,18 @@ export default function Products() {
 
           <select
             value={categoryId}
-            onChange={(e) => { setCategoryId(e.target.value); setTimeout(fetchProducts, 0); }}
+            onChange={(e) => setCategoryId(e.target.value)}
             className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
           >
             <option value="">All Categories</option>
-            {categories.map(c => (
+            {visibleCategories.map(c => (
               <option key={c.category_id} value={c.category_id}>{c.name}</option>
             ))}
           </select>
 
-          <select 
-            value={hasBarcode} 
-            onChange={(e) => { setHasBarcode(e.target.value); setTimeout(fetchProducts, 0); }}
+          <select
+            value={hasBarcode}
+            onChange={(e) => setHasBarcode(e.target.value)}
             className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
           >
             <option value="">Barcode: Any</option>
@@ -110,9 +123,9 @@ export default function Products() {
             <option value="no">No Barcode</option>
           </select>
 
-          <select 
-            value={isLoose} 
-            onChange={(e) => { setIsLoose(e.target.value); setTimeout(fetchProducts, 0); }}
+          <select
+            value={isLoose}
+            onChange={(e) => setIsLoose(e.target.value)}
             className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
           >
             <option value="">Type: Any</option>

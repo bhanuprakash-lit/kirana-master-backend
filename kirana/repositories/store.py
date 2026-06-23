@@ -266,6 +266,12 @@ class StoreRepositoryMixin:
                     {"sid": store_id, "uid": user_id},
                 )
             conn.commit()
+        # Multi-store owner? Auto-create / extend their store group so the app's
+        # Store Comparison rollup works without manual admin grouping.
+        try:
+            self.ensure_owner_group(user_id)
+        except Exception:
+            logger.warning("ensure_owner_group failed for user %s", user_id, exc_info=True)
         out = dict(row)
         out["is_active"] = make_active
         return out

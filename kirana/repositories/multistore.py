@@ -57,6 +57,51 @@ class MultiStoreRepositoryMixin:
             conn.commit()
         return {"group_id": int(gid), "name": name, "store_ids": store_ids}
 
+    def ensure_owner_group(self, user_id: int) -> dict | None:
+        """If the owner runs 2+ stores, make sure they have a store_group and that
+        their ungrouped stores are assigned to it. Called after add-store, so the
+        group appears automatically on the owner's second outlet. Never clobbers
+        a store already manually assigned to another group. Returns the group, or
+        None for single-store owners."""
+        with self._conn() as conn:
+            store_ids = [int(r) for r in conn.execute(
+                text("""
+                SELECT su.store_id FROM kirana_oltp.store_user su
+                JOIN kirana_oltp.store s ON s.store_id = su.store_id
+                 AND NOT COALESCE(s.is_deleted, FALSE)
+                WHERE su.user_id = :uid AND su.role = 'owner'
+                """),
+                {"uid": user_id},
+            ).scalars().all()]
+            if len(store_ids) < 2:
+                return None
+            grp = conn.execute(
+                text("SELECT group_id, name FROM kirana_oltp.store_group "
+                     "WHERE owner_user_id = :uid ORDER BY group_id LIMIT 1"),
+                {"uid": user_id},
+            ).mappings().first()
+            if grp:
+                gid, name = grp["group_id"], grp["name"]
+            else:
+                owner = conn.execute(
+                    text("SELECT COALESCE(full_name, username) FROM kirana_oltp.users "
+                         "WHERE user_id = :uid"),
+                    {"uid": user_id},
+                ).scalar()
+                name = f"{owner or 'Owner'}'s stores"
+                gid = conn.execute(
+                    text("INSERT INTO kirana_oltp.store_group (name, owner_user_id) "
+                         "VALUES (:n, :uid) RETURNING group_id"),
+                    {"n": name, "uid": user_id},
+                ).scalar()
+            conn.execute(
+                text("UPDATE kirana_oltp.store SET group_id = :gid "
+                     "WHERE store_id = ANY(:ids) AND group_id IS NULL"),
+                {"gid": gid, "ids": store_ids},
+            )
+            conn.commit()
+        return {"group_id": int(gid), "name": name, "store_ids": store_ids}
+
     def assign_store_to_group(self, store_id: int, group_id: int | None) -> bool:
         with self._conn() as conn:
             n = conn.execute(

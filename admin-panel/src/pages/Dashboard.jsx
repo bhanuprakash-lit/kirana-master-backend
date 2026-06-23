@@ -127,32 +127,32 @@ export default function Dashboard() {
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         {/* Subscription Distribution */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[300px]">
-          <h3 className="text-sm font-bold text-slate-900 mb-6 flex items-center gap-2">
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col h-[260px]">
+          <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
             <span className="text-indigo-600 font-serif">💳</span> Subscription Distribution
           </h3>
-          <div className="flex-1 relative">
+          <div className="flex-1 relative min-h-0">
             <canvas ref={subChartRef}></canvas>
           </div>
         </div>
 
         {/* User Engagement */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[300px]">
-          <h3 className="text-sm font-bold text-slate-900 mb-6 flex items-center gap-2">
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col h-[260px]">
+          <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
             <span className="text-emerald-600">⚡</span> Active vs Inactive Users
           </h3>
-          <div className="flex-1 relative">
+          <div className="flex-1 relative min-h-0">
             <canvas ref={engagementChartRef}></canvas>
           </div>
           <p className="mt-4 text-[11px] text-slate-400 text-center uppercase tracking-widest font-bold">Based on last 24h activity</p>
         </div>
 
         {/* Daily Performance Heatmap / Table summary */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-[300px]">
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col h-[260px]">
           <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
             <span className="text-indigo-600">🔥</span> Top Performers (Today)
           </h3>
-          <div className="flex-1 overflow-auto custom-scrollbar">
+          <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
             <table className="w-full text-xs text-left">
               <thead className="text-slate-400 font-bold uppercase tracking-wider sticky top-0 bg-white pb-2">
                 <tr>

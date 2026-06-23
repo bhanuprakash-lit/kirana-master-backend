@@ -899,6 +899,32 @@ class BaseRepositoryMixin:
                 ON CONFLICT (user_id, store_id) DO NOTHING
             """))
 
+            # Auto-group multi-store owners (idempotent). An owner who runs 2+
+            # stores gets one store_group; their ungrouped stores are assigned to
+            # it. This powers the app's Store Comparison rollup without the admin
+            # having to create groups by hand. New stores trigger the same via
+            # store.ensure_owner_group().
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.store_group (name, owner_user_id)
+                SELECT COALESCE(u.full_name, u.username) || '''s stores', su.user_id
+                FROM kirana_oltp.store_user su
+                JOIN kirana_oltp.users u ON u.user_id = su.user_id
+                WHERE su.role = 'owner'
+                GROUP BY su.user_id, u.full_name, u.username
+                HAVING COUNT(*) >= 2
+                   AND NOT EXISTS (
+                       SELECT 1 FROM kirana_oltp.store_group g
+                       WHERE g.owner_user_id = su.user_id)
+            """))
+            conn.execute(text("""
+                UPDATE kirana_oltp.store s SET group_id = g.group_id
+                FROM kirana_oltp.store_group g
+                JOIN kirana_oltp.store_user su
+                  ON su.user_id = g.owner_user_id AND su.role = 'owner'
+                WHERE su.store_id = s.store_id
+                  AND s.group_id IS NULL AND NOT COALESCE(s.is_deleted, FALSE)
+            """))
+
             # ── Module M5: Staff Operations ───────────────────────────────────
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS kirana_oltp.staff (
