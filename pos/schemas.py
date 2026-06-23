@@ -46,6 +46,8 @@ class ProductOut(BaseModel):
     is_loose: bool = False
     category_id: int
     image_url: Optional[str] = None
+    hsn_code: Optional[str] = None       # F3 — GST HSN/SAC
+    gst_rate: Optional[float] = None     # F3 — per-product GST %
     # joined from pricing
     price: Optional[float] = None
     mrp: Optional[float] = None
@@ -59,6 +61,7 @@ class ProductOut(BaseModel):
 
 class OrderItemCreate(BaseModel):
     product_id: int
+    variant_id: Optional[int] = None  # F2 — chosen variant (None = implicit/grocery)
     quantity: float
     unit_price: Optional[float] = None
     selling_price: Optional[float] = None
@@ -81,6 +84,17 @@ class OrderCreate(BaseModel):
     basket_name: Optional[str] = None
     basket_gross: Optional[float] = None
     basket_savings: Optional[float] = None
+    # M1 — loyalty/offers applied at checkout (recorded against the order).
+    coupon_id: Optional[int] = None
+    coupon_discount: Optional[float] = None
+    redeem_points: Optional[float] = None
+    # POS deep-links (best-effort, never fail the sale):
+    #   M7 serials sold on this bill, M4 membership session used + appointment
+    #   billed, M9 job card billed.
+    serials: Optional[List[str]] = None
+    membership_id: Optional[int] = None
+    appointment_id: Optional[int] = None
+    job_card_id: Optional[int] = None
 
 
 class OrderItemOut(BaseModel):
@@ -91,6 +105,9 @@ class OrderItemOut(BaseModel):
     unit_price: float
     selling_price: Optional[float] = None
     cost_price: Optional[float] = None
+    variant_id: Optional[int] = None     # F2
+    gst_rate: Optional[float] = None      # F3
+    tax_amount: Optional[float] = None    # F3
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -112,6 +129,9 @@ class OrderOut(BaseModel):
     basket_name: Optional[str] = None
     basket_gross: Optional[float] = None
     basket_savings: Optional[float] = None
+    # F3 — GST breakup (null when no taxable items)
+    tax_amount: Optional[float] = None
+    taxable_amount: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 
 

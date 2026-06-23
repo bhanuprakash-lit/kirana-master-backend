@@ -22,7 +22,7 @@ export default function WhatsApp() {
     <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">WhatsApp Suite</h1>
+          <h1 className="text-xl font-bold text-slate-900">WhatsApp Suite</h1>
           <p className="text-slate-500 text-sm mt-1">Manage marketing campaigns, track delivery, and debug sessions.</p>
         </div>
         

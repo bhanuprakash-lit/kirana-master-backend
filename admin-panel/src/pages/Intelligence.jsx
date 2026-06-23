@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import Badge from '../components/Badge';
+import { useUI } from '../components/UIProvider';
 
 export default function Intelligence() {
+  const ui = useUI();
   const [triggers, setTriggers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -38,25 +40,25 @@ export default function Intelligence() {
   };
 
   const handleFire = async (name) => {
-    if (!window.confirm(`Manually fire trigger "${name}" now?`)) return;
+    if (!(await ui.confirm({ title: 'Fire trigger?', message: `Run "${name}" immediately.`, confirmLabel: 'Fire' }))) return;
     setFiring(name);
     try {
       await api.fireTrigger(name);
-      alert(`Trigger ${name} fired successfully!`);
+      ui.toast(`Trigger ${name} fired`, 'success');
       fetchLogs();
     } catch (e) {
-      alert(`Failed to fire: ${e.message}`);
+      ui.toast(`Failed to fire: ${e.message}`, 'error');
     } finally {
       setFiring(null);
     }
   };
 
   return (
-    <div className="space-y-8 pb-12">
+    <div className="space-y-5 pb-10">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Intelligence Engine</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage automated triggers and monitor notification delivery.</p>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Intelligence Engine</h1>
+          <p className="text-slate-500 text-xs mt-0.5">Manage automated triggers and monitor notification delivery.</p>
         </div>
         <button onClick={fetchData} className="text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors uppercase tracking-wider">
           Sync Engine

@@ -65,8 +65,27 @@ def _auth(request: Request) -> dict:
 # ── Repo helper ───────────────────────────────────────────────────────────────
 
 def _repo(request: Request):
-    from kirana.repository import KiranaRepository
+    # from kirana.repository import KiranaRepository
+    from kirana.repositories.main import KiranaRepository
     return KiranaRepository(request.app.state.engine)
+
+
+# F4 — vertical-aware AI intake: nudge the extractor to capture the attributes
+# that matter for the store's vertical (grocery stays the default behaviour).
+_VERTICAL_HINTS = {
+    "apparel": "\nNOTE: This is a clothing/apparel store. Capture SIZE and COLOUR in each item name when mentioned (e.g. 'T-Shirt M Blue').",
+    "footwear": "\nNOTE: This is a footwear store. Capture SIZE and COLOUR in each item name when mentioned (e.g. 'Sneakers 9 Black').",
+    "electronics": "\nNOTE: This is a mobile/electronics store. Capture MODEL and STORAGE/variant in each item name when mentioned (e.g. 'Phone X 128GB').",
+    "optical": "\nNOTE: This is an optical store. Capture frame model and lens type when mentioned.",
+}
+
+
+def _vertical_hint(repo, store_id) -> str:
+    try:
+        vc = repo.get_vertical_config(store_id or 0).get("vertical_code", "grocery")
+    except Exception:
+        return ""
+    return _VERTICAL_HINTS.get(vc, "")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -213,7 +232,7 @@ async def ai_voice(
     api_key = _gemini_api_key(request)
     parts = [
         {"inline_data": {"mime_type": payload.mime_type, "data": payload.audio_b64}},
-        {"text": _VOICE_PROMPT},
+        {"text": _VOICE_PROMPT + _vertical_hint(repo, user.get("store_id"))},
     ]
     raw = await _call_gemini("gemini-2.5-flash", parts, api_key, request)
     try:
@@ -247,7 +266,7 @@ async def ai_handwrite(
     api_key = _gemini_api_key(request)
     parts = [
         {"inline_data": {"mime_type": "image/png", "data": payload.image_b64}},
-        {"text": _HANDWRITE_PROMPT},
+        {"text": _HANDWRITE_PROMPT + _vertical_hint(repo, user.get("store_id"))},
     ]
     raw = await _call_gemini("gemini-2.5-flash", parts, api_key, request)
     try:

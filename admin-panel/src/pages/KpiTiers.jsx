@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import { useUI } from '../components/UIProvider';
 
-export default function KpiTiers() {
+export default function KpiTiers({ embedded = false }) {
+  const ui = useUI();
   const [kpis, setKpis] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -28,23 +30,25 @@ export default function KpiTiers() {
     try {
       await api.saveKpiTiers([{ kpi_id: kpiId, tier: newTier }]);
     } catch (e) {
-      alert(`Failed to save KPI config: ${e.message}`);
+      ui.toast(`Failed to save: ${e.message}`, 'error');
       // Revert on failure
       fetchKpis();
     }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">KPI Configurations</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage feature gates: which analytics are available on Basic vs. Pro tiers.</p>
+    <div className="space-y-4">
+      {!embedded && (
+        <div className="flex justify-between items-end">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">KPI Configurations</h1>
+            <p className="text-slate-500 text-sm mt-1">Manage feature gates: which analytics are available on Basic vs. Pro tiers.</p>
+          </div>
+          <button onClick={fetchKpis} className="text-sm font-medium text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors">
+            Refresh Data
+          </button>
         </div>
-        <button onClick={fetchKpis} className="text-sm font-medium text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors">
-          Refresh Data
-        </button>
-      </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">

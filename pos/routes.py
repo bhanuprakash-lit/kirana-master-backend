@@ -35,7 +35,8 @@ def _current_user(
     """Decode JWT → look up user in kirana_app_users."""
     payload = decode_token(token)
     username = payload.get("sub")
-    from kirana.repository import KiranaRepository
+    # from kirana.repository import KiranaRepository
+    from kirana.repositories.main import KiranaRepository
     repo = KiranaRepository(request.app.state.engine)
     user = repo.get_user_by_username(username)
     if not user:
@@ -67,7 +68,8 @@ def pos_login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
 ):
-    from kirana.repository import KiranaRepository
+    # from kirana.repository import KiranaRepository
+    from kirana.repositories.main import KiranaRepository
     repo = KiranaRepository(request.app.state.engine)
     user = repo.authenticate_user(form_data.username, form_data.password)
     if not user:
@@ -87,7 +89,8 @@ def pos_token_from_kirana(request: Request):
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Kirana Bearer token required")
     kirana_token = auth[len("Bearer "):]
-    from kirana.repository import KiranaRepository
+    # from kirana.repository import KiranaRepository
+    from kirana.repositories.main import KiranaRepository
     user = KiranaRepository(request.app.state.engine).get_user_by_token(kirana_token)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid or expired Kirana token")
@@ -127,7 +130,10 @@ def get_store(request: Request, store_id: int, current: dict = Depends(_current_
 @router.get("/categories", response_model=List[schemas.CategoryOut], summary="List all product categories")
 def list_categories(request: Request, current: dict = Depends(_current_user)):
     with request.app.state.db_session() as db:
-        return crud.get_categories(db)
+        # Scope to the active store's vertical so a mobile store doesn't see
+        # grocery categories. Admin (no store) sees all.
+        vc = crud.store_vertical(db, current.get("store_id")) if current.get("store_id") else None
+        return crud.get_categories(db, vc)
 
 
 # ── Products ──────────────────────────────────────────────────────────────────
@@ -195,7 +201,8 @@ def create_order(
         raise HTTPException(status_code=403, detail="No store assigned to this user")
     with request.app.state.db_session() as db:
         new_order = crud.create_order(db, order, current["user_id"], store_id)
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
         background_tasks.add_task(KiranaRepository(request.app.state.engine).compute_store_footfall, store_id)
         return new_order
 

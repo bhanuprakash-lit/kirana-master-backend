@@ -175,9 +175,17 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.inventory (
     inventory_id BIGSERIAL PRIMARY KEY,
     store_id     BIGINT REFERENCES kirana_oltp.store(store_id),
     product_id   BIGINT REFERENCES kirana_oltp.product(product_id),
-    quantity     INT DEFAULT 0 CHECK (quantity >= 0),
-    UNIQUE (store_id, product_id)
+    variant_id   BIGINT REFERENCES kirana_oltp.product_variant(variant_id),
+    quantity     INT DEFAULT 0 CHECK (quantity >= 0)
 )
+""")
+# F2 — stock is unique per (store, product, variant). COALESCE(variant_id, 0)
+# folds grocery's NULL/implicit variant into one bucket, so single-variant
+# products still dedupe while real variants each get their own row. Functional
+# index works on every PG version (no NULLS NOT DISTINCT dependency).
+step("index:inventory_store_product_variant", """
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_store_product_variant
+ON kirana_oltp.inventory (store_id, product_id, COALESCE(variant_id, 0))
 """)
 
 step("table:inventory_movements", """

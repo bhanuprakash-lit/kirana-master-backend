@@ -389,7 +389,7 @@ class IntelligenceRepository:
             ).fetchone() is not None
 
             has_referral = conn.execute(
-                text("SELECT 1 FROM kirana_oltp.referral_campaign WHERE store_id = :sid LIMIT 1"),
+                text("SELECT 1 FROM kirana_oltp.referral_campaigns WHERE store_id = :sid LIMIT 1"),
                 {"sid": store_id},
             ).fetchone() is not None
 

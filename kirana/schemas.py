@@ -44,10 +44,12 @@ class RegisterStoreOwnerRequest(BaseModel):
     full_name: str
     store_name: str
     store_type: str = "kirana"
+    vertical_code: Optional[str] = None  # coarse vertical switch; None → 'grocery'
     footfall: int = 40
     budget: Optional[float] = None       # owner's monthly sales target (₹)
     location: Optional[str] = None
     region: Optional[str] = None
+    city: Optional[str] = None           # M2 — used by multi-store zone/city rollup
     email: Optional[str] = None          # store owner's contact email
     phone_number: Optional[str] = None   # set for phone-auth registrations
     firebase_uid: Optional[str] = None   # for audit trail
@@ -97,6 +99,8 @@ class StoreUpdateRequest(BaseModel):
     daily_budget: Optional[float] = None
     location: Optional[str] = None
     region: Optional[str] = None
+    city: Optional[str] = None            # M2 — zone/city rollup
+    vertical_code: Optional[str] = None   # F1 — owner switches vertical post-setup
 
 
 class RecommendationItem(BaseModel):

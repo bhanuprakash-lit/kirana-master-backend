@@ -276,7 +276,8 @@ class IntelligenceEngine:
     async def _run_snapshot_refresh(self) -> None:
         """Write daily inventory snapshots from live orders + inventory tables."""
         from datetime import date
-        from kirana.repository import KiranaRepository
+        # from kirana.repository import KiranaRepository
+        from kirana.repositories.main import KiranaRepository
 
         # One replica only (Azure Container Apps may run several).
         lock_conn = self._try_lock(_SNAPSHOT_LOCK_KEY)
@@ -413,12 +414,9 @@ class IntelligenceEngine:
 
     # ── Manual trigger (for testing/admin) ───────────────────────────────────
 
-    async def fire(self, trigger_name: str, store_id: int | None = None) -> dict:
-        """
-        Manually fire a trigger immediately, bypassing deduplication.
-        Used by the admin API for testing.
-        """
-        handlers = {
+    def _handler_map(self) -> dict:
+        """name -> coroutine for every manually-fireable trigger."""
+        return {
             "morning_greeting":  self._run_morning_greeting,
             "evening_summary":   self._run_evening_summary,
             "weekly_report":     self._run_weekly_report,
@@ -433,7 +431,17 @@ class IntelligenceEngine:
             "ml_retrain":        self._run_ml_retrain,
             "ml_refresh":        self._run_ml_refresh,
         }
-        handler = handlers.get(trigger_name)
+
+    def available_triggers(self) -> list[str]:
+        """JSON-safe list of trigger names for the admin panel."""
+        return sorted(self._handler_map().keys())
+
+    async def fire(self, trigger_name: str, store_id: int | None = None) -> dict:
+        """
+        Manually fire a trigger immediately, bypassing deduplication.
+        Used by the admin API for testing.
+        """
+        handler = self._handler_map().get(trigger_name)
         if not handler:
             return {"error": f"Unknown trigger: {trigger_name}"}
         await handler()

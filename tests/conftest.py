@@ -258,7 +258,7 @@ def kirana_repo_no_bootstrap(monkeypatch):
     tests here only exercise auth/session helpers, so we mark the schema
     as already-initialized at the module level.
     """
-    import kirana.repository as repo_mod
+    import kirana.repositories.base as repo_mod
 
     monkeypatch.setattr(repo_mod, "_schema_initialized", True, raising=False)
     yield

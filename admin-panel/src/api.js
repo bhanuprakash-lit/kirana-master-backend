@@ -2,6 +2,8 @@
 
 let _baseUrl = '';
 let _apiKey  = '';
+let _onUnauthorized = null;     // set by App → clears session + redirects to login
+const REQUEST_TIMEOUT_MS = 20000;
 
 export function configure(baseUrl, apiKey) {
   _baseUrl = baseUrl.replace(/\/+$/, '');
@@ -12,6 +14,11 @@ export function isConfigured() {
   return !!_baseUrl && !!_apiKey;
 }
 
+/** Register a handler invoked when any request returns 401/403 (bad/revoked key). */
+export function onUnauthorized(fn) {
+  _onUnauthorized = fn;
+}
+
 async function request(method, path, body, params) {
   let url = `${_baseUrl}${path}`;
   if (params) {
@@ -20,8 +27,11 @@ async function request(method, path, body, params) {
     if (qs.toString()) url += `?${qs.toString()}`;
   }
 
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   const options = {
     method,
+    signal: ctrl.signal,
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': _apiKey,
@@ -31,10 +41,23 @@ async function request(method, path, body, params) {
     options.body = JSON.stringify(body);
   }
 
-  const res = await fetch(url, options);
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error('Request timed out — is the backend reachable?');
+    throw new Error('Network error — could not reach the backend.');
+  }
+  clearTimeout(timer);
+
+  if (res.status === 401 || res.status === 403) {
+    if (_onUnauthorized) _onUnauthorized();
+    throw new Error('Session expired or unauthorized. Please reconnect.');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+    throw new Error(err.detail || err.error || `HTTP ${res.status}`);
   }
   return res.json();
 }
@@ -105,7 +128,24 @@ export const api = {
   // KPI Config
   getKpiTiers:     ()                     => request('GET',  '/kirana/admin/kpi-tiers'),
   saveKpiTiers:    (configs)              => request('PUT',  '/kirana/admin/kpi-tiers', { configs }),
+  // F4 — per-vertical KPI visibility (show/hide per vertical, live)
+  getKpiVisibility:  ()                   => request('GET',  '/kirana/admin/kpi-visibility'),
+  saveKpiVisibility: (configs)            => request('PUT',  '/kirana/admin/kpi-visibility', { configs }),
   
+  // M2 — Store groups (multi-store rollup)
+  listStoreGroups: ()                     => request('GET',  '/kirana/admin/store-groups'),
+  createStoreGroup:(name, storeIds, ownerUserId) => request('POST', '/kirana/admin/store-groups', { name, store_ids: storeIds, owner_user_id: ownerUserId }),
+  assignStoreGroup:(storeId, groupId)     => request('POST', `/kirana/admin/stores/${storeId}/group`, { group_id: groupId }),
+
+  // M1 — Loyalty overview
+  loyaltyOverview: ()                     => request('GET',  '/kirana/admin/loyalty/overview'),
+
+  // M5 / M7 — per-store staff & serial ops (back-office)
+  adminStaff:      (storeId)              => request('GET',  `/kirana/admin/stores/${storeId}/staff`),
+  adminBulkStaff:  (storeId, staff)       => request('POST', `/kirana/admin/stores/${storeId}/staff/bulk`, { staff }),
+  adminSerials:    (storeId, params)      => request('GET',  `/kirana/admin/stores/${storeId}/serials`, null, params),
+  adminBulkSerials:(storeId, body)        => request('POST', `/kirana/admin/stores/${storeId}/serials/bulk`, body),
+
   // System & ML
   mlStatus:        ()                     => request('GET',  '/kirana/admin/ml/status'),
   mlRetrain:       ()                     => request('POST', '/kirana/admin/ml/retrain'),

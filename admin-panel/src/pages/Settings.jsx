@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { api, startLogStream } from '../api';
 import Badge from '../components/Badge';
+import { useUI } from '../components/UIProvider';
 
 function LogRow({ log }) {
   const levelColors = {
@@ -29,6 +30,7 @@ function LogRow({ log }) {
 }
 
 export default function Settings() {
+  const ui = useUI();
   const [mlStatus, setMlStatus] = useState(null);
   const [logs, setLogs] = useState([]);
   const [levelFilter, setLevelFilter] = useState('');
@@ -95,12 +97,12 @@ export default function Settings() {
   };
 
   const handleRetrain = async () => {
-    if (!window.confirm('Start ML Retraining?')) return;
+    if (!(await ui.confirm({ title: 'Start ML retraining?', message: 'This kicks off a background retrain job.', confirmLabel: 'Retrain' }))) return;
     try {
       await api.mlRetrain();
-      alert('Retraining started!');
+      ui.toast('Retraining started', 'success');
       fetchMlStatus();
-    } catch (e) { alert(e.message); }
+    } catch (e) { ui.toast(e.message, 'error'); }
   };
 
   const filteredLogs = logs.filter(log => {

@@ -142,19 +142,29 @@ class OltpRepository:
             clean = self._enforce_write_scope(conn, table_name, user, clean)
             self._validate_required_create_fields(table_name, clean)
             if table_name in self._UPSERT_ON_CONFLICT:
-                # pg_insert supports on_conflict_do_update (PostgreSQL-specific)
+                # pg_insert supports on_conflict_do_update (PostgreSQL-specific).
+                # F2 — inventory is unique per (store, product, variant); target
+                # the functional index uq_inventory_store_product_variant so a
+                # grocery row (variant_id NULL) and each real variant upsert
+                # independently. COALESCE(variant_id, 0) matches the index expr.
                 stmt = pg_insert(table).values(**clean)
                 update_cols = {
                     k: v for k, v in clean.items()
-                    if k not in ("store_id", "product_id", "inventory_id", "batch_id")
+                    if k not in ("store_id", "product_id", "variant_id",
+                                 "inventory_id", "batch_id")
                 }
+                conflict_target = [
+                    table.c.store_id,
+                    table.c.product_id,
+                    func.coalesce(table.c.variant_id, 0),
+                ]
                 if update_cols:
                     stmt = stmt.on_conflict_do_update(
-                        constraint=f"{table_name}_store_id_product_id_key",
+                        index_elements=conflict_target,
                         set_=update_cols,
                     )
                 else:
-                    stmt = stmt.on_conflict_do_nothing()
+                    stmt = stmt.on_conflict_do_nothing(index_elements=conflict_target)
             else:
                 stmt = insert(table).values(**clean)
             result = conn.execute(stmt)

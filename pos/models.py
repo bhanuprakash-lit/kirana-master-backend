@@ -54,6 +54,8 @@ class KiranaProduct(POSBase):
     sku           = Column(String)
     barcode       = Column(String)
     image_url     = Column(String)
+    hsn_code      = Column(String)   # F3 — GST HSN/SAC code
+    gst_rate      = Column(Numeric)  # F3 — per-product GST %
     created_at    = Column(DateTime)
 
     category    = relationship("KiranaCategory", back_populates="products")
@@ -108,6 +110,8 @@ class KiranaOrder(POSBase):
     basket_name    = Column(String, nullable=True)
     basket_gross   = Column(Numeric, nullable=True)
     basket_savings = Column(Numeric, nullable=True)
+    tax_amount     = Column(Numeric, nullable=True)   # F3 — total GST in the bill
+    taxable_amount = Column(Numeric, nullable=True)   # F3 — total minus tax
 
     items   = relationship("KiranaOrderItem", back_populates="order")
     payment = relationship("KiranaPayment",   back_populates="order", uselist=False)
@@ -120,9 +124,12 @@ class KiranaOrderItem(POSBase):
     order_item_id = Column(BigInteger, primary_key=True)
     order_id      = Column(BigInteger, ForeignKey("kirana_oltp.orders.order_id"))
     product_id    = Column(BigInteger, ForeignKey("kirana_oltp.product.product_id"))
+    variant_id    = Column(BigInteger, nullable=True)  # F2 — which variant sold
     quantity      = Column(Numeric)
     unit_price    = Column(Numeric)
     cost_price    = Column(Numeric)
+    gst_rate      = Column(Numeric, nullable=True)   # F3 — GST % applied
+    tax_amount    = Column(Numeric, nullable=True)   # F3 — tax in this line (incl.)
 
     order   = relationship("KiranaOrder",   back_populates="items")
     product = relationship("KiranaProduct", back_populates="order_items")

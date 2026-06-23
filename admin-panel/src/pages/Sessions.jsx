@@ -33,7 +33,7 @@ export default function Sessions() {
     <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Active Sessions</h1>
+          <h1 className="text-xl font-bold text-slate-900">Active Sessions</h1>
           <p className="text-slate-500 text-sm mt-1">Monitor live user logins and device telemetry across the platform.</p>
         </div>
         <button onClick={() => fetchSessions()} className="text-sm font-medium text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors">

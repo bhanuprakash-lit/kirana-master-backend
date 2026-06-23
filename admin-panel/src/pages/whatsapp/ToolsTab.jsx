@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api';
+import { useUI } from '../../components/UIProvider';
 
 export default function ToolsTab({ health }) {
+  const ui = useUI();
   const [sendPhone, setSendPhone] = useState('');
   const [sendMsg, setSendMsg] = useState('');
   const [sendLoading, setSendLoading] = useState(false);
@@ -13,49 +15,49 @@ export default function ToolsTab({ health }) {
   const [linkStore, setLinkStore] = useState('');
 
   const handleSend = async () => {
-    if (!sendPhone || !sendMsg) return alert('Phone and message required');
+    if (!sendPhone || !sendMsg) { ui.toast('Phone and message required', 'error'); return; }
     setSendLoading(true);
     try {
       await api.waSend(sendPhone, sendMsg);
-      alert('Message sent successfully!');
+      ui.toast('Message sent', 'success');
       setSendMsg('');
     } catch (e) {
-      alert(`Error: ${e.message}`);
+      ui.toast(`Error: ${e.message}`, 'error');
     } finally {
       setSendLoading(false);
     }
   };
 
   const handleLookup = async () => {
-    if (!lookupPhone) return alert('Phone required');
+    if (!lookupPhone) { ui.toast('Phone required', 'error'); return; }
     try {
       const data = await api.waSession(lookupPhone);
       setLookupData(data);
     } catch (e) {
-      alert(`Error: ${e.message}`);
+      ui.toast(`Error: ${e.message}`, 'error');
     }
   };
 
   const handleReset = async () => {
-    if (!lookupPhone) return alert('Phone required');
-    if (!window.confirm(`Reset session for ${lookupPhone}?`)) return;
+    if (!lookupPhone) { ui.toast('Phone required', 'error'); return; }
+    if (!(await ui.confirm({ title: 'Reset session?', message: `Reset WhatsApp session for ${lookupPhone}.`, danger: true, confirmLabel: 'Reset' }))) return;
     try {
       await api.waResetSession(lookupPhone);
-      alert('Session reset successfully!');
+      ui.toast('Session reset', 'success');
       setLookupData(null);
     } catch (e) {
-      alert(`Error: ${e.message}`);
+      ui.toast(`Error: ${e.message}`, 'error');
     }
   };
 
   const handleLink = async () => {
-    if (!linkPhone || !linkStore) return alert('Phone and Store ID required');
+    if (!linkPhone || !linkStore) { ui.toast('Phone and Store ID required', 'error'); return; }
     try {
       await api.waLinkStore(linkPhone, linkStore);
-      alert(`Phone ${linkPhone} linked to store #${linkStore}!`);
+      ui.toast(`Linked ${linkPhone} to store #${linkStore}`, 'success');
       setLinkPhone(''); setLinkStore('');
     } catch (e) {
-      alert(`Error: ${e.message}`);
+      ui.toast(`Error: ${e.message}`, 'error');
     }
   };
 

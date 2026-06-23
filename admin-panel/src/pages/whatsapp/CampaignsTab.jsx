@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../../api';
+import { useUI } from '../../components/UIProvider';
 
 const TEMPLATES = [
   { id: 'udhaar_reminder_en', label: 'Udhaar Reminder', vars: ['store_name', 'customer_name', 'balance', 'days_pending'] },
@@ -7,6 +8,7 @@ const TEMPLATES = [
 ];
 
 export default function CampaignsTab() {
+  const ui = useUI();
   const [storeId, setStoreId] = useState('');
   const [segment, setSegment] = useState('all');
   const [templateId, setTemplateId] = useState(TEMPLATES[0].id);
@@ -20,18 +22,18 @@ export default function CampaignsTab() {
   };
 
   const handleBroadcast = async () => {
-    if (!storeId) return alert('Please enter a Store ID.');
+    if (!storeId) { ui.toast('Please enter a Store ID.', 'error'); return; }
     setLoading(true);
-    
+
     // In a production app, we would hit a dedicated /admin/broadcast endpoint.
     // Here we simulate the broadcast logic for the marketing dashboard.
     try {
       // 1. Fetch store customers (Mocked if endpoint unavailable, but we can assume success)
-      await new Promise(r => setTimeout(r, 800)); 
-      alert(`Successfully dispatched "${selectedTemplate.label}" to ${segment} customers of Store #${storeId}.`);
+      await new Promise(r => setTimeout(r, 800));
+      ui.toast(`Dispatched "${selectedTemplate.label}" to ${segment} customers of Store #${storeId}`, 'success');
       setVariables({});
     } catch (e) {
-      alert(`Broadcast failed: ${e.message}`);
+      ui.toast(`Broadcast failed: ${e.message}`, 'error');
     } finally {
       setLoading(false);
     }

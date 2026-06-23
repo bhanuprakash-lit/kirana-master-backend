@@ -20,7 +20,8 @@ pytestmark = pytest.mark.db
 @pytest.fixture
 def repo(clean_db, kirana_repo_no_bootstrap):
     """A KiranaRepository against the clean test DB, with bootstrap skipped."""
-    from kirana.repository import KiranaRepository
+    # from kirana.repository import KiranaRepository
+    from kirana.repositories.main import KiranaRepository
 
     return KiranaRepository(clean_db)
 

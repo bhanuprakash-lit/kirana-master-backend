@@ -12,7 +12,7 @@ import pytest
 @pytest.fixture
 def kirana_app(test_app):
     """`test_app` with the kirana router mounted."""
-    from kirana.routes import router as kirana_router
+    from kirana.routers.main import router as kirana_router
 
     test_app.include_router(kirana_router)
     return test_app
