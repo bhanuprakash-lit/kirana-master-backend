@@ -34,7 +34,7 @@ export default function Cashflow() {
     <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Cashflow Requests</h1>
+          <h1 className="text-xl font-bold text-slate-900">Cashflow Requests</h1>
           <p className="text-slate-500 text-sm mt-1">Manage credit and cashflow loan requests from stores.</p>
         </div>
         <button onClick={fetchRequests} className="text-sm font-medium text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors">

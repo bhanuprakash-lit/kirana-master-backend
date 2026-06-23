@@ -21,14 +21,14 @@ export default function LoyaltyOverview() {
   const Stat = ({ label, value }) => (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
       <div className="text-xs font-semibold text-slate-400 uppercase">{label}</div>
-      <div className="text-2xl font-bold text-slate-900 mt-1">{value}</div>
+      <div className="text-xl font-bold text-slate-900 mt-1">{value}</div>
     </div>
   );
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Loyalty Overview</h1>
+        <h1 className="text-xl font-bold text-slate-900">Loyalty Overview</h1>
         <p className="text-slate-500 text-sm mt-1">Adoption and points liability across all stores that turned loyalty on.</p>
       </div>
 

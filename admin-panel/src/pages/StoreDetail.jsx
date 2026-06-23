@@ -3,8 +3,10 @@ import { useParams, Link } from 'react-router-dom';
 import Chart from 'chart.js/auto';
 import { api } from '../api';
 import Badge from '../components/Badge';
+import { useUI } from '../components/UIProvider';
 
 export default function StoreDetail() {
+  const ui = useUI();
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -33,9 +35,10 @@ export default function StoreDetail() {
     setActionLoading(label);
     try {
       await fn();
+      ui.toast('Done', 'success');
       await fetchData();
     } catch (e) {
-      alert(`Action failed: ${e.message}`);
+      ui.toast(`Action failed: ${e.message}`, 'error');
     } finally {
       setActionLoading('');
     }
@@ -96,7 +99,7 @@ export default function StoreDetail() {
           <span className="text-xl">⬅️</span>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">{store.name}</h1>
+          <h1 className="text-xl font-bold text-slate-900">{store.name}</h1>
           <p className="text-slate-500 text-sm flex items-center gap-2">
             <span>📍 {store.location || 'No location'}</span>
             <span className="text-slate-300">•</span>
@@ -360,8 +363,8 @@ export default function StoreDetail() {
 
               {(subStatus === 'trial' || subStatus === 'active') && (
                 <button
-                  onClick={() => {
-                    if (window.confirm('Cancel this subscription? The store will lose access immediately.')) {
+                  onClick={async () => {
+                    if (await ui.confirm({ title: 'Cancel subscription?', message: 'The store will lose access immediately.', danger: true, confirmLabel: 'Cancel plan' })) {
                       runAction('cancel', () => api.cancelSub(store.store_id));
                     }
                   }}

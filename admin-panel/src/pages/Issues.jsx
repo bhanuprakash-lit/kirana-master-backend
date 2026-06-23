@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import { useUI } from '../components/UIProvider';
 
 export default function Issues() {
+  const ui = useUI();
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -28,9 +30,10 @@ export default function Issues() {
   const handleResolve = async (reportId) => {
     try {
       await api.updateIssue(reportId, { status: 'resolved' });
+      ui.toast('Issue resolved', 'success');
       fetchIssues();
     } catch (e) {
-      alert(`Error: ${e.message}`);
+      ui.toast(`Error: ${e.message}`, 'error');
     }
   };
 
@@ -43,7 +46,7 @@ export default function Issues() {
     <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Support Issues</h1>
+          <h1 className="text-xl font-bold text-slate-900">Support Issues</h1>
           <p className="text-slate-500 text-sm mt-1">Manage user bug reports and support requests.</p>
         </div>
         <button onClick={fetchIssues} className="text-sm font-medium text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors">

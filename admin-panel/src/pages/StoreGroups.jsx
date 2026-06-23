@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
+import { useUI } from '../components/UIProvider';
 
 // M2 — Store groups. Create a chain group and assign stores to it.
 // The shopkeeper app's Store Comparison screen reads the resulting rollup.
 export default function StoreGroups() {
+  const ui = useUI();
   const [groups, setGroups] = useState([]);
   const [stores, setStores] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -32,12 +34,12 @@ export default function StoreGroups() {
     if (!newName.trim()) return;
     setBusy(true);
     try { await api.createStoreGroup(newName.trim(), [], null); setNewName(''); await fetchData(); }
-    catch (e) { alert(`Failed: ${e.message}`); } finally { setBusy(false); }
+    catch (e) { ui.toast(`Failed: ${e.message}`, 'error'); } finally { setBusy(false); }
   };
 
   const assign = async (storeId, groupId) => {
     try { await api.assignStoreGroup(storeId, groupId ? Number(groupId) : null); await fetchData(); }
-    catch (e) { alert(`Failed: ${e.message}`); fetchData(); }
+    catch (e) { ui.toast(`Failed: ${e.message}`, 'error'); fetchData(); }
   };
 
   if (loading) return <div className="p-12 text-center text-slate-400">Loading…</div>;
@@ -45,7 +47,7 @@ export default function StoreGroups() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Store Groups (chains)</h1>
+        <h1 className="text-xl font-bold text-slate-900">Store Groups (chains)</h1>
         <p className="text-slate-500 text-sm mt-1">Link an owner's outlets into a group so they get the multi-store rollup (zone/city comparison) in the app.</p>
       </div>
 
