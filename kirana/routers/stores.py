@@ -73,12 +73,11 @@ def _require_store(store_id: int, user: dict = Depends(_auth)):
 
 @router.get("/stores")
 async def list_stores(request: Request, user: dict = Depends(_auth)):
-    stores = _svc(request).list_stores()
     if user.get("role") == "admin":
-        return {"stores": stores}
-    # Non-admins only see their own store
-    filtered = [s for s in stores if s["store_id"] == user.get("store_id")]
-    return {"stores": filtered}
+        return {"stores": _svc(request).list_stores()}
+    # Non-admins only see (and only need a summary computed for) their own store.
+    sid = user.get("store_id")
+    return {"stores": _svc(request).list_stores(only_store_ids=[sid] if sid else [])}
 
 
 # ── Multi-store: one owner → many stores (add / list / switch) ────────────────
