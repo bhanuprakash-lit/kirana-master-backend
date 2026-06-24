@@ -67,6 +67,12 @@ async def list_attendance(request: Request, date: str, user: dict = Depends(_aut
     return {"attendance": _repo(request).list_attendance(_sid(user), date)}
 
 
+@router.get("/staff/{staff_id}/attendance/history")
+async def attendance_history(staff_id: int, request: Request, days: int = 30,
+                              user: dict = Depends(_auth)):
+    return _repo(request).attendance_history(_sid(user), staff_id, days)
+
+
 @router.post("/staff/attendance")
 async def mark_attendance(request: Request, user: dict = Depends(_auth)):
     b = await request.json()

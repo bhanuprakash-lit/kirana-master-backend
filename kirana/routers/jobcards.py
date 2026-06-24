@@ -51,7 +51,7 @@ async def create_job_card(request: Request, user: dict = Depends(_auth)):
         customer_id=b.get("customer_id"), customer_name=b.get("customer_name"),
         customer_phone=b.get("customer_phone"), item_desc=b.get("item_desc"),
         details=b.get("details"), charge=b.get("charge"),
-        promised_date=b.get("promised_date"))
+        promised_date=b.get("promised_date"), promised_time=b.get("promised_time"))
 
 
 @router.patch("/job-cards/{job_id}")
@@ -69,6 +69,7 @@ async def update_job_card(job_id: int, request: Request, user: dict = Depends(_a
         status=status,
         item_desc=b.get("item_desc"), details=b.get("details"),
         charge=b.get("charge"), promised_date=b.get("promised_date"),
+        promised_time=b.get("promised_time"),
         customer_id=b.get("customer_id"), customer_name=b.get("customer_name"),
         customer_phone=b.get("customer_phone"))
     if not updated:

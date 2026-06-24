@@ -27,6 +27,9 @@ class CampaignTemplate:
     description: str
     campaign_type: str         # morning | monthly | school | weekend | festival | general
     items: list[CampaignItemTemplate] = field(default_factory=list)
+    # All current templates are grocery staples; gate by store.vertical_code
+    # so apparel/optical/etc. stores never see grocery campaign suggestions.
+    vertical_codes: list[str] = field(default_factory=lambda: ["grocery"])
 
     # Time windows that boost this campaign's score
     active_hours: tuple[int, int] | None = None   # (start_hour, end_hour) inclusive
@@ -294,7 +297,15 @@ def get_recommended_campaigns(
     results = []
 
     with engine.connect() as conn:
+        from sqlalchemy import text
+        vertical_code = conn.execute(
+            text("SELECT vertical_code FROM kirana_oltp.store WHERE store_id = :sid"),
+            {"sid": store_id},
+        ).scalar() or "grocery"
+
         for template in TEMPLATES:
+            if vertical_code not in template.vertical_codes:
+                continue
             ctx_score = _context_score(template, now)
 
             matched_items = []
@@ -355,13 +366,19 @@ def get_area_campaigns(
     results = []
 
     with engine.connect() as conn:
+        from sqlalchemy import text
+        vertical_code = conn.execute(
+            text("SELECT vertical_code FROM kirana_oltp.store WHERE store_id = :sid"),
+            {"sid": store_id},
+        ).scalar() or "grocery"
+
         for area_type in area_types:
             if area_type in seen_types:
                 continue
             seen_types.add(area_type)
 
             template = AREA_TEMPLATES.get(area_type)
-            if not template:
+            if not template or vertical_code not in template.vertical_codes:
                 continue
 
             ctx_score = _context_score(template, now)

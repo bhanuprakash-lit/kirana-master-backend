@@ -72,3 +72,6 @@ RUNBOOK.md
 # Local dev / DB test scripts (throwaway)
 test_azure_conn.py
 export_stores.py
+
+# CRM demo seed manifest (generated, run-specific)
+scripts/crm_demo_manifest*.json

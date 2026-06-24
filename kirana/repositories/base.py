@@ -523,6 +523,41 @@ class BaseRepositoryMixin:
                 )
             """)
             )
+            # Tester #1 — axes can be scoped to a category so e.g. electronics
+            # asks "Storage" for phones/laptops but "Capacity (mAh)" for power
+            # banks and "Connectivity" for audio. '' (empty) = applies to the
+            # whole vertical (model/colour). We widen the uniqueness from
+            # (vertical, attr) to (vertical, attr, category) so the same attr_code
+            # can exist once per category. Mirrors the inventory constraint
+            # migration: drop the legacy 2-col unique by introspection, then add
+            # the 3-col one. Idempotent.
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.product_attribute_def "
+                "ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT ''"))
+            conn.execute(text("""
+                DO $$
+                DECLARE c text;
+                BEGIN
+                    SELECT con.conname INTO c
+                    FROM pg_constraint con
+                    JOIN pg_class rel ON rel.oid = con.conrelid
+                    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+                    WHERE ns.nspname = 'kirana_oltp'
+                      AND rel.relname = 'product_attribute_def'
+                      AND con.contype = 'u'
+                      AND (SELECT array_agg(att.attname::text ORDER BY att.attname::text)
+                           FROM unnest(con.conkey) k
+                           JOIN pg_attribute att
+                             ON att.attrelid = con.conrelid AND att.attnum = k)
+                          = ARRAY['attr_code','vertical_code'];
+                    IF c IS NOT NULL THEN
+                        EXECUTE format('ALTER TABLE kirana_oltp.product_attribute_def DROP CONSTRAINT %I', c);
+                    END IF;
+                END $$;
+            """))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_attr_def_vertical_attr_category "
+                "ON kirana_oltp.product_attribute_def (vertical_code, attr_code, category)"))
             # product_variant: one sellable variant of a product. Grocery keeps
             # exactly one *implicit* variant so all existing queries keep working.
             conn.execute(
@@ -570,9 +605,19 @@ class BaseRepositoryMixin:
                     "variant_id BIGINT REFERENCES kirana_oltp.product_variant(variant_id)"
                 )
             )
-            # Migration: give every existing product one implicit variant, then
-            # point its stock + past sales at it. All guards make this a no-op
-            # after the first boot (grocery = one implicit variant rule).
+            # Migration: give every existing product one implicit variant
+            # (grocery = one implicit variant rule). The implicit variant row
+            # itself is bookkeeping only — per the comment above, inventory/
+            # order_item must keep variant_id NULL for implicit products so
+            # the update_inventory_on_sale trigger and the per-product stock
+            # LATERAL (pos/crud.py) match them correctly. An earlier version
+            # of this migration pointed inventory.variant_id/order_item.variant_id
+            # AT the implicit variant's id instead of leaving them NULL, which
+            # broke every sale of an implicit-variant product ("Inventory row
+            # missing" — the trigger looks up variant_id IS NULL, found nothing).
+            # The self-heal block below repairs any rows already corrupted by
+            # that bug; do not reintroduce the old UPDATE ... SET variant_id =
+            # v.variant_id (is_implicit) pattern.
             conn.execute(
                 text("""
                 INSERT INTO kirana_oltp.product_variant
@@ -588,21 +633,19 @@ class BaseRepositoryMixin:
             conn.execute(
                 text("""
                 UPDATE kirana_oltp.inventory inv
-                SET variant_id = v.variant_id
+                SET variant_id = NULL
                 FROM kirana_oltp.product_variant v
-                WHERE v.product_id = inv.product_id
+                WHERE v.variant_id = inv.variant_id
                   AND v.is_implicit = TRUE
-                  AND inv.variant_id IS NULL
             """)
             )
             conn.execute(
                 text("""
                 UPDATE kirana_oltp.order_item oi
-                SET variant_id = v.variant_id
+                SET variant_id = NULL
                 FROM kirana_oltp.product_variant v
-                WHERE v.product_id = oi.product_id
+                WHERE v.variant_id = oi.variant_id
                   AND v.is_implicit = TRUE
-                  AND oi.variant_id IS NULL
             """)
             )
             # F2 — widen inventory uniqueness from (store_id, product_id) to
@@ -663,14 +706,48 @@ class BaseRepositoryMixin:
                     ('footwear','size','Size','enum','["5","6","7","8","9","10","11","12"]',TRUE,1),
                     ('footwear','colour','Colour','text',NULL,TRUE,2),
                     ('electronics','model','Model','text',NULL,TRUE,1),
-                    ('electronics','storage','Storage','enum','["64GB","128GB","256GB","512GB","1TB"]',TRUE,2),
-                    ('electronics','colour','Colour','text',NULL,TRUE,3),
+                    ('electronics','colour','Colour','enum','["Black","White","Grey","Blue","Red","Green","Gold","Silver","Rose Gold","Graphite"]',TRUE,3),
                     ('optical','frame_size','Frame Size','text',NULL,TRUE,1),
                     ('optical','lens_type','Lens Type','enum','["single_vision","bifocal","progressive"]',TRUE,2),
-                    ('optical','colour','Colour','text',NULL,TRUE,3)
-                ON CONFLICT (vertical_code, attr_code) DO NOTHING
+                    ('optical','colour','Colour','enum','["Black","Brown","Blue","Gold","Silver","Grey","Tortoise","Rose Gold"]',TRUE,3)
+                ON CONFLICT (vertical_code, attr_code, category) DO NOTHING
             """)
             )
+            # Tester #1 — electronics axes that depend on the product category.
+            # Storage applies to phones/laptops/memory; power banks ask mAh; audio
+            # asks connectivity. Category is matched by name (the seeded category
+            # names below). Idempotent via the 3-col unique index.
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.product_attribute_def
+                    (vertical_code, attr_code, label, type, options, is_variant_axis, sort, category)
+                VALUES
+                    ('electronics','storage','Storage','enum','["64GB","128GB","256GB","512GB","1TB"]',TRUE,2,'Mobiles'),
+                    ('electronics','storage','Storage','enum','["128GB","256GB","512GB","1TB","2TB"]',TRUE,2,'Laptops & Computers'),
+                    ('electronics','storage','Storage','enum','["64GB","128GB","256GB","512GB","1TB","2TB"]',TRUE,2,'Memory & Storage'),
+                    ('electronics','capacity','Capacity (mAh)','enum','["5000mAh","10000mAh","20000mAh","30000mAh"]',TRUE,2,'Power Banks'),
+                    ('electronics','connectivity','Connectivity','enum','["Wired","Bluetooth","TWS"]',TRUE,2,'Audio')
+                ON CONFLICT (vertical_code, attr_code, category) DO NOTHING
+            """))
+            # Drop the legacy vertical-wide electronics 'storage' (category '')
+            # now that storage is category-scoped, so phones don't also inherit a
+            # second blanket Storage axis. Runs once; no-op thereafter.
+            conn.execute(text("""
+                DELETE FROM kirana_oltp.product_attribute_def
+                WHERE vertical_code = 'electronics' AND attr_code = 'storage'
+                  AND category = ''
+            """))
+            # Tester feedback (#6): colour was free-text, so the add-variant grid
+            # showed a typing field instead of a drill-down. Upgrade every colour
+            # axis still stored as plain text to an enum with a standard palette so
+            # the FE renders a dropdown. Idempotent — only touches text rows with
+            # no options, so a store that later customises the list is left alone.
+            conn.execute(text("""
+                UPDATE kirana_oltp.product_attribute_def
+                SET type = 'enum',
+                    options = '["Black","White","Grey","Blue","Red","Green","Yellow","Pink","Purple","Brown","Beige","Maroon","Navy","Orange","Gold","Silver"]'::jsonb
+                WHERE attr_code = 'colour'
+                  AND (type <> 'enum' OR options IS NULL)
+            """))
 
             # ── Foundation 3: tax / GST ───────────────────────────────────────
             # Per-product HSN + GST rate, with store-level fallback rules by
@@ -686,6 +763,15 @@ class BaseRepositoryMixin:
                 text(
                     "ALTER TABLE kirana_oltp.product ADD COLUMN IF NOT EXISTS "
                     "gst_rate NUMERIC(5,2)"
+                )
+            )
+            # Tester #11 — per-product warranty length (months). 0/NULL = none.
+            # At sale, a serial's warranty_until is derived from this + the
+            # purchase date; optical (no serial) shows it computed from the order.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.product ADD COLUMN IF NOT EXISTS "
+                    "warranty_months INT"
                 )
             )
             conn.execute(
@@ -1094,6 +1180,11 @@ class BaseRepositoryMixin:
             conn.execute(text(
                 "ALTER TABLE kirana_oltp.job_card "
                 "ADD COLUMN IF NOT EXISTS order_id BIGINT"))
+            # Tester feedback: capture a ready-by TIME alongside the date so the
+            # shopkeeper can promise "today 5pm", not just a calendar day.
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.job_card "
+                "ADD COLUMN IF NOT EXISTS promised_time TIME"))
 
             # kirana_oltp.user_prefs
             conn.execute(

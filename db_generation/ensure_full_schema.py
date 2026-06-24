@@ -959,13 +959,29 @@ RETURNS TRIGGER AS $$
 DECLARE
     order_store_id BIGINT;
     current_stock  INT;
+    is_real_variant BOOLEAN := FALSE;
 BEGIN
     SELECT store_id INTO order_store_id
     FROM kirana_oltp.orders WHERE order_id = NEW.order_id;
 
+    -- F2: real (non-implicit) variants are decremented at the application
+    -- level (pos/crud.py), together with product_variant.stock, scoped to
+    -- the exact variant sold. Skip here to avoid double-decrementing and to
+    -- avoid this product-only (not variant-scoped) UPDATE clobbering every
+    -- sibling variant's inventory row.
+    IF NEW.variant_id IS NOT NULL THEN
+        SELECT NOT is_implicit INTO is_real_variant
+        FROM kirana_oltp.product_variant WHERE variant_id = NEW.variant_id;
+    END IF;
+
+    IF is_real_variant THEN
+        RETURN NEW;
+    END IF;
+
     SELECT quantity INTO current_stock
     FROM kirana_oltp.inventory
     WHERE store_id = order_store_id AND product_id = NEW.product_id
+      AND variant_id IS NOT DISTINCT FROM NEW.variant_id
     FOR UPDATE;
 
     IF current_stock IS NULL THEN
@@ -978,7 +994,8 @@ BEGIN
 
     UPDATE kirana_oltp.inventory
     SET quantity = quantity - NEW.quantity
-    WHERE store_id = order_store_id AND product_id = NEW.product_id;
+    WHERE store_id = order_store_id AND product_id = NEW.product_id
+      AND variant_id IS NOT DISTINCT FROM NEW.variant_id;
 
     INSERT INTO kirana_oltp.inventory_movements (store_id, product_id, change_quantity, reason, reference_id)
     VALUES (order_store_id, NEW.product_id, -NEW.quantity, 'sale', NEW.order_id);

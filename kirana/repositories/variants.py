@@ -15,16 +15,26 @@ class VariantsRepositoryMixin:
     """
 
     # ── Attribute definitions ────────────────────────────────────────────────
-    def list_attribute_defs(self, vertical_code: str) -> list[dict]:
-        """The variant axes / attributes a vertical exposes, ordered for the UI."""
+    def list_attribute_defs(
+        self, vertical_code: str, category: str | None = None
+    ) -> list[dict]:
+        """The variant axes / attributes a vertical exposes, ordered for the UI.
+
+        Tester #1 — axes can be category-scoped (electronics: Storage for phones,
+        Capacity for power banks, …). category='' rows are vertical-wide and
+        always returned; a non-empty `category` also pulls that category's
+        specific axes. With no category we return only the vertical-wide set.
+        """
         sql = """
         SELECT attr_code, label, type, options, is_variant_axis, sort
         FROM kirana_oltp.product_attribute_def
-        WHERE vertical_code = :vc
+        WHERE vertical_code = :vc AND (category = '' OR category = :cat)
         ORDER BY sort, attr_code
         """
         with self._conn() as conn:
-            rows = conn.execute(text(sql), {"vc": vertical_code}).mappings().all()
+            rows = conn.execute(
+                text(sql), {"vc": vertical_code, "cat": category or ""}
+            ).mappings().all()
         return [dict(r) for r in rows]
 
     # ── Implicit variant ─────────────────────────────────────────────────────

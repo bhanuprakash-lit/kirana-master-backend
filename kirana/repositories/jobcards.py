@@ -12,7 +12,8 @@ class JobCardsRepositoryMixin:
     def list_job_cards(self, store_id: int, status: str | None = None,
                        job_type: str | None = None) -> list[dict]:
         sql = ("SELECT job_id, customer_id, customer_name, customer_phone, job_type, "
-               "item_desc, details, charge, status, promised_date, created_at "
+               "item_desc, details, charge, status, promised_date, "
+               "TO_CHAR(promised_time, 'HH24:MI') AS promised_time, created_at "
                "FROM kirana_oltp.job_card WHERE store_id = :sid")
         params: dict = {"sid": store_id}
         if status:
@@ -27,26 +28,30 @@ class JobCardsRepositoryMixin:
                         customer_id: int | None = None, customer_name: str | None = None,
                         customer_phone: str | None = None, item_desc: str | None = None,
                         details: str | None = None, charge: float | None = None,
-                        promised_date: str | None = None) -> dict:
+                        promised_date: str | None = None,
+                        promised_time: str | None = None) -> dict:
         with self._conn() as conn:
             row = conn.execute(text("""
                 INSERT INTO kirana_oltp.job_card
                     (store_id, customer_id, customer_name, customer_phone, job_type,
-                     item_desc, details, charge, promised_date)
-                VALUES (:sid, :cid, :cname, :cphone, :jt, :item, :det, :charge, CAST(:pd AS DATE))
+                     item_desc, details, charge, promised_date, promised_time)
+                VALUES (:sid, :cid, :cname, :cphone, :jt, :item, :det, :charge,
+                        CAST(:pd AS DATE), CAST(:pt AS TIME))
                 RETURNING job_id, customer_id, customer_name, customer_phone, job_type,
-                          item_desc, details, charge, status, promised_date, created_at
+                          item_desc, details, charge, status, promised_date,
+                          TO_CHAR(promised_time, 'HH24:MI') AS promised_time, created_at
             """), {"sid": store_id, "cid": customer_id, "cname": customer_name,
                    "cphone": customer_phone, "jt": job_type, "item": item_desc,
-                   "det": details, "charge": charge, "pd": promised_date}).mappings().first()
+                   "det": details, "charge": charge, "pd": promised_date,
+                   "pt": promised_time}).mappings().first()
             conn.commit()
         return dict(row)
 
     def update_job_card(self, job_id: int, store_id: int, **fields) -> dict | None:
         """Patch editable job-card fields (item_desc/details/charge/promised_date/
         customer_*/status). Ignores None values. promised_date is cast to DATE."""
-        allowed = {"item_desc", "details", "charge", "promised_date", "status",
-                   "customer_id", "customer_name", "customer_phone"}
+        allowed = {"item_desc", "details", "charge", "promised_date", "promised_time",
+                   "status", "customer_id", "customer_name", "customer_phone"}
         sets, params = [], {"id": job_id, "sid": store_id}
         for k, v in fields.items():
             if k not in allowed or v is None:
@@ -54,6 +59,9 @@ class JobCardsRepositoryMixin:
             if k == "promised_date":
                 sets.append("promised_date = CAST(:promised_date AS DATE)")
                 params["promised_date"] = v
+            elif k == "promised_time":
+                sets.append("promised_time = CAST(:promised_time AS TIME)")
+                params["promised_time"] = v
             else:
                 sets.append(f"{k} = :{k}")
                 params[k] = v
@@ -62,7 +70,8 @@ class JobCardsRepositoryMixin:
         sql = ("UPDATE kirana_oltp.job_card SET " + ", ".join(sets) +
                " WHERE job_id = :id AND store_id = :sid "
                "RETURNING job_id, customer_id, customer_name, customer_phone, "
-               "job_type, item_desc, details, charge, status, promised_date, created_at")
+               "job_type, item_desc, details, charge, status, promised_date, "
+               "TO_CHAR(promised_time, 'HH24:MI') AS promised_time, created_at")
         with self._conn() as conn:
             row = conn.execute(text(sql), params).mappings().first()
             conn.commit()

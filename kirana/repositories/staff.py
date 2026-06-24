@@ -72,6 +72,22 @@ class StaffRepositoryMixin:
             """), {"sid": store_id, "d": att_date}).mappings().all()
         return [dict(r) for r in rows]
 
+    def attendance_history(self, store_id: int, staff_id: int, days: int = 30) -> dict:
+        with self._conn() as conn:
+            rows = conn.execute(text("""
+                SELECT att_date, status
+                FROM kirana_oltp.staff_attendance
+                WHERE store_id = :sid AND staff_id = :stf
+                  AND att_date >= CURRENT_DATE - (:days || ' days')::interval
+                ORDER BY att_date DESC
+            """), {"sid": store_id, "stf": staff_id, "days": days}).mappings().all()
+        history = [{"att_date": str(r["att_date"]), "status": r["status"]} for r in rows]
+        counts = {"present": 0, "absent": 0, "half_day": 0}
+        for r in history:
+            if r["status"] in counts:
+                counts[r["status"]] += 1
+        return {"history": history, "counts": counts}
+
     # ── Tasks ───────────────────────────────────────────────────────────────
     def list_tasks(self, store_id: int, include_done: bool = True) -> list[dict]:
         sql = ("SELECT t.task_id, t.staff_id, t.title, t.due_date, t.is_done, s.name AS staff_name "
