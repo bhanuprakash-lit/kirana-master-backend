@@ -258,8 +258,12 @@ async def new_product_trial(
     trial_feats = []
     for p in data.get("products", []):
         trial_feats.append({
-            "category_id": 0, "is_perishable": 0, "is_loose": 0,
-            "price": 100.0, "cost_price": 80.0, "margin_pct": 20.0,
+            "category_id":  p.get("category_id", 0),
+            "is_perishable": p.get("is_perishable", 0),
+            "is_loose":     p.get("is_loose", 0),
+            "price":        p.get("price", 0.0),
+            "cost_price":   p.get("cost_price", 0.0),
+            "margin_pct":   p.get("margin_pct", 0.0),
         })
     probs = ml.predict_trial_success(trial_feats)
     for i, prod in enumerate(data.get("products", [])):
@@ -418,12 +422,16 @@ async def distributor_terms(
 
     # Enrich with ML supplier reliability scores
     for sup in data.get("by_supplier", []):
+        expected_lead = sup.get("avg_expected_lead_days", 3.0)
+        actual_lead   = sup.get("avg_actual_lead_days", expected_lead)
+        lead_variance = abs(actual_lead - expected_lead)
+        price_acc     = max(0.0, 1.0 - abs(sup.get("price_variance_pct", 0)) / 100.0)
         ml_score = ml.score_supplier_reliability([{
             "actual_cost":    sup["avg_actual_cost"],
             "standard_cost":  sup["avg_standard_cost"],
-            "expected_lead":  2.5,
-            "lead_variance":  abs(sup["price_variance_pct"]) * 0.1,
-            "price_accuracy": max(0, 1 - abs(sup["price_variance_pct"]) / 100),
+            "expected_lead":  expected_lead,
+            "lead_variance":  lead_variance,
+            "price_accuracy": price_acc,
         }])
         if ml_score:
             sup["ml_reliability_score"] = round(ml_score[0] * 100, 1)

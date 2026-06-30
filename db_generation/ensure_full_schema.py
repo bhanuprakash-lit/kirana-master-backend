@@ -474,6 +474,40 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.subscription (
 )
 """)
 
+# Segment-wise subscription pricing — keyed by store.store_type (the granular
+# onboarding dropdown), NOT vertical_code. '__default__' is the fallback row
+# for any store_type with no dedicated price. Mirrors the table created in
+# kirana/repositories/base.py:_ensure_schema() (the live boot path) — kept in
+# sync here for manual runs against Azure.
+step("table:segment_pricing", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.segment_pricing (
+    store_type   TEXT PRIMARY KEY,
+    basic_price  NUMERIC(10,2) NOT NULL,
+    pro_price    NUMERIC(10,2) NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+""")
+
+step("seed:segment_pricing", """
+INSERT INTO kirana_oltp.segment_pricing (store_type, basic_price, pro_price) VALUES
+    ('kirana',           200, 500),
+    ('supermarket',      1300, 1700),
+    ('mini_supermarket', 600, 1000),
+    ('mono_brand',       600, 1000),
+    ('apparel',          500, 900),
+    ('boutique',         400, 800),
+    ('salon',            400, 600),
+    ('fancy_gift',       300, 500),
+    ('sports_fitness',   500, 900),
+    ('electronics',      700, 1100),
+    ('footwear',         400, 600),
+    ('optical',          400, 800),
+    ('bakery',           300, 500),
+    ('stationery',       200, 400),
+    ('__default__',      200, 500)
+ON CONFLICT (store_type) DO NOTHING
+""")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5.  INTELLIGENCE / CART
@@ -1029,6 +1063,25 @@ step("view:product_catalog", """
 CREATE OR REPLACE VIEW kirana_oltp.product_catalog AS
 SELECT * FROM kirana_oltp.product
 WHERE (barcode IS NOT NULL OR is_loose = TRUE)
+""")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14b. ADMIN SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+step("admin_settings:table", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.admin_settings (
+    key        VARCHAR(100) PRIMARY KEY,
+    value      TEXT         NOT NULL,
+    updated_at TIMESTAMPTZ  DEFAULT NOW()
+)
+""")
+
+step("admin_settings:auto_approve_trial", """
+INSERT INTO kirana_oltp.admin_settings (key, value)
+VALUES ('auto_approve_trial', 'false')
+ON CONFLICT (key) DO NOTHING
 """)
 
 

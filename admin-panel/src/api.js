@@ -110,6 +110,8 @@ export const api = {
   adminProducts:   (params)               => request('GET',  '/kirana/admin/products', null, params),
   posCategories:   ()                     => request('GET',  '/kirana/admin/categories'),
   approveTrial:    (storeId)              => request('POST', `/kirana/admin/approve-trial/${storeId}`),
+  getAdminSettings: ()                   => request('GET',  '/kirana/admin/settings'),
+  setAdminSettings: (body)               => request('POST', '/kirana/admin/settings', body),
   extendTrial:     (storeId, days)        => request('POST', `/kirana/admin/extend-trial/${storeId}`, { days }),
   cancelSub:       (storeId)              => request('POST', `/kirana/admin/cancel-subscription/${storeId}`),
   

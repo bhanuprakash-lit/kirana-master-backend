@@ -81,7 +81,20 @@ async def request_trial(
     if sid is None:
         raise HTTPException(status_code=403, detail="Store owner login required")
     tier = body.tier if body.tier in ("basic", "pro") else "basic"
-    return _svc(request).request_trial(int(sid), tier)
+    svc = _svc(request)
+    result = svc.request_trial(int(sid), tier)
+
+    # Auto-approve if the admin setting is enabled
+    auto = svc.get_admin_setting("auto_approve_trial", "false").lower() == "true"
+    if auto:
+        trial_days = request.app.state.settings.trial_days
+        try:
+            result = svc.approve_trial(int(sid), trial_days)
+            result["auto_approved"] = True
+        except Exception:
+            pass  # leave as pending_trial if approve fails
+
+    return result
 
 
 @router.post("/subscription/cancel")
@@ -244,6 +257,29 @@ async def extend_trial(
             data={"action": "open_subscription", "channel": "kirana_account"},
         )
     return result
+
+
+@router.get("/admin/settings")
+async def get_admin_settings(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    svc = _svc(request)
+    return {
+        "auto_approve_trial": svc.get_admin_setting("auto_approve_trial", "false").lower() == "true",
+    }
+
+
+@router.post("/admin/settings")
+async def update_admin_settings(request: Request, user: dict = Depends(_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    body = await request.json()
+    svc = _svc(request)
+    if "auto_approve_trial" in body:
+        svc.set_admin_setting("auto_approve_trial", "true" if body["auto_approve_trial"] else "false")
+    return {
+        "auto_approve_trial": svc.get_admin_setting("auto_approve_trial", "false").lower() == "true",
+    }
 
 
 @router.get("/admin/pending-trials")

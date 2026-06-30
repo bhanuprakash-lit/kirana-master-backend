@@ -4,34 +4,61 @@ from .core import _period, _prev_period, _row, _rows, _scalar, _trend, ml_profil
 from datetime import date, timedelta
 
 
+_OLAP_FAST_MOVERS_SQL = """
+WITH fast_movers AS (
+    SELECT d.product_id, p.name, c.name AS category_name,
+           AVG(d.units_sold) AS avg_daily_demand
+    FROM kirana_olap.daily_store_sku_metrics d
+    JOIN kirana_oltp.product p  ON d.product_id = p.product_id
+    JOIN kirana_oltp.category c ON p.category_id = c.category_id
+    WHERE d.store_id = :sid AND d.date >= CURRENT_DATE - 14 AND d.units_sold > 0
+    GROUP BY d.product_id, p.name, c.name
+    HAVING AVG(d.units_sold) >= 3
+)
+SELECT fm.product_id, fm.name AS product_name, fm.category_name,
+       COALESCE(i.quantity, 0) AS current_stock,
+       ROUND(fm.avg_daily_demand::numeric, 2) AS avg_daily_demand,
+       ROUND((COALESCE(i.quantity,0) / NULLIF(fm.avg_daily_demand,0))::numeric, 1) AS days_of_cover
+FROM fast_movers fm
+LEFT JOIN kirana_oltp.inventory i ON i.product_id = fm.product_id AND i.store_id = :sid
+ORDER BY days_of_cover ASC
+"""
+
+_OLTP_FAST_MOVERS_SQL = """
+WITH fast_movers AS (
+    SELECT oi.product_id, p.name, c.name AS category_name,
+           SUM(oi.quantity)::float / 14 AS avg_daily_demand
+    FROM kirana_oltp.order_item oi
+    JOIN kirana_oltp.orders o ON oi.order_id = o.order_id
+    JOIN kirana_oltp.product p  ON oi.product_id = p.product_id
+    JOIN kirana_oltp.category c ON p.category_id = c.category_id
+    WHERE o.store_id = :sid AND o.order_status = 'completed'
+      AND o.order_date >= CURRENT_DATE - 14
+    GROUP BY oi.product_id, p.name, c.name
+    HAVING SUM(oi.quantity)::float / 14 >= 3
+)
+SELECT fm.product_id, fm.name AS product_name, fm.category_name,
+       COALESCE(i.quantity, 0) AS current_stock,
+       ROUND(fm.avg_daily_demand::numeric, 2) AS avg_daily_demand,
+       ROUND((COALESCE(i.quantity,0) / NULLIF(fm.avg_daily_demand,0))::numeric, 1) AS days_of_cover
+FROM fast_movers fm
+LEFT JOIN kirana_oltp.inventory i ON i.product_id = fm.product_id AND i.store_id = :sid
+ORDER BY days_of_cover ASC
+"""
+
+
 def calc_morning_stock_readiness(engine, store_id: int, ml_adapter=None) -> dict:
     """
     Fast-movers + stockout predictions from ML; compares today's inventory vs demand.
     readiness_score = % fast-moving SKUs with days_of_cover >= 2
     """
-    sql = """
-    WITH fast_movers AS (
-        SELECT d.product_id, p.name, c.name AS category_name,
-               AVG(d.units_sold) AS avg_daily_demand
-        FROM kirana_olap.daily_store_sku_metrics d
-        JOIN kirana_oltp.product p  ON d.product_id = p.product_id
-        JOIN kirana_oltp.category c ON p.category_id = c.category_id
-        WHERE d.store_id = :sid
-          AND d.date >= CURRENT_DATE - 14
-          AND d.units_sold > 0
-        GROUP BY d.product_id, p.name, c.name
-        HAVING AVG(d.units_sold) >= 3
-    )
-    SELECT fm.product_id, fm.name AS product_name, fm.category_name,
-           COALESCE(i.quantity, 0) AS current_stock,
-           ROUND(fm.avg_daily_demand::numeric, 2) AS avg_daily_demand,
-           ROUND(COALESCE(i.quantity,0) / NULLIF(fm.avg_daily_demand,0), 1) AS days_of_cover
-    FROM fast_movers fm
-    LEFT JOIN kirana_oltp.inventory i
-           ON i.product_id = fm.product_id AND i.store_id = :sid
-    ORDER BY days_of_cover ASC
-    """
-    rows = _rows(engine, sql, {"sid": store_id})
+    try:
+        rows = _rows(engine, _OLAP_FAST_MOVERS_SQL, {"sid": store_id})
+    except Exception:
+        rows = []
+    if not rows:
+        rows = _rows(engine, _OLTP_FAST_MOVERS_SQL, {"sid": store_id})
+
     if not rows:
         return {
             "readiness_score": 0,
@@ -94,7 +121,27 @@ def calc_morning_stock_readiness(engine, store_id: int, ml_adapter=None) -> dict
 
 
 def calc_inventory_holding(engine, store_id: int) -> dict:
-    sql = """
+    try:
+        has_olap = bool(_scalar(engine,
+            "SELECT 1 FROM kirana_olap.daily_store_sku_metrics"
+            " WHERE store_id = :sid AND date >= CURRENT_DATE - 30 LIMIT 1",
+            {"sid": store_id}))
+    except Exception:
+        has_olap = False
+
+    demand_cte = (
+        "SELECT product_id, AVG(units_sold) AS avg_daily_demand"
+        " FROM kirana_olap.daily_store_sku_metrics"
+        " WHERE store_id = :sid AND date >= CURRENT_DATE - 30 GROUP BY product_id"
+    ) if has_olap else (
+        "SELECT oi.product_id AS product_id, SUM(oi.quantity)::float / 30 AS avg_daily_demand"
+        " FROM kirana_oltp.order_item oi"
+        " JOIN kirana_oltp.orders o ON oi.order_id = o.order_id"
+        " WHERE o.store_id = :sid AND o.order_status = 'completed'"
+        " AND o.order_date >= CURRENT_DATE - 30 GROUP BY oi.product_id"
+    )
+
+    sql = f"""
     WITH inv AS (
         SELECT i.product_id, i.quantity,
                ps.cost_price,
@@ -106,13 +153,7 @@ def calc_inventory_holding(engine, store_id: int) -> dict:
         LEFT JOIN kirana_oltp.product_supplier ps ON i.product_id = ps.product_id
         WHERE i.store_id = :sid AND ps.cost_price IS NOT NULL
     ),
-    demand AS (
-        SELECT product_id,
-               AVG(units_sold) AS avg_daily_demand
-        FROM kirana_olap.daily_store_sku_metrics
-        WHERE store_id = :sid AND date >= CURRENT_DATE - 30
-        GROUP BY product_id
-    )
+    demand AS ({demand_cte})
     SELECT i.category_name,
            ROUND(SUM(i.stock_value)::numeric, 2)             AS avg_stock_value,
            ROUND(SUM(i.stock_value) * :hold_rate / 365 * 30, 2) AS holding_cost_30d,
@@ -131,8 +172,16 @@ def calc_inventory_holding(engine, store_id: int) -> dict:
     total_hold = sum(float(r.get("holding_cost_30d") or 0) for r in rows)
     excess_value = sum(float(r.get("excess_value") or 0) for r in rows)
 
-    rev_sql = "SELECT SUM(revenue) FROM kirana_olap.daily_store_sku_metrics WHERE store_id=:sid AND date>=CURRENT_DATE-30"
-    monthly_rev = float(_scalar(engine, rev_sql, {"sid": store_id}) or 1)
+    if has_olap:
+        monthly_rev = float(_scalar(engine,
+            "SELECT COALESCE(SUM(revenue), 1) FROM kirana_olap.daily_store_sku_metrics"
+            " WHERE store_id=:sid AND date>=CURRENT_DATE-30",
+            {"sid": store_id}) or 1)
+    else:
+        monthly_rev = float(_scalar(engine,
+            "SELECT COALESCE(SUM(total_amount), 1) FROM kirana_oltp.orders"
+            " WHERE store_id=:sid AND order_status='completed' AND order_date>=CURRENT_DATE-30",
+            {"sid": store_id}) or 1)
     hold_pct_rev = round(total_hold / max(monthly_rev, 1) * 100, 2)
 
     return {
@@ -333,6 +382,9 @@ def calc_shrinkage(engine, store_id: int, days: int = 30, ml_anomaly_fn=None) ->
             scores = ml_anomaly_fn(
                 [int(r["product_id"]) for r in rows],
                 [int(r.get("shrinkage_units") or 0) for r in rows],
+                opening_stocks=[int(r.get("opening_stock") or 0) for r in rows],
+                purchased_list=[int(r.get("purchased") or 0) for r in rows],
+                sold_list=[int(r.get("sold") or 0) for r in rows],
             )
         except Exception:
             pass
@@ -664,7 +716,7 @@ def calc_dead_stock(engine, store_id: int, days: int = 30) -> dict:
             }
             for r in rows[:30]
         ],
-        "trend": _trend(100 - dead_pct, None, higher_is_better=False),
+        "trend": _trend(float(dead_count), None, higher_is_better=False),
     }
 
 
@@ -705,6 +757,32 @@ def calc_stockout_lost_sales(engine, store_id: int, days: int = 30) -> dict:
     direct = float(r.get("direct_lost_revenue") or 0)
     proxy = float(r.get("proxy_lost_revenue") or 0)
     estimate = direct if direct > 0 else proxy
+    method = "direct (lost_sales col)" if direct > 0 else "olap-proxy (zero-stock days × avg sales)"
+    skus_impacted = int(r.get("skus_impacted") or 0)
+
+    if estimate == 0:
+        # OLAP has no data for this store — fall back to OLTP
+        oltp_r = _row(engine, """
+        WITH oos AS (
+            SELECT product_id FROM kirana_oltp.inventory WHERE store_id = :sid AND quantity = 0
+        ),
+        hist AS (
+            SELECT oi.product_id,
+                   AVG(oi.unit_price)                          AS avg_price,
+                   SUM(oi.quantity)::float / GREATEST(:days,1) AS avg_units_per_day
+            FROM kirana_oltp.order_item oi
+            JOIN kirana_oltp.orders o ON oi.order_id = o.order_id
+            WHERE o.store_id = :sid AND o.order_status = 'completed'
+              AND o.order_date BETWEEN :p_from AND :p_to
+            GROUP BY oi.product_id
+        )
+        SELECT COUNT(DISTINCT oos.product_id)                            AS skus_impacted,
+               COALESCE(SUM(h.avg_units_per_day * h.avg_price * :days), 0) AS oltp_proxy
+        FROM oos LEFT JOIN hist h USING (product_id)
+        """, {"sid": store_id, "p_from": p_from, "p_to": p_to, "days": days})
+        estimate = float(oltp_r.get("oltp_proxy") or 0)
+        skus_impacted = int(oltp_r.get("skus_impacted") or 0)
+        method = "oltp-proxy (oos-products × avg daily revenue)"
 
     prev = _row(engine, sql, {"sid": store_id, "p_from": pp_from, "p_to": pp_to})
     prev_dir = float(prev.get("direct_lost_revenue") or 0)
@@ -717,11 +795,9 @@ def calc_stockout_lost_sales(engine, store_id: int, days: int = 30) -> dict:
         "proxy_lost_revenue": round(proxy, 2),
         "lost_units": int(r.get("lost_units_total") or 0),
         "zero_stock_days": int(r.get("zero_stock_day_total") or 0),
-        "skus_impacted": int(r.get("skus_impacted") or 0),
+        "skus_impacted": skus_impacted,
         "skus_observed": int(r.get("skus_seen") or 0),
-        "method": "direct (lost_sales col)"
-        if direct > 0
-        else "proxy (zero-stock days × avg sales)",
+        "method": method,
         "trend": _trend(estimate, prev_est, higher_is_better=False),
     }
 

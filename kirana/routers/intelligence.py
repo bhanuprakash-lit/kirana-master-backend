@@ -14,11 +14,7 @@ logger = logging.getLogger(__name__)
 # <repo-root>/logs/master.log). In the container the repo root IS /app, so this
 # still resolves to /app/logs/master.log; locally it resolves to the real path
 # instead of the hardcoded container path. LOG_FILE env still overrides.
-import os as _os_mod
-_DEFAULT_LOG_FILE = _os_mod.path.join(
-    _os_mod.path.dirname(_os_mod.path.dirname(_os_mod.path.dirname(_os_mod.path.abspath(__file__)))),
-    "logs", "master.log",
-)
+from log_config import log_memory as _log_memory
 
 if TYPE_CHECKING:
     from kirana.intelligence.engine import IntelligenceEngine
@@ -198,50 +194,15 @@ async def admin_logs(
     level: str = "",
     user: dict = Depends(_auth),
 ):
-    """Stream last N lines from the server log file. Admin only."""
+    """Return last N lines from the in-process log buffer. Admin only."""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
-
-    import os as _os
-
-    log_path = _os.environ.get("LOG_FILE", _DEFAULT_LOG_FILE)
-
-    if not _os.path.exists(log_path):
-        return {
-            "lines": [],
-            "total": 0,
-            "log_path": log_path,
-            "error": "Log file not found",
-        }
-
     lines = max(1, min(lines, 2000))
-    level_filter = level.upper() if level else ""
-
-    try:
-        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-            all_lines = fh.readlines()
-
-        tail = all_lines[-lines * 3 if level_filter else -lines :]
-
-        parsed = []
-        for raw in tail:
-            raw = raw.rstrip("\n")
-            if not raw:
-                continue
-            lvl = "INFO"
-            for candidate in ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"):
-                if candidate in raw:
-                    lvl = candidate
-                    break
-            if level_filter and lvl != level_filter:
-                continue
-            parsed.append({"raw": raw, "level": lvl})
-
-        result = parsed[-lines:]
-        return {"lines": result, "total": len(result), "log_path": log_path}
-    except Exception as exc:
-        logger.exception("Failed to read log file %s", log_path)
-        raise HTTPException(status_code=500, detail=f"Could not read logs: {exc}")
+    result = _log_memory.tail(lines, level)
+    # NOTE: this buffer is per-process. With uvicorn workers>1 or multiple Azure
+    # replicas it only reflects the worker that served this request — Azure Log
+    # Analytics (stdout JSON) is the complete, cross-replica system of record.
+    return {"lines": result, "total": len(result), "source": "this_worker_only"}
 
 
 @router.get("/admin/logs/stream")
@@ -250,63 +211,38 @@ async def stream_logs(
     tail: int = 100,
     user: dict = Depends(_auth),
 ):
-    """SSE live tail of the server log file. Sends last `tail` lines on connect, then streams new lines."""
+    """SSE live tail from the in-process log buffer. Admin only."""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    import os as _os
     import asyncio
     import json as _json
 
-    log_path = _os.environ.get("LOG_FILE", _DEFAULT_LOG_FILE)
     tail = max(10, min(tail, 500))
 
-    def _level(line: str) -> str:
-        for lvl in ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"):
-            if f"[{lvl}]" in line:
-                return lvl
-        return "INFO"
-
     async def _gen():
-        # Always emit the {raw, level} shape the client renders; a bare {error}
-        # object has no `raw` and crashes the log row (e.g. when LOG_FILE is unset
-        # locally and points at a path that doesn't exist).
-        if not _os.path.exists(log_path):
-            yield f"data: {_json.dumps({'raw': f'Log file not found: {log_path}', 'level': 'ERROR'})}\n\n"
-            return
-        try:
-            with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = fh.readlines()
-                end_pos = fh.tell()
-        except OSError as exc:
-            yield f"data: {_json.dumps({'raw': f'Could not read log file: {exc}', 'level': 'ERROR'})}\n\n"
-            return
+        # Seed with the buffer tail and capture the cursor atomically so we
+        # stream from exactly where the seed ended (no gaps, no duplicates).
+        seed, cursor = _log_memory.seed(tail)
+        for entry in seed:
+            yield f"data: {_json.dumps(entry)}\n\n"
 
-        for line in lines[-tail:]:
-            line = line.rstrip()
-            if line:
-                yield f"data: {_json.dumps({'raw': line, 'level': _level(line)})}\n\n"
-
-        ka = 0
         try:
-            with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-                fh.seek(end_pos)
-                while True:
-                    if await request.is_disconnected():
-                        break
-                    chunk = fh.read()
-                    if chunk:
+            ka = 0
+            while True:
+                if await request.is_disconnected():
+                    break
+                new, cursor = _log_memory.read_since(cursor)
+                if new:
+                    ka = 0
+                    for entry in new:
+                        yield f"data: {_json.dumps(entry)}\n\n"
+                else:
+                    ka += 1
+                    if ka >= 10:     # keepalive every ~10 s at 1 s poll
+                        yield ": ka\n\n"
                         ka = 0
-                        for line in chunk.splitlines():
-                            line = line.strip()
-                            if line:
-                                yield f"data: {_json.dumps({'raw': line, 'level': _level(line)})}\n\n"
-                    else:
-                        ka += 1
-                        if ka >= 5:
-                            yield ": ka\n\n"
-                            ka = 0
-                    await asyncio.sleep(1)
+                await asyncio.sleep(1)
         except (asyncio.CancelledError, GeneratorExit):
             pass
 

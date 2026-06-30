@@ -380,6 +380,45 @@ class BaseRepositoryMixin:
                 )
             )
 
+            # ── Segment-wise subscription pricing ─────────────────────────────
+            # Pricing varies per store_type (the granular 16-value dropdown from
+            # onboarding — distinct from vertical_code above, which only drives
+            # features/units/tax). '__default__' is the fallback row used for any
+            # store_type with no dedicated price (e.g. fruits_vegetables, other).
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.segment_pricing (
+                    store_type   TEXT PRIMARY KEY,
+                    basic_price  NUMERIC(10,2) NOT NULL,
+                    pro_price    NUMERIC(10,2) NOT NULL,
+                    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            # Seed once — DO NOTHING so a price edited later (SQL/admin) is never
+            # silently reverted on the next boot.
+            conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.segment_pricing (store_type, basic_price, pro_price) VALUES
+                    ('kirana',           200, 500),
+                    ('supermarket',      1300, 1700),
+                    ('mini_supermarket', 600, 1000),
+                    ('mono_brand',       600, 1000),
+                    ('apparel',          500, 900),
+                    ('boutique',         400, 800),
+                    ('salon',            400, 600),
+                    ('fancy_gift',       300, 500),
+                    ('sports_fitness',   500, 900),
+                    ('electronics',      700, 1100),
+                    ('footwear',         400, 600),
+                    ('optical',          400, 800),
+                    ('bakery',           300, 500),
+                    ('stationery',       200, 400),
+                    ('__default__',      200, 500)
+                ON CONFLICT (store_type) DO NOTHING
+            """)
+            )
+
             # ── Vertical-scoped categories ────────────────────────────────────
             # Each category belongs to a vertical so a mobile store doesn't see
             # grocery categories (and vice-versa). NULL = shared/all verticals.

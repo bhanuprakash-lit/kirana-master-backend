@@ -112,10 +112,19 @@ class KPIMLModels:
 
     # ── Shrinkage Anomaly ─────────────────────────────────────────────────────
 
-    def score_shrinkage(self, product_ids: list[int], shrinkage_units: list[int]) -> dict[int, float]:
+    def score_shrinkage(
+        self,
+        product_ids: list[int],
+        shrinkage_units: list[int],
+        opening_stocks: list[int] | None = None,
+        purchased_list: list[int] | None = None,
+        sold_list: list[int] | None = None,
+    ) -> dict[int, float]:
         """
         Returns anomaly score (0-1) per product_id.
         Higher = more anomalous.
+        Pass opening_stocks, purchased_list, sold_list for accurate feature vectors;
+        omit them and sensible defaults are estimated from shrinkage_units alone.
         """
         self._ensure()
         if not self._shrinkage or not product_ids:
@@ -124,13 +133,19 @@ class KPIMLModels:
         scaler = self._shrinkage["scaler"]
         iso    = self._shrinkage["model"]
 
-        # Build feature vectors with available data
-        # shrinkage, shrinkage_rate, opening_pct, purchased_ratio, purchased, sold
         rows = []
-        for pid, su in zip(product_ids, shrinkage_units):
-            rows.append({"shrinkage": su, "shrinkage_rate": su / max(1, 10),
-                         "opening_pct": su / max(1, 30), "purchased_ratio": 0.5,
-                         "purchased": 5, "sold": 20})
+        for i, (pid, su) in enumerate(zip(product_ids, shrinkage_units)):
+            opening   = int(opening_stocks[i])   if opening_stocks   else max(su * 5, 30)
+            purchased = int(purchased_list[i])    if purchased_list   else 0
+            sold      = int(sold_list[i])         if sold_list        else max(su * 4, 10)
+            rows.append({
+                "shrinkage":        su,
+                "shrinkage_rate":   su / max(sold + 1, 1),
+                "opening_pct":      su / max(opening, 1),
+                "purchased_ratio":  purchased / max(sold + 1, 1),
+                "purchased":        purchased,
+                "sold":             sold,
+            })
         X = pd.DataFrame([[r.get(f, 0) for f in feats] for r in rows],
                          columns=feats).astype(np.float32)
         Xs = scaler.transform(X)
@@ -162,6 +177,13 @@ class KPIMLModels:
         Xs = scaler.transform(X)
         preds = model.predict(Xs)
         return [round(float(np.clip(p, 0, 1)), 4) for p in preds]
+
+
+    def reload(self) -> None:
+        """Force-reload all artifacts from disk. Call after retraining."""
+        self._loaded = False
+        self._churn = self._bcg = self._trial = self._shrinkage = self._supplier = None
+        logger.info("KPIMLModels: artifact cache cleared — will reload on next request")
 
 
 # Singleton

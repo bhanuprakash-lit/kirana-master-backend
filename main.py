@@ -8,7 +8,9 @@ Run:
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import os
+import re
 import sys
 import time
 import uuid
@@ -27,17 +29,46 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from config import get_settings
+from log_config import JsonFormatter, log_memory, request_id_var
 
-os.makedirs(os.path.join(_ROOT, "logs"), exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(os.path.join(_ROOT, "logs", "master.log"), encoding="utf-8"),
-    ],
-)
+# ── Logging bootstrap ──────────────────────────────────────────────────────────
+_ENV = os.getenv("ENVIRONMENT", "production").lower()  # set ENVIRONMENT=local for dev
+
+_json_handler = logging.StreamHandler(sys.stdout)
+_json_handler.setFormatter(JsonFormatter())
+_handlers: list[logging.Handler] = [_json_handler, log_memory]
+
+# Local dev only: rotating plain-text file for grep comfort.
+# Never used in Azure — containers have ephemeral disks; stdout is captured.
+if _ENV in ("local", "development", "dev"):
+    os.makedirs(os.path.join(_ROOT, "logs"), exist_ok=True)
+    _fh = logging.handlers.RotatingFileHandler(
+        os.path.join(_ROOT, "logs", "master.log"),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=7,
+        encoding="utf-8",
+    )
+    _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s"))
+    _handlers.append(_fh)
+
+logging.basicConfig(level=logging.INFO, handlers=_handlers, force=True)
+
+# Silence high-volume noise with no analytical value.
+for _noisy in (
+    "apscheduler.executors.default",
+    "apscheduler.scheduler",
+    "urllib3", "httpx", "httpcore",
+    "azure.core", "azure.identity",
+    "multipart",
+):
+    logging.getLogger(_noisy).setLevel(logging.ERROR)
+
 logger = logging.getLogger("master")
+
+# Accept a client-supplied correlation ID only if it's a sane token — otherwise
+# generate our own. Prevents log/memory bloat and reflected-value abuse from a
+# malicious or buggy client (the ID is logged on every line and echoed back).
+_CID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -158,13 +189,34 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def log_requests(request: Request, call_next):
-        rid   = uuid.uuid4().hex[:8]
-        start = time.time()
+    async def request_middleware(request: Request, call_next):
+        # Honour a correlation ID from the client (Flutter, WhatsApp webhook,
+        # admin panel) so the full call chain shares one traceable ID — but only
+        # if it passes validation. Fall back to a generated ID otherwise.
+        incoming = request.headers.get("X-Correlation-ID", "")
+        rid   = incoming if _CID_RE.match(incoming) else uuid.uuid4().hex[:12]
+        token = request_id_var.set(rid)
         request.state.request_id = rid
-        response = await call_next(request)
-        ms = int((time.time() - start) * 1000)
-        logger.info("[%s] %s %s → %d  (%dms)", rid, request.method, request.url.path, response.status_code, ms)
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_var.reset(token)
+        ms = round((time.perf_counter() - start) * 1000)
+        # Echo the ID back so clients can correlate their own logs with ours
+        response.headers["X-Correlation-ID"] = rid
+        # Skip health-check noise — /health is polled by Azure every few seconds
+        if request.url.path not in ("/health", "/kirana/health"):
+            logger.info(
+                "%s %s → %d (%dms)",
+                request.method, request.url.path, response.status_code, ms,
+                extra={
+                    "http_method": request.method,
+                    "http_path":   request.url.path,
+                    "http_status": response.status_code,
+                    "duration_ms": ms,
+                },
+            )
         return response
 
     # Error responses are produced by Starlette's outermost handler, OUTSIDE the
@@ -202,9 +254,10 @@ def create_app() -> FastAPI:
     from pos.routes      import router as pos_router
     from oltp.routes     import router as oltp_router
     from whatsapp.routes import router as wa_router
-    from kpis.routes     import router as kpi_router
-    from ai.routes       import router as ai_router
-    from vision.routes   import router as vision_router
+    from kpis.routes                  import router as kpi_router
+    from ai.routes                    import router as ai_router
+    from vision.routes                import router as vision_router
+    from kirana.forecasting.routes    import router as forecast_router
 
     app.include_router(kirana_router)
     app.include_router(pos_router)
@@ -213,6 +266,7 @@ def create_app() -> FastAPI:
     app.include_router(kpi_router)
     app.include_router(ai_router)
     app.include_router(vision_router)
+    app.include_router(forecast_router)
 
     # ── Root ──────────────────────────────────────────────────────────────────
     @app.get("/", tags=["Root"], include_in_schema=False)
@@ -263,4 +317,8 @@ if __name__ == "__main__":
         reload=s.debug,
         workers=1 if s.debug else 2,
         log_level="info",
+        # Our middleware already logs method/path/status/duration as JSON with a
+        # correlation ID — uvicorn's plain access log would duplicate that and
+        # break the single-format stdout that Azure Log Analytics parses.
+        access_log=False,
     )

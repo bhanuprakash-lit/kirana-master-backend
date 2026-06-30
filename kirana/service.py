@@ -740,6 +740,14 @@ class KiranaService:
         from kirana.repositories.main import KiranaRepository
         return KiranaRepository(self._db).extend_trial(store_id, days)
 
+    def get_admin_setting(self, key: str, default: str = "") -> str:
+        from kirana.repositories.main import KiranaRepository
+        return KiranaRepository(self._db).get_admin_setting(key, default)
+
+    def set_admin_setting(self, key: str, value: str) -> None:
+        from kirana.repositories.main import KiranaRepository
+        KiranaRepository(self._db).set_admin_setting(key, value)
+
     def cancel_subscription(self, store_id: int) -> dict:
         # from kirana.repository import KiranaRepository
         from kirana.repositories.main import KiranaRepository

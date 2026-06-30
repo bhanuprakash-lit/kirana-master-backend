@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -26,6 +28,27 @@ from kirana.intelligence import triggers as T
 
 logger = logging.getLogger("kirana.intelligence.engine")
 
+_IST_TZ = ZoneInfo("Asia/Kolkata")
+
+
+def _in_quiet_hours(start_h: int, end_h: int) -> bool:
+    """True if the current IST hour falls inside [start_h, end_h).
+    Handles overnight windows, e.g. start=22 end=7 covers 22:00–06:59."""
+    now_h = datetime.now(_IST_TZ).hour
+    if start_h >= end_h:          # overnight window (e.g. 22 → 7)
+        return now_h >= start_h or now_h < end_h
+    return start_h <= now_h < end_h
+
+
+def _in_activity_window(target_hour: int, window_minutes: int = 59) -> bool:
+    """True if the current IST hour equals `target_hour` (within the hour).
+    Jobs fire hourly at :00; a full-hour window means a job that was delayed by
+    misfire recovery still counts, while daily dedupe prevents any double-send."""
+    now = datetime.now(_IST_TZ)
+    start = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+    elapsed = (now - start).total_seconds()
+    return 0 <= elapsed < window_minutes * 60
+
 _IST = "Asia/Kolkata"
 
 # Postgres advisory-lock keys: the scheduler runs in EVERY replica (Azure
@@ -33,12 +56,18 @@ _IST = "Asia/Kolkata"
 # themselves — only the replica that wins the lock actually runs them.
 _SNAPSHOT_LOCK_KEY = 994201
 _ML_RETRAIN_LOCK_KEY = 994202
+_KPI_RETRAIN_LOCK_KEY = 994203
 
 
 class IntelligenceEngine:
     def __init__(self, engine, kirana_svc=None):
         self._db = engine
         self._kirana_svc = kirana_svc
+        # Per-store open/close hours change at most once a day, but the percentile
+        # query over 30 days of orders is expensive. Compute it once per IST day
+        # and reuse across all dispatch cycles. {store_id: (open_h, close_h)}
+        self._activity_cache: dict[int, tuple[int, int]] = {}
+        self._activity_cache_day: date | None = None
         self._scheduler = AsyncIOScheduler(timezone=_IST)
         self._setup_jobs()
 
@@ -59,20 +88,29 @@ class IntelligenceEngine:
     def _setup_jobs(self) -> None:
         s = self._scheduler
 
+        # Personalised notifications fire at each store's derived open/close hour.
+        # Targets are always whole hours, so an hourly wall-clock-aligned cron
+        # (minute=0) is enough — each handler checks if THIS hour is the store's
+        # target. CronTrigger(minute=0) is phase-locked to :00 (unlike
+        # IntervalTrigger, which drifts from scheduler-start time); a generous
+        # misfire grace lets a job still run if the loop was briefly busy.
+        _hourly = dict(trigger=CronTrigger(minute=0, timezone=_IST),
+                       misfire_grace_time=1800, coalesce=True, replace_existing=True)
+
         # Daily greetings & summaries
-        s.add_job(self._run_morning_greeting,  CronTrigger(hour=8,  minute=0,  timezone=_IST), id="morning_greeting",  replace_existing=True)
-        s.add_job(self._run_evening_summary,   CronTrigger(hour=21, minute=0,  timezone=_IST), id="evening_summary",   replace_existing=True)
+        s.add_job(self._run_morning_greeting, id="morning_greeting", **_hourly)
+        s.add_job(self._run_evening_summary,  id="evening_summary",  **_hourly)
 
-        # Daily operational alerts (staggered to avoid bursts)
-        s.add_job(self._run_distributor_due,   CronTrigger(hour=9,  minute=0,  timezone=_IST), id="distributor_due",   replace_existing=True)
-        s.add_job(self._run_expiry_alert,      CronTrigger(hour=9,  minute=15, timezone=_IST), id="expiry_alert",      replace_existing=True)
-        s.add_job(self._run_low_stock_alert,   CronTrigger(hour=9,  minute=30, timezone=_IST), id="low_stock_alert",   replace_existing=True)
-        s.add_job(self._run_overdue_udhaar,    CronTrigger(hour=10, minute=0,  timezone=_IST), id="overdue_udhaar",    replace_existing=True)
+        # Daily operational alerts — staggered hours after each store's open time.
+        s.add_job(self._run_distributor_due,  id="distributor_due",  **_hourly)
+        s.add_job(self._run_expiry_alert,     id="expiry_alert",     **_hourly)
+        s.add_job(self._run_low_stock_alert,  id="low_stock_alert",  **_hourly)
+        s.add_job(self._run_overdue_udhaar,   id="overdue_udhaar",   **_hourly)
 
-        # Weekly jobs
-        s.add_job(self._run_weekly_report,       CronTrigger(day_of_week="mon", hour=9,  minute=0,  timezone=_IST), id="weekly_report",       replace_existing=True)
-        s.add_job(self._run_inactive_customer,   CronTrigger(day_of_week="wed", hour=10, minute=0,  timezone=_IST), id="inactive_customer",   replace_existing=True)
-        s.add_job(self._run_feature_discovery,   CronTrigger(day_of_week="fri", hour=11, minute=0,  timezone=_IST), id="feature_discovery",   replace_existing=True)
+        # Weekly jobs — handlers additionally gate on the day of week.
+        s.add_job(self._run_weekly_report,     id="weekly_report",     **_hourly)
+        s.add_job(self._run_inactive_customer, id="inactive_customer", **_hourly)
+        s.add_job(self._run_feature_discovery, id="feature_discovery", **_hourly)
 
         # Abandoned cart — checked every 5 minutes
         s.add_job(self._run_abandoned_cart, IntervalTrigger(minutes=5), id="abandoned_cart", replace_existing=True)
@@ -84,6 +122,10 @@ class IntelligenceEngine:
         # Scheduled 1 hour after snapshot_refresh so fresh inventory is in DB first.
         s.add_job(self._run_ml_retrain, CronTrigger(hour=3, minute=0, timezone=_IST), id="ml_retrain", replace_existing=True)
 
+        # Weekly KPI model retrain (Sunday 4am IST) — churn/BCG/trial/shrinkage/supplier models.
+        # These are slower-changing customer/category signals; weekly is sufficient.
+        s.add_job(self._run_kpi_retrain, CronTrigger(day_of_week="sun", hour=4, minute=0, timezone=_IST), id="kpi_retrain", replace_existing=True)
+
         # ML prediction refresh every 6 hours — safety net reload of CSVs
         s.add_job(self._run_ml_refresh, IntervalTrigger(hours=6), id="ml_refresh", replace_existing=True)
 
@@ -93,6 +135,19 @@ class IntelligenceEngine:
 
     def _repo(self) -> IntelligenceRepository:
         return IntelligenceRepository(self._db)
+
+    def _activity_hours(self, repo: IntelligenceRepository) -> dict[int, tuple[int, int]]:
+        """Per-store (open_hour, close_hour), computed once per IST day and cached.
+        The underlying percentile query scans 30 days of orders, so we must not
+        re-run it on every hourly dispatch."""
+        today = datetime.now(_IST_TZ).date()
+        if self._activity_cache_day != today:
+            try:
+                self._activity_cache = repo.get_store_activity_hours()
+                self._activity_cache_day = today
+            except Exception:
+                logger.exception("activity-hours refresh failed — using stale/empty cache")
+        return self._activity_cache
 
     def _try_lock(self, key: int):
         """Acquire a session-level advisory lock. Returns the held connection
@@ -121,10 +176,13 @@ class IntelligenceEngine:
         trigger_fn,
         dedupe: str = "daily",     # "daily" | "weekly" | "none"
         *,
+        hour_offset: int = 0,      # hours after store open (0=open, 1=open+1h, etc.)
+        use_close: bool = False,   # anchor to close_hour instead of open_hour
         extra_kwargs: dict | None = None,
     ) -> None:
         repo = self._repo()
         stores = repo.get_active_stores()
+        activity = self._activity_hours(repo)
         sent = failed = skipped = 0
 
         for store in stores:
@@ -133,6 +191,25 @@ class IntelligenceEngine:
             token    = store["fcm_token"]
 
             try:
+                # Activity-window guard: only fire when the current IST hour is
+                # this store's personalised target (derived open/close ± offset).
+                open_h, close_h = activity.get(store_id, (8, 21))
+                base_hour = close_h if use_close else open_h
+                target_h  = min(max(base_hour + hour_offset, 0), 23)
+                if not _in_activity_window(target_h):
+                    skipped += 1
+                    continue
+
+                # Quiet hours guard. Default window is a narrow 23:00–05:00 so it
+                # only catches genuine middle-of-night sends — a wider default
+                # (e.g. 22–07) would collide with real shop hours (6 AM opens,
+                # 22:00 closes) and silently suppress personalised notifications.
+                q_start = int(store.get("quiet_hours_start") or 23)
+                q_end   = int(store.get("quiet_hours_end")   or 5)
+                if _in_quiet_hours(q_start, q_end):
+                    skipped += 1
+                    continue
+
                 # Deduplication
                 if dedupe == "daily" and repo.was_sent_today(store_id, trigger_name):
                     skipped += 1
@@ -190,31 +267,43 @@ class IntelligenceEngine:
     # ── Individual job handlers ───────────────────────────────────────────────
 
     async def _run_morning_greeting(self) -> None:
-        await self._dispatch("morning_greeting", T.morning_greeting, dedupe="daily")
+        # Fires at each store's typical open hour (open + 0h)
+        await self._dispatch("morning_greeting", T.morning_greeting, dedupe="daily", hour_offset=0)
 
     async def _run_evening_summary(self) -> None:
-        await self._dispatch("evening_summary", T.evening_summary, dedupe="daily")
-
-    async def _run_weekly_report(self) -> None:
-        await self._dispatch("weekly_report", T.weekly_report, dedupe="weekly")
-
-    async def _run_overdue_udhaar(self) -> None:
-        await self._dispatch("overdue_udhaar", T.overdue_udhaar, dedupe="daily")
+        # Fires at each store's typical close hour
+        await self._dispatch("evening_summary", T.evening_summary, dedupe="daily", use_close=True)
 
     async def _run_distributor_due(self) -> None:
-        await self._dispatch("distributor_due", T.distributor_due, dedupe="daily")
-
-    async def _run_low_stock_alert(self) -> None:
-        await self._dispatch("low_stock_alert", T.low_stock_alert, dedupe="daily")
+        # 1h after open — store owner has settled in before stock reminders hit
+        await self._dispatch("distributor_due", T.distributor_due, dedupe="daily", hour_offset=1)
 
     async def _run_expiry_alert(self) -> None:
-        await self._dispatch("expiry_alert", T.expiry_alert, dedupe="daily")
+        # 1h after open, same cluster as distributor
+        await self._dispatch("expiry_alert", T.expiry_alert, dedupe="daily", hour_offset=1)
+
+    async def _run_low_stock_alert(self) -> None:
+        # 2h after open — actionable once the day is underway
+        await self._dispatch("low_stock_alert", T.low_stock_alert, dedupe="daily", hour_offset=2)
+
+    async def _run_overdue_udhaar(self) -> None:
+        # 2h after open — mid-morning udhaar reminder
+        await self._dispatch("overdue_udhaar", T.overdue_udhaar, dedupe="daily", hour_offset=2)
+
+    async def _run_weekly_report(self) -> None:
+        if datetime.now(_IST_TZ).weekday() != 0:   # 0 = Monday
+            return
+        await self._dispatch("weekly_report", T.weekly_report, dedupe="weekly", hour_offset=1)
 
     async def _run_inactive_customer(self) -> None:
-        await self._dispatch("inactive_customer", T.inactive_customer, dedupe="weekly")
+        if datetime.now(_IST_TZ).weekday() != 2:   # 2 = Wednesday
+            return
+        await self._dispatch("inactive_customer", T.inactive_customer, dedupe="weekly", hour_offset=2)
 
     async def _run_feature_discovery(self) -> None:
-        await self._dispatch("feature_discovery", T.feature_discovery, dedupe="weekly")
+        if datetime.now(_IST_TZ).weekday() != 4:   # 4 = Friday
+            return
+        await self._dispatch("feature_discovery", T.feature_discovery, dedupe="weekly", hour_offset=2)
 
     async def _run_abandoned_cart(self) -> None:
         """Special case: uses cart_session table, not the generic store loop."""
@@ -228,6 +317,13 @@ class IntelligenceEngine:
             token      = session["fcm_token"]
             item_count = session["item_count"]
             cart_data  = session.get("cart_data") or []
+
+            # Respect per-store quiet hours (default 22:00–07:00 IST)
+            q_start = int(session.get("quiet_hours_start") or 22)
+            q_end   = int(session.get("quiet_hours_end")   or 7)
+            if _in_quiet_hours(q_start, q_end):
+                skipped += 1
+                continue
 
             if isinstance(cart_data, str):
                 try:
@@ -275,7 +371,7 @@ class IntelligenceEngine:
 
     async def _run_snapshot_refresh(self) -> None:
         """Write daily inventory snapshots from live orders + inventory tables."""
-        from datetime import date
+        from datetime import date, timedelta
         # from kirana.repository import KiranaRepository
         from kirana.repositories.main import KiranaRepository
 
@@ -285,7 +381,8 @@ class IntelligenceEngine:
             logger.info("Snapshot refresh: another replica holds the lock — skipping here")
             return
 
-        today = date.today().isoformat()
+        # Runs at 2AM IST — write yesterday's snapshot (yesterday is a complete day).
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
         repo  = KiranaRepository(self._db)
         total = 0
 
@@ -319,7 +416,7 @@ class IntelligenceEngine:
                                 ON pr2.product_id = i.product_id AND pr2.store_id = i.store_id
                             WHERE oi.product_id = i.product_id
                               AND o.store_id = i.store_id
-                              AND o.order_date >= NOW() - INTERVAL '30 days'
+                              AND o.order_date::date = :snap_date
                         ) s30 ON TRUE
                         LEFT JOIN LATERAL (
                             SELECT price FROM kirana_oltp.pricing pr
@@ -327,11 +424,11 @@ class IntelligenceEngine:
                             ORDER BY pr.valid_from DESC LIMIT 1
                         ) pr ON TRUE
                         WHERE i.store_id = :sid
-                    """), {"sid": sid}).mappings().all()
+                    """), {"sid": sid, "snap_date": yesterday}).mappings().all()
 
                 items = [dict(r) for r in rows]
                 if items:
-                    n = repo.upsert_inventory_snapshot(int(sid), today, items)
+                    n = repo.upsert_inventory_snapshot(int(sid), yesterday, items)
                     total += n
 
             logger.info("Snapshot refresh: wrote %d rows across %d stores", total, len(store_ids))
@@ -399,6 +496,58 @@ class IntelligenceEngine:
         finally:
             self._release_lock(lock_conn, _ML_RETRAIN_LOCK_KEY)
 
+    # ── KPI model retraining (weekly) ────────────────────────────────────────
+
+    async def _run_kpi_retrain(self) -> None:
+        """
+        Retrain the 5 KPI ML models (churn, BCG, trial, shrinkage, supplier).
+        Runs train_kpi_models.py as a subprocess. Scheduled weekly on Sundays
+        at 4am IST. KPI models are customer/category-level signals that change
+        more slowly than inventory, so weekly retraining is sufficient.
+        """
+        import asyncio
+        import sys
+        import os
+
+        lock_conn = self._try_lock(_KPI_RETRAIN_LOCK_KEY)
+        if lock_conn is None:
+            logger.info("KPI retrain: another replica holds the lock — skipping here")
+            return
+
+        try:
+            kpi_script = os.path.normpath(
+                os.path.join(os.path.dirname(__file__), "..", "..",
+                             "ml_models", "kpi_models", "train_kpi_models.py")
+            )
+            if not os.path.isfile(kpi_script):
+                logger.error("KPI retrain: train_kpi_models.py not found at %s", kpi_script)
+                return
+
+            logger.info("KPI retrain: starting %s", kpi_script)
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, kpi_script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=os.path.dirname(kpi_script),
+            )
+            stdout, _ = await proc.communicate()
+            if stdout:
+                logger.info("KPI retrain output (tail):\n%s",
+                            stdout.decode(errors="replace")[-2000:])
+
+            if proc.returncode != 0:
+                logger.error("KPI retrain failed with exit code %d", proc.returncode)
+                return
+
+            logger.info("KPI retrain completed — reloading KPI model artifacts")
+            from kpis.ml_inference import get_kpi_models
+            get_kpi_models().reload()
+
+        except Exception:
+            logger.exception("KPI retrain failed unexpectedly")
+        finally:
+            self._release_lock(lock_conn, _KPI_RETRAIN_LOCK_KEY)
+
     # ── ML prediction refresh ─────────────────────────────────────────────────
 
     async def _run_ml_refresh(self) -> None:
@@ -429,6 +578,7 @@ class IntelligenceEngine:
             "abandoned_cart":    self._run_abandoned_cart,
             "snapshot_refresh":  self._run_snapshot_refresh,
             "ml_retrain":        self._run_ml_retrain,
+            "kpi_retrain":       self._run_kpi_retrain,
             "ml_refresh":        self._run_ml_refresh,
         }
 

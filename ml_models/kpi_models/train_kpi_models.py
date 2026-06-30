@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import sys
 import logging
+from urllib.parse import urlparse, parse_qs, unquote
 
 import joblib
 import numpy as np
@@ -32,8 +33,37 @@ from sklearn.metrics import classification_report, roc_auc_score, mean_absolute_
 import xgboost as xgb
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DB = dict(host="localhost", dbname="lit_db", user="postgres", password="123456")
-ARTIFACTS = os.path.join(os.path.dirname(__file__), "artifacts")
+def _db_config_from_url(url: str) -> dict:
+    dsn = url
+    for prefix in ("postgresql+psycopg2://", "postgres+psycopg2://",
+                   "postgresql+asyncpg://", "postgres://"):
+        if dsn.startswith(prefix):
+            dsn = "postgresql://" + dsn[len(prefix):]
+            break
+    u = urlparse(dsn)
+    q = parse_qs(u.query)
+    cfg = {
+        "host": u.hostname or "localhost",
+        "dbname": (u.path or "").lstrip("/") or "lit_db",
+        "user": unquote(u.username) if u.username else "postgres",
+        "password": unquote(u.password) if u.password else "",
+        "port": u.port or 5432,
+    }
+    sslmode = (q.get("sslmode") or [None])[0] or os.getenv("PGSSLMODE")
+    if not sslmode and "azure" in (u.hostname or "").lower():
+        sslmode = "require"
+    if sslmode:
+        cfg["sslmode"] = sslmode
+    return cfg
+
+_db_url = os.getenv("DATABASE_URL")
+DB = _db_config_from_url(_db_url) if _db_url else dict(
+    host="localhost", dbname="lit_db", user="postgres", password="123456"
+)
+ARTIFACTS = os.getenv(
+    "ML_KPI_ARTIFACTS_DIR",
+    os.path.join(os.path.dirname(__file__), "artifacts")
+)
 os.makedirs(ARTIFACTS, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -269,19 +299,22 @@ def train_new_product_trial():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def train_shrinkage_anomaly():
+    from datetime import date, timedelta
     log.info("\n[4/5] Training Shrinkage Anomaly Detector")
+    opening_date = (date.today() - timedelta(days=30)).isoformat()
+    closing_date = (date.today() - timedelta(days=1)).isoformat()
 
-    df = _q("""
+    df = _q(f"""
     WITH opening AS (
         SELECT DISTINCT ON (store_id, product_id) store_id, product_id, stock_on_hand
         FROM kirana_oltp.inventory_snapshots
-        WHERE snapshot_date >= '2026-04-01'
+        WHERE snapshot_date >= '{opening_date}'
         ORDER BY store_id, product_id, snapshot_date ASC
     ),
     closing AS (
         SELECT DISTINCT ON (store_id, product_id) store_id, product_id, stock_on_hand
         FROM kirana_oltp.inventory_snapshots
-        WHERE snapshot_date <= '2026-04-23'
+        WHERE snapshot_date <= '{closing_date}'
         ORDER BY store_id, product_id, snapshot_date DESC
     ),
     moves AS (
@@ -289,7 +322,7 @@ def train_shrinkage_anomaly():
                SUM(CASE WHEN reason='purchase' THEN change_quantity ELSE 0 END) AS purchased,
                SUM(CASE WHEN reason='sale' THEN ABS(change_quantity) ELSE 0 END) AS sold
         FROM kirana_oltp.inventory_movements
-        WHERE created_at BETWEEN '2026-04-01' AND '2026-04-24'
+        WHERE created_at BETWEEN '{opening_date}' AND '{closing_date}'
         GROUP BY store_id, product_id
     )
     SELECT o.store_id, o.product_id,

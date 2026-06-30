@@ -29,24 +29,59 @@ class IntelligenceRepository:
 
     def get_active_stores(self) -> list[dict]:
         """
-        Returns all stores that have an owner user with an FCM token.
-        Includes stores on trial, basic, or pro — excludes none/expired.
+        Returns all stores that have an owner user with an FCM token, plus the
+        owner's quiet-hours prefs. Per-store open/close hours are fetched
+        separately via get_store_activity_hours() (cached daily) because that
+        query is expensive — this one must stay cheap, it runs on every dispatch.
         """
         sql = """
         SELECT
             s.store_id,
             u.user_id,
             u.fcm_token,
-            s.name AS store_name
+            s.name AS store_name,
+            up.quiet_hours_start,
+            up.quiet_hours_end
         FROM kirana_oltp.store s
         JOIN kirana_oltp.users u
             ON u.store_id = s.store_id AND u.role = 'store_owner'
+        LEFT JOIN kirana_oltp.user_prefs up
+            ON up.user_id = u.user_id
         WHERE u.fcm_token IS NOT NULL AND u.fcm_token != ''
         ORDER BY s.store_id
         """
         with self._conn() as conn:
             rows = conn.execute(text(sql)).mappings().all()
         return [dict(r) for r in rows]
+
+    def get_store_activity_hours(self) -> dict[int, tuple[int, int]]:
+        """Per-store typical (open_hour, close_hour) from 30 days of order history.
+
+        Median of each day's first-order hour and last-order hour, in IST. Only
+        days with ≥3 orders count, to ignore one-off late/early outliers. Stores
+        with no qualifying history are simply absent from the dict — callers fall
+        back to sane defaults (8 / 21). Expensive: call once per day and cache.
+        """
+        sql = """
+        SELECT
+            store_id,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY open_h))::int  AS open_hour,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY close_h))::int AS close_hour
+        FROM (
+            SELECT
+                store_id,
+                EXTRACT(HOUR FROM MIN(order_date) AT TIME ZONE 'Asia/Kolkata') AS open_h,
+                EXTRACT(HOUR FROM MAX(order_date) AT TIME ZONE 'Asia/Kolkata') AS close_h
+            FROM kirana_oltp.orders
+            WHERE order_date >= NOW() - INTERVAL '30 days'
+            GROUP BY store_id, DATE(order_date AT TIME ZONE 'Asia/Kolkata')
+            HAVING COUNT(*) >= 3
+        ) per_day
+        GROUP BY store_id
+        """
+        with self._conn() as conn:
+            rows = conn.execute(text(sql)).mappings().all()
+        return {int(r["store_id"]): (int(r["open_hour"]), int(r["close_hour"])) for r in rows}
 
     def purge_fcm_token(self, token: str) -> None:
         """Delete a stale/unregistered FCM token from all tables so it's never retried."""

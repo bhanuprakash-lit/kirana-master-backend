@@ -8,12 +8,29 @@ export default function Stores() {
   const [stores, setStores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [togglingAuto, setTogglingAuto] = useState(false);
 
   useEffect(() => {
     fetchStores();
+    api.getAdminSettings().then(s => setAutoApprove(s.auto_approve_trial)).catch(() => {});
     const interval = setInterval(() => fetchStores(false), 30000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleToggleAutoApprove = async () => {
+    setTogglingAuto(true);
+    try {
+      const next = !autoApprove;
+      const result = await api.setAdminSettings({ auto_approve_trial: next });
+      setAutoApprove(result.auto_approve_trial);
+      ui.toast(result.auto_approve_trial ? 'Auto-approve ON — new trial requests will be approved instantly' : 'Auto-approve OFF — requests need manual approval', 'success');
+    } catch (e) {
+      ui.toast(`Error: ${e.message}`, 'error');
+    } finally {
+      setTogglingAuto(false);
+    }
+  };
 
   const fetchStores = async (showLoader = true) => {
     if (showLoader) setLoading(true);
@@ -67,7 +84,23 @@ export default function Stores() {
           <h1 className="text-xl font-bold text-slate-900">Stores Management</h1>
           <p className="text-slate-500 text-xs mt-0.5">All stores with their true owner, vertical, and subscription. {stores.length} total.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* Auto-approve trial toggle */}
+          <button
+            onClick={handleToggleAutoApprove}
+            disabled={togglingAuto}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
+              autoApprove
+                ? 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'
+                : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'
+            } disabled:opacity-50`}
+            title={autoApprove ? 'Auto-approve is ON — click to turn off' : 'Auto-approve is OFF — click to turn on'}
+          >
+            <span className={`w-8 h-4 rounded-full relative transition-colors ${autoApprove ? 'bg-green-500' : 'bg-slate-300'}`}>
+              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${autoApprove ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </span>
+            Auto-approve trials
+          </button>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}

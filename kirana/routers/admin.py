@@ -77,7 +77,7 @@ async def ml_retrain(request: Request, user: dict = Depends(_auth)):
     import sys as _sys
     import subprocess as _sp
 
-    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
     script = _os.path.join(root, "ml_models", "train_all.py")
     if not _os.path.exists(script):
         raise HTTPException(status_code=500, detail="train_all.py not found")

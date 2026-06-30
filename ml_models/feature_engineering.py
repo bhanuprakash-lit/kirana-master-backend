@@ -265,6 +265,12 @@ def build_reorder_features(
         0
     ).round(0)
 
+    # ML training target: EOQ for every product (non-zero regardless of stock level).
+    # ReorderOptimizer trains on this so it always has samples — XGBoost learns
+    # the non-linear interactions (demand variance, lead time, perishability) that
+    # cause the optimal order quantity to deviate from the simple EOQ formula.
+    df["target_eoq"] = df["eoq"].clip(lower=1)
+
     # Merge stockout probabilities if available
     if stockout_preds is not None and len(stockout_preds) > 0:
         df = df.merge(
