@@ -35,14 +35,18 @@ def get_onboarding_session(engine, store_id: int, session_id: int) -> Optional[d
     return dict(row) if row else None
 
 
-def commit_to_inventory(engine, store_id: int, session_id: int, items: list[dict]) -> dict:
+def commit_to_inventory(engine, store_id: int, session_id: int, items: list[dict],
+                        add_to_existing: bool = False) -> dict:
     """Upsert inventory for each reviewed item, then mark the session committed.
 
     ``items``: [{product_id: int, quantity: int}] — product_id already resolved by
     the app (matched, owner-corrected, or owner-picked for an unrecognised item).
-    Quantity is SET (not incremented): the owner's count off the shelf photo is the
-    authoritative opening stock, so a re-commit is idempotent. Rows with no
-    product_id or quantity <= 0 are skipped.
+
+    add_to_existing=False (onboarding an empty store): quantity is SET — the owner's
+    count off the shelf photo is the authoritative opening stock; re-commit is idempotent.
+    add_to_existing=True (existing store restocking by camera): quantity is ADDED to
+    current stock — the reviewed count is a new lot on top of what's already there.
+    Rows with no product_id or quantity <= 0 are skipped.
     """
     # Dedupe by product_id keeping the last quantity (guards a double-listed item).
     by_product: dict[int, int] = {}
@@ -53,16 +57,23 @@ def commit_to_inventory(engine, store_id: int, session_id: int, items: list[dict
             continue
         by_product[int(pid)] = qty
 
+    # SET for onboarding; ADD (accumulate onto current stock) for restock.
+    conflict_set = (
+        "quantity = kirana_oltp.inventory.quantity + EXCLUDED.quantity"
+        if add_to_existing else
+        "quantity = EXCLUDED.quantity"
+    )
+    upsert = text(f"""
+        INSERT INTO kirana_oltp.inventory (store_id, product_id, variant_id, quantity)
+        VALUES (:sid, :pid, NULL, :qty)
+        ON CONFLICT (store_id, product_id, COALESCE(variant_id, 0))
+        DO UPDATE SET {conflict_set}
+    """)
     added = 0
     total_qty = 0
     with engine.begin() as conn:
         for pid, qty in by_product.items():
-            conn.execute(text("""
-                INSERT INTO kirana_oltp.inventory (store_id, product_id, variant_id, quantity)
-                VALUES (:sid, :pid, NULL, :qty)
-                ON CONFLICT (store_id, product_id, COALESCE(variant_id, 0))
-                DO UPDATE SET quantity = EXCLUDED.quantity
-            """), {"sid": store_id, "pid": pid, "qty": qty})
+            conn.execute(upsert, {"sid": store_id, "pid": pid, "qty": qty})
             added += 1
             total_qty += qty
 

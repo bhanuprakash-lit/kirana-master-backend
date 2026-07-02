@@ -444,6 +444,7 @@ def onboarding_commit(
     result = onboarding_repo.commit_to_inventory(
         engine, store_id, session_id,
         [{"product_id": i.product_id, "quantity": i.quantity} for i in body.items],
+        add_to_existing=body.add_to_existing,
     )
     return OnboardingCommitResponse(session_id=session_id, **result)
 

@@ -107,6 +107,9 @@ class OnboardingCommitItem(BaseModel):
 
 class OnboardingCommitInput(BaseModel):
     items: list[OnboardingCommitItem] = []
+    # False (onboarding an empty store): SET stock to the reviewed count.
+    # True (existing store restocking by camera): ADD the reviewed count to current stock.
+    add_to_existing: bool = False
 
 
 class OnboardingCommitResponse(BaseModel):
