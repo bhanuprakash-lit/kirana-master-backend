@@ -243,6 +243,14 @@ class BaseRepositoryMixin:
                     "ON kirana_oltp.vision_session(store_id, session_date)"
                 )
             )
+            # session_type='onboarding' reuses this table for bulk stock-in; committed_at
+            # is stamped when the owner's reviewed quantities are written to inventory.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.vision_session "
+                    "ADD COLUMN IF NOT EXISTS committed_at TIMESTAMPTZ"
+                )
+            )
 
             # kirana_oltp.vision_item — one detected product in a session (product_id
             # NOT FK-constrained, matching basket_item/customer_product_price house style;
@@ -272,6 +280,64 @@ class BaseRepositoryMixin:
                 text(
                     "CREATE INDEX IF NOT EXISTS idx_vision_item_session "
                     "ON kirana_oltp.vision_item(session_id)"
+                )
+            )
+
+            # kirana_oltp.counter_session — one sale-area COUNTER run (on-device YOLO
+            # at the billing counter). Distinct from vision_session (shelf photos):
+            # detection + line-crossing tally happen ON THE DEVICE; the app syncs the
+            # finalized per-product tally here. client_uid = on-device UUID so a retry
+            # upserts the same session instead of duplicating it.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.counter_session (
+                    session_id   BIGSERIAL PRIMARY KEY,
+                    store_id     BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+                    client_uid   VARCHAR(64) NOT NULL,       -- idempotency key from the device
+                    session_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                    device_label VARCHAR(120),
+                    source       VARCHAR(30) NOT NULL DEFAULT 'on_device',
+                    started_at   TIMESTAMPTZ,
+                    ended_at     TIMESTAMPTZ,
+                    total_units  INT NOT NULL DEFAULT 0,     -- items counted across all products
+                    total_skus   INT NOT NULL DEFAULT 0,     -- distinct products counted
+                    unknown_count INT NOT NULL DEFAULT 0,    -- units whose class didn't match the catalog
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (store_id, client_uid)
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_counter_session_store_date "
+                    "ON kirana_oltp.counter_session(store_id, session_date)"
+                )
+            )
+
+            # kirana_oltp.counter_item — one product tally in a counter run. class_name
+            # is the on-device model's label; product_id is resolved server-side via the
+            # shared CatalogMatcher (null ⇒ unknown, same convention as vision_item).
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.counter_item (
+                    item_id        BIGSERIAL PRIMARY KEY,
+                    session_id     BIGINT NOT NULL
+                                       REFERENCES kirana_oltp.counter_session(session_id) ON DELETE CASCADE,
+                    product_id     BIGINT,
+                    class_name     VARCHAR(255) NOT NULL,
+                    display_name   VARCHAR(255),
+                    qty            INT NOT NULL DEFAULT 1,
+                    match_score    REAL NOT NULL DEFAULT 0,
+                    is_unknown     BOOLEAN NOT NULL DEFAULT TRUE,
+                    avg_confidence REAL,
+                    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_counter_item_session "
+                    "ON kirana_oltp.counter_item(session_id)"
                 )
             )
 
@@ -1514,8 +1580,25 @@ class BaseRepositoryMixin:
                     {"k": _due_backfill_key},
                 )
 
-            conn.commit()
+            # kirana_oltp.admin_settings
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.admin_settings (
+                    key        VARCHAR(100) PRIMARY KEY,
+                    value      TEXT         NOT NULL,
+                    updated_at TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """)
+            )
+            conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.admin_settings (key, value)
+                VALUES ('auto_approve_trial', 'false')
+                ON CONFLICT (key) DO NOTHING
+            """)
+            )
 
+            conn.commit()
         self._migrate_legacy_public_tables()
 
     def _migrate_legacy_public_tables(self) -> None:

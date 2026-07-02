@@ -74,8 +74,14 @@ class CatalogMatcher:
         self._ensure_loaded()
 
     # ── Matching ────────────────────────────────────────────────────────────────
-    def match(self, query: str) -> MatchResult | None:
-        """Best product match for a free-text name, or None if the catalog is empty."""
+    def match(self, query: str, unknown_threshold: float | None = None) -> MatchResult | None:
+        """Best product match for a free-text name, or None if the catalog is empty.
+
+        [unknown_threshold] overrides the default cutoff below which a match is
+        deemed 'unknown'. Terse labels (e.g. the YOLO class 'red label tea powder')
+        collide with generic catalog names on shared words like 'powder', so callers
+        matching those pass a stricter cutoff → weak matches become unknown (surfaced
+        for owner review) rather than a silently-wrong auto-match."""
         if not query or not query.strip():
             return None
         self._ensure_loaded()
@@ -85,11 +91,12 @@ class CatalogMatcher:
         idx, score = self._best(query.strip())
         if idx is None:
             return None
+        cutoff = unknown_threshold if unknown_threshold is not None else UNKNOWN_THRESHOLD
         return MatchResult(
             product_id=self._ids[idx],
             display_name=self._names[idx],
             score=score,
-            is_unknown=score < UNKNOWN_THRESHOLD,
+            is_unknown=score < cutoff,
         )
 
     def _best(self, query: str) -> tuple[int | None, float]:
@@ -129,12 +136,16 @@ def get_matcher(engine) -> CatalogMatcher:
     return _matcher
 
 
-def match_detections(detections, engine) -> None:
+def match_detections(detections, engine, min_score: float | None = None) -> None:
     """Fill product_id / display_name / sku_id / match_score / is_unknown on each
-    DetectedProduct in place, using the catalog matcher."""
+    DetectedProduct in place, using the catalog matcher. [min_score] raises the bar
+    for what counts as a confident match (used for terse YOLO class labels)."""
     matcher = get_matcher(engine)
     for d in detections:
-        res = matcher.match(d.raw_name)
+        # Already resolved (e.g. YOLO's curated class map) — don't override it.
+        if d.product_id is not None and not d.is_unknown:
+            continue
+        res = matcher.match(d.raw_name, unknown_threshold=min_score)
         if res is not None and not res.is_unknown:
             d.product_id = res.product_id
             d.display_name = res.display_name

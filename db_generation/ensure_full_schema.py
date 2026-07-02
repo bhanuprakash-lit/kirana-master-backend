@@ -398,9 +398,12 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.vision_session (
     total_units   INT NOT NULL DEFAULT 0,
     unknown_count INT NOT NULL DEFAULT 0,
     error         TEXT,
+    committed_at  TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """)
+step("col:vision_session.committed_at",
+     "ALTER TABLE kirana_oltp.vision_session ADD COLUMN IF NOT EXISTS committed_at TIMESTAMPTZ")
 
 step("table:vision_item", """
 CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
@@ -418,6 +421,39 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
     corrected_product_id BIGINT,
     corrected_at         TIMESTAMPTZ,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+""")
+
+step("table:counter_session", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.counter_session (
+    session_id   BIGSERIAL PRIMARY KEY,
+    store_id     BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+    client_uid   VARCHAR(64) NOT NULL,
+    session_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    device_label VARCHAR(120),
+    source       VARCHAR(30) NOT NULL DEFAULT 'on_device',
+    started_at   TIMESTAMPTZ,
+    ended_at     TIMESTAMPTZ,
+    total_units  INT NOT NULL DEFAULT 0,
+    total_skus   INT NOT NULL DEFAULT 0,
+    unknown_count INT NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (store_id, client_uid)
+)
+""")
+
+step("table:counter_item", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.counter_item (
+    item_id        BIGSERIAL PRIMARY KEY,
+    session_id     BIGINT NOT NULL REFERENCES kirana_oltp.counter_session(session_id) ON DELETE CASCADE,
+    product_id     BIGINT,
+    class_name     VARCHAR(255) NOT NULL,
+    display_name   VARCHAR(255),
+    qty            INT NOT NULL DEFAULT 1,
+    match_score    REAL NOT NULL DEFAULT 0,
+    is_unknown     BOOLEAN NOT NULL DEFAULT TRUE,
+    avg_confidence REAL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """)
 
