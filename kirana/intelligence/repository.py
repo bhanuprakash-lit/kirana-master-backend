@@ -368,7 +368,7 @@ class IntelligenceRepository:
         FROM kirana_oltp.inventory_batch ib
         WHERE ib.store_id = :sid
           AND ib.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + :days
-          AND ib.quantity > 0
+          AND ib.qty_in_stock > 0
         """
         with self._conn() as conn:
             row = conn.execute(text(sql), {"sid": store_id, "days": days}).fetchone()

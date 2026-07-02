@@ -91,6 +91,19 @@ async def request_trial(
         try:
             result = svc.approve_trial(int(sid), trial_days)
             result["auto_approved"] = True
+            # Notify the owner their trial is live (app also navigates via the
+            # subscription gate; this is the confirmation push they were missing).
+            uid = user.get("user_id")
+            if uid is not None:
+                try:
+                    svc.send_fcm_to_user(
+                        int(uid),
+                        title="Your free trial is active 🎉",
+                        body="Your Outlet AI trial is ready — tap to open your dashboard.",
+                        data={"action": "open_dashboard", "tab": "home"},
+                    )
+                except Exception:
+                    pass  # notification is best-effort
         except Exception:
             pass  # leave as pending_trial if approve fails
 
