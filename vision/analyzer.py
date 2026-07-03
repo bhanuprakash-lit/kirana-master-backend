@@ -69,6 +69,9 @@ class DetectedProduct:
     y2: float
     visible_text: str = ""
     confidence: float = 1.0
+    # which of the session's photos this detection came from (index into the
+    # session image_url array) — lets the review UI crop it from the right photo.
+    image_index: int = 0
     # filled in by the catalog matcher:
     product_id: int | None = None
     display_name: str | None = None

@@ -418,11 +418,14 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
     match_score          REAL NOT NULL DEFAULT 0,
     is_unknown           BOOLEAN NOT NULL DEFAULT TRUE,
     bbox_json            TEXT,
+    image_index          SMALLINT NOT NULL DEFAULT 0,
     corrected_product_id BIGINT,
     corrected_at         TIMESTAMPTZ,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """)
+step("col:vision_item.image_index",
+     "ALTER TABLE kirana_oltp.vision_item ADD COLUMN IF NOT EXISTS image_index SMALLINT NOT NULL DEFAULT 0")
 
 step("table:counter_session", """
 CREATE TABLE IF NOT EXISTS kirana_oltp.counter_session (

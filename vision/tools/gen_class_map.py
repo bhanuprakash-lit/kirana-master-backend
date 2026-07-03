@@ -17,6 +17,7 @@ still-unconfirmed labels are refreshed from the matcher.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 
@@ -24,9 +25,16 @@ from sqlalchemy import create_engine
 
 from vision.matcher import get_matcher
 
+# Which model version's labels/map to generate. Override with --version (e.g. v7).
+_VERSION = os.getenv("VISION_MODEL_VERSION", "v6")
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_LABELS = os.path.join(_HERE, "models", "kirana_v6_labels.txt")
-_OUT = os.path.join(_HERE, "models", "kirana_v6_class_map.json")
+
+
+def _paths(version: str) -> tuple[str, str]:
+    return (
+        os.path.join(_HERE, "models", f"kirana_{version}_labels.txt"),
+        os.path.join(_HERE, "models", f"kirana_{version}_class_map.json"),
+    )
 
 # Auto-confirm only near-exact matches — even 0.9 mis-binds ('black_hit'→'Black
 # Shirt') and size variants collide ('dabur_honey_200g'→'Dabur Honey 500g'). Anything
@@ -39,6 +47,12 @@ def _prettify(name: str) -> str:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--version", default=_VERSION,
+                    help="model version tag, e.g. v6 or v7 (default env VISION_MODEL_VERSION or v6)")
+    args = ap.parse_args()
+    labels_path, out_path = _paths(args.version)
+
     try:
         from dotenv import load_dotenv
         load_dotenv()
@@ -50,12 +64,12 @@ def main() -> None:
     engine = create_engine(url)
     matcher = get_matcher(engine)
 
-    with open(_LABELS, encoding="utf-8") as f:
+    with open(labels_path, encoding="utf-8") as f:
         labels = [ln.strip() for ln in f if ln.strip()]
 
     existing: dict = {}
-    if os.path.exists(_OUT):
-        with open(_OUT, encoding="utf-8") as f:
+    if os.path.exists(out_path):
+        with open(out_path, encoding="utf-8") as f:
             existing = json.load(f)
 
     out: dict = {}
@@ -80,10 +94,10 @@ def main() -> None:
         if is_conf:
             confirmed += 1
 
-    with open(_OUT, "w", encoding="utf-8") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
 
-    print(f"wrote {_OUT}: {len(out)} classes, {confirmed} confirmed, "
+    print(f"wrote {out_path}: {len(out)} classes, {confirmed} confirmed, "
           f"{len(out) - confirmed} need review")
 
 

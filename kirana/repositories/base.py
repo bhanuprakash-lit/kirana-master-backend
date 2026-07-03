@@ -270,6 +270,7 @@ class BaseRepositoryMixin:
                     match_score          REAL NOT NULL DEFAULT 0,
                     is_unknown           BOOLEAN NOT NULL DEFAULT TRUE,
                     bbox_json            TEXT,
+                    image_index          SMALLINT NOT NULL DEFAULT 0,
                     corrected_product_id BIGINT,
                     corrected_at         TIMESTAMPTZ,
                     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -280,6 +281,15 @@ class BaseRepositoryMixin:
                 text(
                     "CREATE INDEX IF NOT EXISTS idx_vision_item_session "
                     "ON kirana_oltp.vision_item(session_id)"
+                )
+            )
+            # image_index = which of the session's photos this detection came from
+            # (the session's image_url is a JSON array). Lets the review screen crop
+            # the detection's bbox out of the right source photo for a visual thumbnail.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.vision_item "
+                    "ADD COLUMN IF NOT EXISTS image_index SMALLINT NOT NULL DEFAULT 0"
                 )
             )
 

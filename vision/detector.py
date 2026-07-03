@@ -27,9 +27,9 @@ from .analyzer import DetectedProduct
 logger = logging.getLogger("vision.detector")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_MODEL_PATH = os.path.join(_HERE, "models", "kirana_v6.onnx")
-_LABELS_PATH = os.path.join(_HERE, "models", "kirana_v6_labels.txt")
-_CLASS_MAP_PATH = os.path.join(_HERE, "models", "kirana_v6_class_map.json")
+_MODEL_PATH = os.path.join(_HERE, "models", "kirana_v7.onnx")
+_LABELS_PATH = os.path.join(_HERE, "models", "kirana_v7_labels.txt")
+_CLASS_MAP_PATH = os.path.join(_HERE, "models", "kirana_v7_class_map.json")
 
 _INPUT_SIZE = 640
 _CONF_THRESHOLD = 0.25

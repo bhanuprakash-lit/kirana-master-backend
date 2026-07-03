@@ -1,0 +1,3096 @@
+{
+  "0": {
+    "class_name": "3roses_natural_care_teapowder",
+    "product_id": null,
+    "display_name": "Brooke Bond 3 Roses Natural Care Tea",
+    "score": 0.708,
+    "confirmed": false
+  },
+  "1": {
+    "class_name": "3roses_tea_powder",
+    "product_id": null,
+    "display_name": "So Sweet Stevia Powder",
+    "score": 0.718,
+    "confirmed": false
+  },
+  "2": {
+    "class_name": "50-50_biscuits",
+    "product_id": null,
+    "display_name": "Parle 20-20 Nice Biscuit",
+    "score": 0.526,
+    "confirmed": false
+  },
+  "3": {
+    "class_name": "50-50_timepass_biscuits",
+    "product_id": null,
+    "display_name": "Bisk Farm Top Herbs Biscuit",
+    "score": 0.52,
+    "confirmed": false
+  },
+  "4": {
+    "class_name": "5star_chocolate",
+    "product_id": null,
+    "display_name": "Burst Chocolate",
+    "score": 0.8,
+    "confirmed": false
+  },
+  "5": {
+    "class_name": "aashirvad_atta_1kg",
+    "product_id": null,
+    "display_name": "Aashirvaad Organic Atta",
+    "score": 0.683,
+    "confirmed": false
+  },
+  "6": {
+    "class_name": "aashirvad_atta_5kg",
+    "product_id": null,
+    "display_name": "Aashirvaad Organic Atta",
+    "score": 0.683,
+    "confirmed": false
+  },
+  "7": {
+    "class_name": "all_out_refill",
+    "product_id": null,
+    "display_name": "Smyle Ulcer Mouth Gel",
+    "score": 0.514,
+    "confirmed": false
+  },
+  "8": {
+    "class_name": "all_out_set",
+    "product_id": null,
+    "display_name": "Del Monte Spaghetti",
+    "score": 0.533,
+    "confirmed": false
+  },
+  "9": {
+    "class_name": "alpenliebe_lolipop",
+    "product_id": null,
+    "display_name": "Flip Flops",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "10": {
+    "class_name": "amar_tea_powder",
+    "product_id": null,
+    "display_name": "Gramaahar Turmeric Powder",
+    "score": 0.7,
+    "confirmed": false
+  },
+  "11": {
+    "class_name": "ambica_agarbathi",
+    "product_id": null,
+    "display_name": "Amruth Raj Sugar Batasha",
+    "score": 0.55,
+    "confirmed": false
+  },
+  "12": {
+    "class_name": "ambica_mahalakshmi_doop",
+    "product_id": null,
+    "display_name": "Epigamia Mishti Doi",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "13": {
+    "class_name": "amore_rusk",
+    "product_id": null,
+    "display_name": "Livyor Prunes",
+    "score": 0.522,
+    "confirmed": false
+  },
+  "14": {
+    "class_name": "amruthanjan",
+    "product_id": null,
+    "display_name": "Amruthpani Banana",
+    "score": 0.714,
+    "confirmed": false
+  },
+  "15": {
+    "class_name": "Anoos_blackxpert_haircolor",
+    "product_id": null,
+    "display_name": "Aswini Homeo Arnica Hair Oil",
+    "score": 0.519,
+    "confirmed": false
+  },
+  "16": {
+    "class_name": "anoos_henna",
+    "product_id": null,
+    "display_name": "Disano Penne Pasta",
+    "score": 0.552,
+    "confirmed": false
+  },
+  "17": {
+    "class_name": "anurag_pooja_oil",
+    "product_id": null,
+    "display_name": "Dabur Amla Hair Oil",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "18": {
+    "class_name": "anushri_agarbathi",
+    "product_id": null,
+    "display_name": "Bikano Spicy Gathiya",
+    "score": 0.541,
+    "confirmed": false
+  },
+  "19": {
+    "class_name": "appy_fizz",
+    "product_id": null,
+    "display_name": "Pepsi Soft Drink",
+    "score": 0.4,
+    "confirmed": false
+  },
+  "20": {
+    "class_name": "ariel_fl_1litre_pouch",
+    "product_id": null,
+    "display_name": "Ariel Complete Detergent Powder",
+    "score": 0.538,
+    "confirmed": false
+  },
+  "21": {
+    "class_name": "ariel_liquid_sachet",
+    "product_id": null,
+    "display_name": "Rasrin Liquid Drain Cleaner",
+    "score": 0.609,
+    "confirmed": false
+  },
+  "22": {
+    "class_name": "ariel_matic_liquid_FL_trial_pack",
+    "product_id": null,
+    "display_name": "Thegoodrinse Liquid Floor Cleaner Combo Pack",
+    "score": 0.526,
+    "confirmed": false
+  },
+  "23": {
+    "class_name": "Ariel_Matic_liquid_Sachet",
+    "product_id": null,
+    "display_name": "Surf Excel Matic Top Load Sachet 70ml",
+    "score": 0.613,
+    "confirmed": false
+  },
+  "24": {
+    "class_name": "ariel_power_gel_liquid_bottle",
+    "product_id": null,
+    "display_name": "Ariel Power Gel Top Load (43g)",
+    "score": 0.644,
+    "confirmed": false
+  },
+  "25": {
+    "class_name": "ariel_tl_1litre_pouch",
+    "product_id": null,
+    "display_name": "Ariel Complete Detergent Powder",
+    "score": 0.538,
+    "confirmed": false
+  },
+  "26": {
+    "class_name": "asoka_powder",
+    "product_id": null,
+    "display_name": "Catch Rasam Powder",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "27": {
+    "class_name": "aswini_hair_oil",
+    "product_id": null,
+    "display_name": "Aswini Homeo Arnica Hair Oil",
+    "score": 0.698,
+    "confirmed": false
+  },
+  "28": {
+    "class_name": "badshah_mutton_masala_100g",
+    "product_id": null,
+    "display_name": "Aachi Mutton Masala",
+    "score": 0.711,
+    "confirmed": false
+  },
+  "29": {
+    "class_name": "bajaj_almond_drops",
+    "product_id": null,
+    "display_name": "Bajaj Almond Drops Hair Serum",
+    "score": 0.766,
+    "confirmed": false
+  },
+  "30": {
+    "class_name": "bambino_semiya_10rs",
+    "product_id": null,
+    "display_name": "Bambino Premium Spirali Pasta",
+    "score": 0.583,
+    "confirmed": false
+  },
+  "31": {
+    "class_name": "bambino_semiya_250g",
+    "product_id": null,
+    "display_name": "Bambino Pep Macaroni",
+    "score": 0.564,
+    "confirmed": false
+  },
+  "32": {
+    "class_name": "bambino_semiya_500g",
+    "product_id": null,
+    "display_name": "Bambino Pep Macaroni",
+    "score": 0.564,
+    "confirmed": false
+  },
+  "33": {
+    "class_name": "bambino_semiya_packet",
+    "product_id": null,
+    "display_name": "Bambino Premium Spirali Pasta",
+    "score": 0.64,
+    "confirmed": false
+  },
+  "34": {
+    "class_name": "banjaras_black_henna",
+    "product_id": null,
+    "display_name": "Morbagh Assam Black Tea",
+    "score": 0.605,
+    "confirmed": false
+  },
+  "35": {
+    "class_name": "barath_vasi_agarbathi",
+    "product_id": null,
+    "display_name": "Amruth Raj Sugar Batasha",
+    "score": 0.622,
+    "confirmed": false
+  },
+  "36": {
+    "class_name": "bindu_fizz_jeera_masala",
+    "product_id": null,
+    "display_name": "Bindu Fizz Jeera Carbonated Masala Soda - 1 ltr",
+    "score": 0.657,
+    "confirmed": false
+  },
+  "37": {
+    "class_name": "bisleri_soda",
+    "product_id": null,
+    "display_name": "Rin Soap",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "38": {
+    "class_name": "bisleri_water_bottle",
+    "product_id": null,
+    "display_name": "Waterbottles",
+    "score": 0.8,
+    "confirmed": false
+  },
+  "39": {
+    "class_name": "black_hit",
+    "product_id": null,
+    "display_name": "Black Shirt",
+    "score": 0.9,
+    "confirmed": false
+  },
+  "40": {
+    "class_name": "black_rose_hair_color",
+    "product_id": null,
+    "display_name": "Dabur Vatika Rosemary Hair Oil",
+    "score": 0.627,
+    "confirmed": false
+  },
+  "41": {
+    "class_name": "black_stone_agarbathi",
+    "product_id": null,
+    "display_name": "Black Shirt",
+    "score": 0.562,
+    "confirmed": false
+  },
+  "42": {
+    "class_name": "blue_lays",
+    "product_id": null,
+    "display_name": "Amul Rose Lassi",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "43": {
+    "class_name": "boost_bottle_200g",
+    "product_id": null,
+    "display_name": "Sprite PET Bottle 250ML",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "44": {
+    "class_name": "boost_bottle_500g",
+    "product_id": null,
+    "display_name": "Sprite PET Bottle 250ML",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "45": {
+    "class_name": "Boost_sachet",
+    "product_id": null,
+    "display_name": "Ong's Oyster Sauce",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "46": {
+    "class_name": "bourbon_biscuits",
+    "product_id": null,
+    "display_name": "Bournvita Biscuit",
+    "score": 0.788,
+    "confirmed": false
+  },
+  "47": {
+    "class_name": "bournvita_500g",
+    "product_id": null,
+    "display_name": "Bournvita Biscuit",
+    "score": 0.645,
+    "confirmed": false
+  },
+  "48": {
+    "class_name": "brindavan_agarbathi",
+    "product_id": null,
+    "display_name": "iD Paneer Paratha",
+    "score": 0.556,
+    "confirmed": false
+  },
+  "49": {
+    "class_name": "britania_toastea",
+    "product_id": null,
+    "display_name": "Britannia Toastea Rusk (400g)",
+    "score": 0.711,
+    "confirmed": false
+  },
+  "50": {
+    "class_name": "bru_coffe_sachet",
+    "product_id": null,
+    "display_name": "Bru Gold Edition Sachet Box",
+    "score": 0.605,
+    "confirmed": false
+  },
+  "51": {
+    "class_name": "bru_coffee_powder_packet",
+    "product_id": null,
+    "display_name": "Sskullhit Instant Coffee Powder Sachets",
+    "score": 0.635,
+    "confirmed": false
+  },
+  "52": {
+    "class_name": "campa_water_bottle",
+    "product_id": null,
+    "display_name": "Waterbottles",
+    "score": 0.684,
+    "confirmed": false
+  },
+  "53": {
+    "class_name": "chakra_agarbathi",
+    "product_id": null,
+    "display_name": "Chheda's Bhavnagari Gathiya",
+    "score": 0.558,
+    "confirmed": false
+  },
+  "54": {
+    "class_name": "chakra_gold_tea_powder",
+    "product_id": null,
+    "display_name": "Chakra Gold 100g",
+    "score": 0.632,
+    "confirmed": false
+  },
+  "55": {
+    "class_name": "champa_agarbathi",
+    "product_id": null,
+    "display_name": "Amul Paneer Paratha",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "56": {
+    "class_name": "chandan_agarbathi",
+    "product_id": null,
+    "display_name": "Chheda's Bhavnagari Gathiya",
+    "score": 0.591,
+    "confirmed": false
+  },
+  "57": {
+    "class_name": "chandrika_soap",
+    "product_id": null,
+    "display_name": "Rin Soap",
+    "score": 0.636,
+    "confirmed": false
+  },
+  "58": {
+    "class_name": "chick_black_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Catch Black Salt",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "59": {
+    "class_name": "chick_egg_white_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Orika White Sesame Seeds",
+    "score": 0.556,
+    "confirmed": false
+  },
+  "60": {
+    "class_name": "chocos_packet",
+    "product_id": null,
+    "display_name": "Balloons Pack",
+    "score": 0.529,
+    "confirmed": false
+  },
+  "61": {
+    "class_name": "chupa_chups",
+    "product_id": null,
+    "display_name": "Chillam Chilli",
+    "score": 0.48,
+    "confirmed": false
+  },
+  "62": {
+    "class_name": "cinthol_cool_soap",
+    "product_id": null,
+    "display_name": "Cinthol Lime Bath Soap",
+    "score": 0.718,
+    "confirmed": false
+  },
+  "63": {
+    "class_name": "cinthol_original_soap",
+    "product_id": null,
+    "display_name": "Cinthol Original 100g",
+    "score": 0.81,
+    "confirmed": false
+  },
+  "64": {
+    "class_name": "cinthol_soap",
+    "product_id": null,
+    "display_name": "Cinthol Lime Bath Soap",
+    "score": 0.706,
+    "confirmed": false
+  },
+  "65": {
+    "class_name": "clear_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.562,
+    "confirmed": false
+  },
+  "66": {
+    "class_name": "clinic_plus_shampoo",
+    "product_id": null,
+    "display_name": "Clinic Plus With Rice Water",
+    "score": 0.609,
+    "confirmed": false
+  },
+  "67": {
+    "class_name": "closeup_tooth_paste",
+    "product_id": null,
+    "display_name": "Toothpaste",
+    "score": 0.69,
+    "confirmed": false
+  },
+  "68": {
+    "class_name": "coco_cola_200ml",
+    "product_id": null,
+    "display_name": "Comfort Blue 210ml",
+    "score": 0.606,
+    "confirmed": false
+  },
+  "69": {
+    "class_name": "colgate_maxfresh_blue_tooth_paste_100g",
+    "product_id": null,
+    "display_name": "Colgate MaxFresh Charcoal Gel Toothpaste (130 g)",
+    "score": 0.791,
+    "confirmed": false
+  },
+  "70": {
+    "class_name": "colgate_maxfresh_red",
+    "product_id": null,
+    "display_name": "Colgate Max Fresh 17g",
+    "score": 0.829,
+    "confirmed": false
+  },
+  "71": {
+    "class_name": "colgate_maxfresh_red_tooth_paste_100g",
+    "product_id": null,
+    "display_name": "Colgate MaxFresh Charcoal Gel Toothpaste (130 g)",
+    "score": 0.8,
+    "confirmed": false
+  },
+  "72": {
+    "class_name": "colgate_powder",
+    "product_id": null,
+    "display_name": "Catch Puliogare Powder",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "73": {
+    "class_name": "colgate_salt_tooth_paste",
+    "product_id": null,
+    "display_name": "Colgate Active Salt Toothpaste",
+    "score": 0.852,
+    "confirmed": false
+  },
+  "74": {
+    "class_name": "colgate_tooth_brush",
+    "product_id": null,
+    "display_name": "Colgate Super Flexi Tooth Brush",
+    "score": 0.76,
+    "confirmed": false
+  },
+  "75": {
+    "class_name": "colgate_tooth_paste",
+    "product_id": null,
+    "display_name": "Colgate Active Salt Toothpaste",
+    "score": 0.735,
+    "confirmed": false
+  },
+  "76": {
+    "class_name": "colgate_tooth_paste_100g",
+    "product_id": null,
+    "display_name": "Colgate Herbal Toothpaste - 200 g",
+    "score": 0.772,
+    "confirmed": false
+  },
+  "77": {
+    "class_name": "colgate_vedashakthi_tooth_paste",
+    "product_id": null,
+    "display_name": "Colgate Active Salt Toothpaste",
+    "score": 0.754,
+    "confirmed": false
+  },
+  "78": {
+    "class_name": "Colin cleaner",
+    "product_id": null,
+    "display_name": "Colin Glass Cleaner (1 l)",
+    "score": 0.684,
+    "confirmed": false
+  },
+  "79": {
+    "class_name": "colin_200ml",
+    "product_id": null,
+    "display_name": "HIT red 200ml",
+    "score": 0.583,
+    "confirmed": false
+  },
+  "80": {
+    "class_name": "comfort fabric softener",
+    "product_id": null,
+    "display_name": "Comfort Fabric Conditioner Pink 860ml",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "81": {
+    "class_name": "comfort_fabric_conditioner_black_sachet",
+    "product_id": null,
+    "display_name": "Comfort Fabric Conditioner Blue 430ml",
+    "score": 0.789,
+    "confirmed": false
+  },
+  "82": {
+    "class_name": "comfort_fabric_conditioner_blue_1L",
+    "product_id": null,
+    "display_name": "Comfort Fabric Conditioner Blue 430ml",
+    "score": 0.93,
+    "confirmed": false
+  },
+  "83": {
+    "class_name": "comfort_fabric_conditioner_blue_200ml",
+    "product_id": null,
+    "display_name": "Comfort Fabric Conditioner Blue 430ml",
+    "score": 0.946,
+    "confirmed": false
+  },
+  "84": {
+    "class_name": "comfort_fabric_conditioner_blue_500ml",
+    "product_id": null,
+    "display_name": "Comfort Fabric Conditioner Blue 430ml",
+    "score": 0.946,
+    "confirmed": false
+  },
+  "85": {
+    "class_name": "comfort_fabric_conditioner_green_200ml",
+    "product_id": null,
+    "display_name": "Comfort Fabric Conditioner Pink 860ml",
+    "score": 0.853,
+    "confirmed": false
+  },
+  "86": {
+    "class_name": "comfort_pink_sachet",
+    "product_id": null,
+    "display_name": "On1y Pink Salt",
+    "score": 0.606,
+    "confirmed": false
+  },
+  "87": {
+    "class_name": "comfort_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.692,
+    "confirmed": false
+  },
+  "88": {
+    "class_name": "complan_milk_protein_sachet",
+    "product_id": null,
+    "display_name": "Saffola Hi- Protein Oats",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "89": {
+    "class_name": "continental_xtra_bru_sachet",
+    "product_id": null,
+    "display_name": "Continental Xtra Instant Coffee",
+    "score": 0.69,
+    "confirmed": false
+  },
+  "90": {
+    "class_name": "crispello_choclate",
+    "product_id": null,
+    "display_name": "Burst Chocolate",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "91": {
+    "class_name": "cycle_agarbathi",
+    "product_id": null,
+    "display_name": "Chheda's Bhavnagari Gathiya",
+    "score": 0.524,
+    "confirmed": false
+  },
+  "92": {
+    "class_name": "dabur honey",
+    "product_id": 12382,
+    "display_name": "Dabur Honey",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "93": {
+    "class_name": "dabur_amla_hair_oil",
+    "product_id": 6477,
+    "display_name": "Dabur Amla Hair Oil",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "94": {
+    "class_name": "dabur_gulabari_rosewater",
+    "product_id": null,
+    "display_name": "Gulabari Rose Water 250ml",
+    "score": 0.735,
+    "confirmed": false
+  },
+  "95": {
+    "class_name": "dabur_honey_200g",
+    "product_id": null,
+    "display_name": "Dabur Honey 500g",
+    "score": 0.938,
+    "confirmed": false
+  },
+  "96": {
+    "class_name": "dabur_honey_500g",
+    "product_id": 12404,
+    "display_name": "Dabur Honey 500g",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "97": {
+    "class_name": "dabur_honey_50g",
+    "product_id": null,
+    "display_name": "Dabur Honey 500g",
+    "score": 0.968,
+    "confirmed": false
+  },
+  "98": {
+    "class_name": "dabur_red_tooth_paste",
+    "product_id": null,
+    "display_name": "Dabur Red Herbal Toothpaste",
+    "score": 0.833,
+    "confirmed": false
+  },
+  "99": {
+    "class_name": "dairy_milk_chocolate",
+    "product_id": null,
+    "display_name": "Dairy Milk Crackle",
+    "score": 0.652,
+    "confirmed": false
+  },
+  "100": {
+    "class_name": "dairy_milk_lollypop",
+    "product_id": null,
+    "display_name": "Dairy Milk Crackle",
+    "score": 0.533,
+    "confirmed": false
+  },
+  "101": {
+    "class_name": "dant_kanthi_tooth_paste",
+    "product_id": null,
+    "display_name": "Vantej Sensitive Toothpaste",
+    "score": 0.72,
+    "confirmed": false
+  },
+  "102": {
+    "class_name": "dark_fantasy_biscuit",
+    "product_id": null,
+    "display_name": "Sunfeast Bourbon Dark Fantasy Biscuit",
+    "score": 0.702,
+    "confirmed": false
+  },
+  "103": {
+    "class_name": "dawaat_super_basumathi_rice",
+    "product_id": null,
+    "display_name": "Daawat Super Basmati Rice (Long Grain) (Rice)",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "104": {
+    "class_name": "denver_perfume",
+    "product_id": null,
+    "display_name": "Denver Royal Oud",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "105": {
+    "class_name": "dermi_cool_powder",
+    "product_id": null,
+    "display_name": "Eastern Chilli Powder",
+    "score": 0.632,
+    "confirmed": false
+  },
+  "106": {
+    "class_name": "dettol sensitive liquid refill hand wash pouch",
+    "product_id": null,
+    "display_name": "Dettol Sensitive Liquid Hand Wash Refill Pouch",
+    "score": 0.848,
+    "confirmed": false
+  },
+  "107": {
+    "class_name": "dettol skincare liquid handwash",
+    "product_id": null,
+    "display_name": "Dettol Skincare Hand Wash",
+    "score": 0.857,
+    "confirmed": false
+  },
+  "108": {
+    "class_name": "dettol_cool_soap",
+    "product_id": null,
+    "display_name": "Dettol Icy Cool Bathing Soap 125 g",
+    "score": 0.64,
+    "confirmed": false
+  },
+  "109": {
+    "class_name": "dettol_liquid_100ml",
+    "product_id": null,
+    "display_name": "Dettol Antiseptic Liquid - 250 ml",
+    "score": 0.654,
+    "confirmed": false
+  },
+  "110": {
+    "class_name": "dettol_liquid_200ml",
+    "product_id": null,
+    "display_name": "Dettol Antiseptic Liquid - 250 ml",
+    "score": 0.692,
+    "confirmed": false
+  },
+  "111": {
+    "class_name": "dettol_liquid_500ml",
+    "product_id": null,
+    "display_name": "Dettol Antiseptic Liquid - 250 ml",
+    "score": 0.692,
+    "confirmed": false
+  },
+  "112": {
+    "class_name": "dettol_original_handwash_pouch",
+    "product_id": null,
+    "display_name": "Dettol Original Hand Wash",
+    "score": 0.873,
+    "confirmed": false
+  },
+  "113": {
+    "class_name": "dettol_original_soaps",
+    "product_id": null,
+    "display_name": "Dettol Original Hand Wash",
+    "score": 0.739,
+    "confirmed": false
+  },
+  "114": {
+    "class_name": "dettol_skincare_soap",
+    "product_id": null,
+    "display_name": "Dettol Skincare Hand Wash",
+    "score": 0.756,
+    "confirmed": false
+  },
+  "115": {
+    "class_name": "dettol_soap",
+    "product_id": null,
+    "display_name": "Deyga Charcoal Soap",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "116": {
+    "class_name": "domex_toilet_cleaner",
+    "product_id": null,
+    "display_name": "Godrej Spic Toilet Cleaner",
+    "score": 0.739,
+    "confirmed": false
+  },
+  "117": {
+    "class_name": "dove  shampoo",
+    "product_id": null,
+    "display_name": "got2b Extra Volume Dry Shampoo",
+    "score": 0.558,
+    "confirmed": false
+  },
+  "118": {
+    "class_name": "dove_conditioner_sachet",
+    "product_id": null,
+    "display_name": "Devavo Veg Oyster Sauce",
+    "score": 0.609,
+    "confirmed": false
+  },
+  "119": {
+    "class_name": "dove_shampoo_and_conditioner",
+    "product_id": null,
+    "display_name": "Dove Serum Soap Bar Collection",
+    "score": 0.586,
+    "confirmed": false
+  },
+  "120": {
+    "class_name": "dove_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.581,
+    "confirmed": false
+  },
+  "121": {
+    "class_name": "dove_soap",
+    "product_id": null,
+    "display_name": "Rin Soap",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "122": {
+    "class_name": "duracell_aaa_batteries",
+    "product_id": null,
+    "display_name": "Bakemate Butter Cookies",
+    "score": 0.533,
+    "confirmed": false
+  },
+  "123": {
+    "class_name": "eastern_fish_masala",
+    "product_id": null,
+    "display_name": "Eastern Sambhar Masala",
+    "score": 0.829,
+    "confirmed": false
+  },
+  "124": {
+    "class_name": "everest_black_pepper_50g",
+    "product_id": null,
+    "display_name": "Swastik Black Pepper",
+    "score": 0.682,
+    "confirmed": false
+  },
+  "125": {
+    "class_name": "everest_chat_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Chaat Masala",
+    "score": 0.884,
+    "confirmed": false
+  },
+  "126": {
+    "class_name": "everest_chat_masala_sachet",
+    "product_id": null,
+    "display_name": "Everest Chaat Masala",
+    "score": 0.826,
+    "confirmed": false
+  },
+  "127": {
+    "class_name": "everest_chicken_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Chai Masala",
+    "score": 0.8,
+    "confirmed": false
+  },
+  "128": {
+    "class_name": "everest_chicken_masala_sachet",
+    "product_id": null,
+    "display_name": "Everest Chai Masala",
+    "score": 0.75,
+    "confirmed": false
+  },
+  "129": {
+    "class_name": "everest_cumin_powder_50g",
+    "product_id": null,
+    "display_name": "Everest Hing Powder (Inguva)",
+    "score": 0.731,
+    "confirmed": false
+  },
+  "130": {
+    "class_name": "everest_fish_curry_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Pani Puri Masala",
+    "score": 0.717,
+    "confirmed": false
+  },
+  "131": {
+    "class_name": "everest_garam_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Garam Masala 7g",
+    "score": 0.936,
+    "confirmed": false
+  },
+  "132": {
+    "class_name": "everest_garam_masala_sachet",
+    "product_id": null,
+    "display_name": "Everest Garam Masala",
+    "score": 0.851,
+    "confirmed": false
+  },
+  "133": {
+    "class_name": "everest_jaljira_powder",
+    "product_id": null,
+    "display_name": "Everest Jaljeera Masala",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "134": {
+    "class_name": "everest_meat_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Chaat Masala",
+    "score": 0.791,
+    "confirmed": false
+  },
+  "135": {
+    "class_name": "everest_pani_puri_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Pani Puri Masala",
+    "score": 0.923,
+    "confirmed": false
+  },
+  "136": {
+    "class_name": "everest_pav_bhaji_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Pav Bhaji Masala",
+    "score": 0.923,
+    "confirmed": false
+  },
+  "137": {
+    "class_name": "everest_sabji_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Sabzi Masala",
+    "score": 0.864,
+    "confirmed": false
+  },
+  "138": {
+    "class_name": "everest_sambar_masala_50g",
+    "product_id": null,
+    "display_name": "Everest Sambhar Masala",
+    "score": 0.894,
+    "confirmed": false
+  },
+  "139": {
+    "class_name": "exo_dishwash_bar",
+    "product_id": null,
+    "display_name": "Again Lime Dishwash Bar",
+    "score": 0.718,
+    "confirmed": false
+  },
+  "140": {
+    "class_name": "exo_round_dishwash",
+    "product_id": null,
+    "display_name": "Exo Anti-Bacterial Round Dishwash Bar",
+    "score": 0.655,
+    "confirmed": false
+  },
+  "141": {
+    "class_name": "export_quality_agarbathi",
+    "product_id": null,
+    "display_name": "Healthy Master Baked Chips",
+    "score": 0.48,
+    "confirmed": false
+  },
+  "142": {
+    "class_name": "fab liquid detergent",
+    "product_id": null,
+    "display_name": "Ghadi Detergent Bar",
+    "score": 0.615,
+    "confirmed": false
+  },
+  "143": {
+    "class_name": "fairever_beauty_lift",
+    "product_id": null,
+    "display_name": "Sofy Daily Fresh Panty Liners",
+    "score": 0.49,
+    "confirmed": false
+  },
+  "144": {
+    "class_name": "fanta_200ml",
+    "product_id": null,
+    "display_name": "HIT red 200ml",
+    "score": 0.583,
+    "confirmed": false
+  },
+  "145": {
+    "class_name": "farooki_tooth_powder",
+    "product_id": null,
+    "display_name": "Ghadi Detergent Powder",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "146": {
+    "class_name": "fevi_kwik",
+    "product_id": null,
+    "display_name": "Zespri Sungold Kiwi",
+    "score": 0.429,
+    "confirmed": false
+  },
+  "147": {
+    "class_name": "fogg perfume",
+    "product_id": null,
+    "display_name": "Ong's Oyster Sauce",
+    "score": 0.467,
+    "confirmed": false
+  },
+  "148": {
+    "class_name": "fogg_black_perfume",
+    "product_id": null,
+    "display_name": "Borges Black Pitted Olives",
+    "score": 0.545,
+    "confirmed": false
+  },
+  "149": {
+    "class_name": "fortune_mini_soya_chunks",
+    "product_id": null,
+    "display_name": "Fortune Thick Poha (Atukulu)",
+    "score": 0.577,
+    "confirmed": false
+  },
+  "150": {
+    "class_name": "fortune_mustard_oil-1l",
+    "product_id": null,
+    "display_name": "Saffola Cold Pressed Mustard Oil",
+    "score": 0.593,
+    "confirmed": false
+  },
+  "151": {
+    "class_name": "Fortune_sunflower_oil_1L",
+    "product_id": null,
+    "display_name": "Fortune Refined Sunflower Oil",
+    "score": 0.792,
+    "confirmed": false
+  },
+  "152": {
+    "class_name": "garnier_black_naturals",
+    "product_id": null,
+    "display_name": "Garnier Skin Naturals SPF 24 BB Cream",
+    "score": 0.61,
+    "confirmed": false
+  },
+  "153": {
+    "class_name": "gemini_tea_powder",
+    "product_id": null,
+    "display_name": "Gemini Tea powder 250g",
+    "score": 0.872,
+    "confirmed": false
+  },
+  "154": {
+    "class_name": "gems",
+    "product_id": null,
+    "display_name": "Shoes",
+    "score": 0.444,
+    "confirmed": false
+  },
+  "155": {
+    "class_name": "gillete_guard",
+    "product_id": null,
+    "display_name": "Ghadi Detergent Bar",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "156": {
+    "class_name": "glow&lovely",
+    "product_id": null,
+    "display_name": "Glow & Lovely BB Cream (Shade 01)",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "157": {
+    "class_name": "glucon_d",
+    "product_id": null,
+    "display_name": "Tang Lemon 75g",
+    "score": 0.455,
+    "confirmed": false
+  },
+  "158": {
+    "class_name": "glucon_D_orange",
+    "product_id": null,
+    "display_name": "Tic Tac Orange",
+    "score": 0.621,
+    "confirmed": false
+  },
+  "159": {
+    "class_name": "godrej good knight refill machine",
+    "product_id": null,
+    "display_name": "dr Good Protein Rich Eggs",
+    "score": 0.517,
+    "confirmed": false
+  },
+  "160": {
+    "class_name": "godrej_cinthol_shaving_cream",
+    "product_id": null,
+    "display_name": "Pilgrim Retinol Night Cream",
+    "score": 0.545,
+    "confirmed": false
+  },
+  "161": {
+    "class_name": "godrej_expert_hair_color",
+    "product_id": null,
+    "display_name": "Godrej Jersey Pouch Curd",
+    "score": 0.583,
+    "confirmed": false
+  },
+  "162": {
+    "class_name": "godrej_no1_soap",
+    "product_id": null,
+    "display_name": "Godrej No.1 Lime & Aloe Vera Soap",
+    "score": 0.625,
+    "confirmed": false
+  },
+  "163": {
+    "class_name": "godrej_rich_creme",
+    "product_id": null,
+    "display_name": "Godrej Jersey Pouch Curd",
+    "score": 0.634,
+    "confirmed": false
+  },
+  "164": {
+    "class_name": "gol_maal_biscuits",
+    "product_id": null,
+    "display_name": "Bournvita Biscuit",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "165": {
+    "class_name": "golden_musk_agarbathi",
+    "product_id": null,
+    "display_name": "Golden Grain Rozana Basmati Rice",
+    "score": 0.528,
+    "confirmed": false
+  },
+  "166": {
+    "class_name": "good_day_biscuit_packet",
+    "product_id": null,
+    "display_name": "Britannia Good Day Cashew Biscuit - Pack of 2",
+    "score": 0.618,
+    "confirmed": false
+  },
+  "167": {
+    "class_name": "good_day_cashew_biscuit",
+    "product_id": null,
+    "display_name": "Britannia Good Day Cashew Biscuit",
+    "score": 0.821,
+    "confirmed": false
+  },
+  "168": {
+    "class_name": "good_home_steel_scrubber",
+    "product_id": null,
+    "display_name": "Exo Steel Scrubber",
+    "score": 0.762,
+    "confirmed": false
+  },
+  "169": {
+    "class_name": "good_knight_green_shakti_coil",
+    "product_id": null,
+    "display_name": "Gongloo Rajasthani Green Chilli Pickle",
+    "score": 0.537,
+    "confirmed": false
+  },
+  "170": {
+    "class_name": "good_knight_refill",
+    "product_id": null,
+    "display_name": "Fortune Sunlight Refined Sunflower Oil",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "171": {
+    "class_name": "good_knight_set",
+    "product_id": null,
+    "display_name": "Coca-Cola Light Soft Drink",
+    "score": 0.488,
+    "confirmed": false
+  },
+  "172": {
+    "class_name": "gowdurbar_agarbathi",
+    "product_id": null,
+    "display_name": "iD Malabar Paratha",
+    "score": 0.541,
+    "confirmed": false
+  },
+  "173": {
+    "class_name": "grb_cow_ghee_200g",
+    "product_id": null,
+    "display_name": "Grb Cow Ghee",
+    "score": 0.828,
+    "confirmed": false
+  },
+  "174": {
+    "class_name": "grb_ghee_100ml",
+    "product_id": null,
+    "display_name": "Grb Cow Ghee",
+    "score": 0.615,
+    "confirmed": false
+  },
+  "175": {
+    "class_name": "grb_ghee_200ml",
+    "product_id": null,
+    "display_name": "Grb Cow Ghee",
+    "score": 0.615,
+    "confirmed": false
+  },
+  "176": {
+    "class_name": "green_kurkure",
+    "product_id": null,
+    "display_name": "Green Lettuce",
+    "score": 0.615,
+    "confirmed": false
+  },
+  "177": {
+    "class_name": "green_lays",
+    "product_id": null,
+    "display_name": "Green Lettuce",
+    "score": 0.609,
+    "confirmed": false
+  },
+  "178": {
+    "class_name": "haldirams_aloo_bhujia",
+    "product_id": null,
+    "display_name": "Haldiram's Nagpur Aloo Bhujia",
+    "score": 0.84,
+    "confirmed": false
+  },
+  "179": {
+    "class_name": "haldirams_bhujia_sev",
+    "product_id": null,
+    "display_name": "Haldiram's Bhujia Sev 200g",
+    "score": 0.87,
+    "confirmed": false
+  },
+  "180": {
+    "class_name": "haldirams_katta_meetha",
+    "product_id": null,
+    "display_name": "Haldiram's Nagpur Khatta Meetha Mixture Namkeen",
+    "score": 0.638,
+    "confirmed": false
+  },
+  "181": {
+    "class_name": "haldirams_masala_peanuts",
+    "product_id": null,
+    "display_name": "Veerabhadra Masala Peanuts",
+    "score": 0.8,
+    "confirmed": false
+  },
+  "182": {
+    "class_name": "haldirams_moong_dal",
+    "product_id": null,
+    "display_name": "Haldiram's Nagpur Moong Dal Namkeen",
+    "score": 0.704,
+    "confirmed": false
+  },
+  "183": {
+    "class_name": "haldirams_salted_peanuts",
+    "product_id": null,
+    "display_name": "Charliee Salted Peanuts",
+    "score": 0.809,
+    "confirmed": false
+  },
+  "184": {
+    "class_name": "haldirams_tasty_nuts",
+    "product_id": null,
+    "display_name": "Haldiram's Nagpur Tasty Peanuts",
+    "score": 0.784,
+    "confirmed": false
+  },
+  "185": {
+    "class_name": "halke_fulke",
+    "product_id": null,
+    "display_name": "Heritage Full Cream Milk",
+    "score": 0.457,
+    "confirmed": false
+  },
+  "186": {
+    "class_name": "happy_happy_biscuit",
+    "product_id": null,
+    "display_name": "Veerabhadra Kaju Biscuit",
+    "score": 0.558,
+    "confirmed": false
+  },
+  "187": {
+    "class_name": "harino_chinchan_noodles",
+    "product_id": null,
+    "display_name": "Koka Chicken Noodles",
+    "score": 0.698,
+    "confirmed": false
+  },
+  "188": {
+    "class_name": "harpic disinfectant bathroom cleaner",
+    "product_id": null,
+    "display_name": "Harpic Disinfectant Bathroom Cleaner (Floral)",
+    "score": 0.889,
+    "confirmed": false
+  },
+  "189": {
+    "class_name": "harpic disinfectant toilet cleaner",
+    "product_id": null,
+    "display_name": "Harpic Advanced Disinfectant Toilet Cleaner",
+    "score": 0.883,
+    "confirmed": false
+  },
+  "190": {
+    "class_name": "harpic_toilet_cleaner_original",
+    "product_id": null,
+    "display_name": "Harpic Disinfectant Liquid Toilet Cleaner - (Original)",
+    "score": 0.714,
+    "confirmed": false
+  },
+  "191": {
+    "class_name": "head_and_shoulders_daily_clean_shampoo_sachet",
+    "product_id": null,
+    "display_name": "WishCare Air Powder Dry Shampoo",
+    "score": 0.526,
+    "confirmed": false
+  },
+  "192": {
+    "class_name": "head_and_shoulders_neem_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Head & Shoulder ANTI-HAIRFALL",
+    "score": 0.567,
+    "confirmed": false
+  },
+  "193": {
+    "class_name": "head_and_shoulders_shampoo_bottle",
+    "product_id": null,
+    "display_name": "Head & Shoulder ANTI-HAIRFALL",
+    "score": 0.581,
+    "confirmed": false
+  },
+  "194": {
+    "class_name": "hellmann's_real_mayonnaise",
+    "product_id": 7584,
+    "display_name": "Hellmann's Real Mayonnaise",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "195": {
+    "class_name": "hide_and_seek_biscuit_packet",
+    "product_id": null,
+    "display_name": "Hide & Seek Milano Biscuit",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "196": {
+    "class_name": "himalaya cucumber and coconut soap",
+    "product_id": null,
+    "display_name": "Himalaya Cucumber & Coconut Soap 125 g",
+    "score": 0.861,
+    "confirmed": false
+  },
+  "197": {
+    "class_name": "himalaya_soap_almond_and_rose",
+    "product_id": null,
+    "display_name": "Himalayan Natives Bilona Organic Ghee",
+    "score": 0.576,
+    "confirmed": false
+  },
+  "198": {
+    "class_name": "himalaya_soap_neem_and_turmeric",
+    "product_id": null,
+    "display_name": "Himalaya Neem & Turmeric Soap 125 g",
+    "score": 0.697,
+    "confirmed": false
+  },
+  "199": {
+    "class_name": "hit_cockroach_creme",
+    "product_id": null,
+    "display_name": "Havmor Chocolate Ice Cream Cake",
+    "score": 0.56,
+    "confirmed": false
+  },
+  "200": {
+    "class_name": "horlicks_biscuit_packet",
+    "product_id": null,
+    "display_name": "Parle 20-20 Nice Biscuit - Pack of 2",
+    "score": 0.576,
+    "confirmed": false
+  },
+  "201": {
+    "class_name": "horlicks_bottle_500g",
+    "product_id": null,
+    "display_name": "Horlicks 200g",
+    "score": 0.727,
+    "confirmed": false
+  },
+  "202": {
+    "class_name": "Horlicks_sachet",
+    "product_id": null,
+    "display_name": "Horlicks 200g",
+    "score": 0.643,
+    "confirmed": false
+  },
+  "203": {
+    "class_name": "indica easy shampoo color",
+    "product_id": null,
+    "display_name": "Shampoo 200ml",
+    "score": 0.565,
+    "confirmed": false
+  },
+  "204": {
+    "class_name": "indica_easy_hair_color",
+    "product_id": null,
+    "display_name": "Inde Wild Champi Hair Oil",
+    "score": 0.596,
+    "confirmed": false
+  },
+  "205": {
+    "class_name": "indulekha_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Indulekha Bringha Hair Growth Serum",
+    "score": 0.542,
+    "confirmed": false
+  },
+  "206": {
+    "class_name": "international_lux_soap",
+    "product_id": null,
+    "display_name": "Lux International Smooth & Radiant Soap",
+    "score": 0.623,
+    "confirmed": false
+  },
+  "207": {
+    "class_name": "itc_master_chef_chicken_masala_sachet",
+    "product_id": null,
+    "display_name": "ITC Master Chef Chicken Popcorn",
+    "score": 0.735,
+    "confirmed": false
+  },
+  "208": {
+    "class_name": "jersey_badam_milk",
+    "product_id": null,
+    "display_name": "Godrej Jersey Badam Flavoured Milk",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "209": {
+    "class_name": "jersy_curd",
+    "product_id": null,
+    "display_name": "Jersey Cup Curd",
+    "score": 0.8,
+    "confirmed": false
+  },
+  "210": {
+    "class_name": "jet_coil",
+    "product_id": null,
+    "display_name": "Heritage Cow Milk",
+    "score": 0.56,
+    "confirmed": false
+  },
+  "211": {
+    "class_name": "jim_jam_biscuit",
+    "product_id": null,
+    "display_name": "Bournvita Biscuit",
+    "score": 0.625,
+    "confirmed": false
+  },
+  "212": {
+    "class_name": "johnsons_baby_soap",
+    "product_id": null,
+    "display_name": "Jabsons Dry Samosa",
+    "score": 0.611,
+    "confirmed": false
+  },
+  "213": {
+    "class_name": "kartika_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Knorr Dark Soy Sauce",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "214": {
+    "class_name": "kasturi_agarbathi",
+    "product_id": null,
+    "display_name": "Catch Kasuri Methi",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "215": {
+    "class_name": "kellogs_cornfalkes",
+    "product_id": null,
+    "display_name": "Kellogg's Corn Flakes Original",
+    "score": 0.708,
+    "confirmed": false
+  },
+  "216": {
+    "class_name": "kesh_king_gold_oil",
+    "product_id": null,
+    "display_name": "Heritage Golden Cow Milk",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "217": {
+    "class_name": "kinder_joy_blue",
+    "product_id": null,
+    "display_name": "Denver Royal Oud",
+    "score": 0.516,
+    "confirmed": false
+  },
+  "218": {
+    "class_name": "kissan_fresh_tomato_ketchup",
+    "product_id": 7658,
+    "display_name": "Kissan Fresh Tomato Ketchup",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "219": {
+    "class_name": "kissan_jam_100g",
+    "product_id": null,
+    "display_name": "Kissan Mango Jam",
+    "score": 0.645,
+    "confirmed": false
+  },
+  "220": {
+    "class_name": "kitchen_star_noodles_masala",
+    "product_id": null,
+    "display_name": "Surya Noodles Masala",
+    "score": 0.723,
+    "confirmed": false
+  },
+  "221": {
+    "class_name": "krack_jack",
+    "product_id": null,
+    "display_name": "Kamasutra KS Spark",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "222": {
+    "class_name": "ks_perfume",
+    "product_id": null,
+    "display_name": "Niks Premium Dishwash Gel",
+    "score": 0.457,
+    "confirmed": false
+  },
+  "223": {
+    "class_name": "kurkure_puffcorn",
+    "product_id": null,
+    "display_name": "Kurkure Puffcorn Yummy Cheese Puffs",
+    "score": 0.627,
+    "confirmed": false
+  },
+  "224": {
+    "class_name": "laser_ready_razer_10/-",
+    "product_id": null,
+    "display_name": "Loacker Break3 Crunchy Wafer Bar",
+    "score": 0.528,
+    "confirmed": false
+  },
+  "225": {
+    "class_name": "lg_hing",
+    "product_id": null,
+    "display_name": "Mango Ginger",
+    "score": 0.526,
+    "confirmed": false
+  },
+  "226": {
+    "class_name": "lifebouy_soap",
+    "product_id": null,
+    "display_name": "Lifebuoy Ice Bath Soap",
+    "score": 0.686,
+    "confirmed": false
+  },
+  "227": {
+    "class_name": "liril_soap",
+    "product_id": null,
+    "display_name": "Rin Soap",
+    "score": 0.778,
+    "confirmed": false
+  },
+  "228": {
+    "class_name": "Little_hearts_biscuits",
+    "product_id": null,
+    "display_name": "Lotte Pepero Biscuit Sticks",
+    "score": 0.653,
+    "confirmed": false
+  },
+  "229": {
+    "class_name": "lizol cleaner",
+    "product_id": null,
+    "display_name": "Lizol Surface Cleaner 625ml",
+    "score": 0.65,
+    "confirmed": false
+  },
+  "230": {
+    "class_name": "lizol floor cleaner-1litre",
+    "product_id": null,
+    "display_name": "SaveMore Floral Floor Cleaner 1 l",
+    "score": 0.678,
+    "confirmed": false
+  },
+  "231": {
+    "class_name": "lizol_floor_cleaner_citrus_1L",
+    "product_id": null,
+    "display_name": "Mr Muscle Floor Cleaner (Citrus)",
+    "score": 0.721,
+    "confirmed": false
+  },
+  "232": {
+    "class_name": "lizol_floor_cleaner_citrus_200ml",
+    "product_id": null,
+    "display_name": "Lizol Surface Cleaner 200ml",
+    "score": 0.712,
+    "confirmed": false
+  },
+  "233": {
+    "class_name": "lizol_floor_cleaner_citrus_500ml",
+    "product_id": null,
+    "display_name": "Mr Muscle Floor Cleaner (Citrus)",
+    "score": 0.688,
+    "confirmed": false
+  },
+  "234": {
+    "class_name": "lizol_floor_cleaner_lavender_200ml",
+    "product_id": null,
+    "display_name": "Mr Muscle Floor Cleaner - Lavender",
+    "score": 0.706,
+    "confirmed": false
+  },
+  "235": {
+    "class_name": "lizol_floral_floor_cleaner_500ml",
+    "product_id": null,
+    "display_name": "SaveMore Floral Floor Cleaner 1 l",
+    "score": 0.738,
+    "confirmed": false
+  },
+  "236": {
+    "class_name": "lux_bright_glow_soap",
+    "product_id": null,
+    "display_name": "Lux Radiant Glow Rose Soap",
+    "score": 0.739,
+    "confirmed": false
+  },
+  "237": {
+    "class_name": "lux_pink_soap",
+    "product_id": null,
+    "display_name": "Rin Soap",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "238": {
+    "class_name": "lux_white_soap",
+    "product_id": null,
+    "display_name": "Lux Radiant Glow Rose Soap",
+    "score": 0.55,
+    "confirmed": false
+  },
+  "239": {
+    "class_name": "maaza_200ml",
+    "product_id": null,
+    "display_name": "Maaza Mango Drink 250ml",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "240": {
+    "class_name": "maggi 2-minute instant noodles",
+    "product_id": null,
+    "display_name": "Maggi Chicken Instant Noodles",
+    "score": 0.814,
+    "confirmed": false
+  },
+  "241": {
+    "class_name": "maggi_4pack",
+    "product_id": null,
+    "display_name": "Maggi 75g",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "242": {
+    "class_name": "maggi_6pack",
+    "product_id": null,
+    "display_name": "Maggi 75g",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "243": {
+    "class_name": "maggi_8pack",
+    "product_id": null,
+    "display_name": "Maggi 75g",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "244": {
+    "class_name": "maggi_masala_magic",
+    "product_id": null,
+    "display_name": "Maggi Masala-ae-Magic Sabzi Masala",
+    "score": 0.654,
+    "confirmed": false
+  },
+  "245": {
+    "class_name": "maggi_packet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.583,
+    "confirmed": false
+  },
+  "246": {
+    "class_name": "maggiee_veg_atta",
+    "product_id": null,
+    "display_name": "Maggi Veg Atta Instant Noodles",
+    "score": 0.609,
+    "confirmed": false
+  },
+  "247": {
+    "class_name": "makino_tandoori_peanuts",
+    "product_id": null,
+    "display_name": "Natureland Organic Peanuts",
+    "score": 0.653,
+    "confirmed": false
+  },
+  "248": {
+    "class_name": "malkist_cheese_biscuits",
+    "product_id": null,
+    "display_name": "Malkist Family Irresistibles Biscuit",
+    "score": 0.644,
+    "confirmed": false
+  },
+  "249": {
+    "class_name": "mamta_cumin_powder",
+    "product_id": null,
+    "display_name": "Rivaaj Coriander Powder",
+    "score": 0.634,
+    "confirmed": false
+  },
+  "250": {
+    "class_name": "mamta_fish_masala",
+    "product_id": null,
+    "display_name": "Catch Chole Masala",
+    "score": 0.629,
+    "confirmed": false
+  },
+  "251": {
+    "class_name": "mamta_soya_mini_chunks",
+    "product_id": null,
+    "display_name": "Tata Tea Gemini Tea",
+    "score": 0.537,
+    "confirmed": false
+  },
+  "252": {
+    "class_name": "mamypoko_pants",
+    "product_id": null,
+    "display_name": "Sweat Pants",
+    "score": 0.56,
+    "confirmed": false
+  },
+  "253": {
+    "class_name": "mamypoko_pants_m",
+    "product_id": null,
+    "display_name": "Sweat Pants",
+    "score": 0.519,
+    "confirmed": false
+  },
+  "254": {
+    "class_name": "mamypoko_pants_s",
+    "product_id": null,
+    "display_name": "Sweat Pants",
+    "score": 0.519,
+    "confirmed": false
+  },
+  "255": {
+    "class_name": "mamypoko_pants_xl",
+    "product_id": null,
+    "display_name": "Masoor Dal",
+    "score": 0.519,
+    "confirmed": false
+  },
+  "256": {
+    "class_name": "mangalam_agarbathi",
+    "product_id": null,
+    "display_name": "Banana (Aratipandu)",
+    "score": 0.541,
+    "confirmed": false
+  },
+  "257": {
+    "class_name": "mangaldeep_agarbathi",
+    "product_id": null,
+    "display_name": "Amul Paneer Paratha",
+    "score": 0.564,
+    "confirmed": false
+  },
+  "258": {
+    "class_name": "mangaldeep_sambrani",
+    "product_id": null,
+    "display_name": "Adukale Khara Boondi",
+    "score": 0.513,
+    "confirmed": false
+  },
+  "259": {
+    "class_name": "margo_soaps",
+    "product_id": null,
+    "display_name": "Rin Soap",
+    "score": 0.632,
+    "confirmed": false
+  },
+  "260": {
+    "class_name": "marie_gold_biscuit_packet",
+    "product_id": null,
+    "display_name": "Bisk Farm Top Gold Biscuit - Pack of 2",
+    "score": 0.635,
+    "confirmed": false
+  },
+  "261": {
+    "class_name": "marie_light_biscuit",
+    "product_id": null,
+    "display_name": "Cafe Niloufer Fruit Biscuit",
+    "score": 0.609,
+    "confirmed": false
+  },
+  "262": {
+    "class_name": "Mariegold biscuits",
+    "product_id": null,
+    "display_name": "Bisk Farm Top Gold Biscuit",
+    "score": 0.636,
+    "confirmed": false
+  },
+  "263": {
+    "class_name": "maska_chaska_biscuit",
+    "product_id": null,
+    "display_name": "Britannia 5050 Maska Chaska Biscuit",
+    "score": 0.727,
+    "confirmed": false
+  },
+  "264": {
+    "class_name": "medimix_soap",
+    "product_id": null,
+    "display_name": "Medimix Ayurvedic Soap",
+    "score": 0.706,
+    "confirmed": false
+  },
+  "265": {
+    "class_name": "meera_onion_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.632,
+    "confirmed": false
+  },
+  "266": {
+    "class_name": "meera_rice_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.649,
+    "confirmed": false
+  },
+  "267": {
+    "class_name": "meera_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.75,
+    "confirmed": false
+  },
+  "268": {
+    "class_name": "melody_chocolate_packet",
+    "product_id": null,
+    "display_name": "Amul Chocolate Cookies",
+    "score": 0.711,
+    "confirmed": false
+  },
+  "269": {
+    "class_name": "mentho_plus",
+    "product_id": null,
+    "display_name": "Lifeboy plus 100g",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "270": {
+    "class_name": "meshwak_tooth_paste",
+    "product_id": null,
+    "display_name": "Shy-Nm Toothpaste",
+    "score": 0.722,
+    "confirmed": false
+  },
+  "271": {
+    "class_name": "milk_bikis_biscuits",
+    "product_id": null,
+    "display_name": "Lotus Biscoff Biscuit",
+    "score": 0.65,
+    "confirmed": false
+  },
+  "272": {
+    "class_name": "mini_soya_chunks_packet_10/-",
+    "product_id": null,
+    "display_name": "Britannia Good Day Chunkies Chocochip Cookies",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "273": {
+    "class_name": "moms_magic_biscuit",
+    "product_id": null,
+    "display_name": "Moms Magic",
+    "score": 0.714,
+    "confirmed": false
+  },
+  "274": {
+    "class_name": "monaco_biscuit",
+    "product_id": null,
+    "display_name": "Bournvita Biscuit",
+    "score": 0.71,
+    "confirmed": false
+  },
+  "275": {
+    "class_name": "mountain_dew_cool_drink",
+    "product_id": null,
+    "display_name": "Mountain Dew Soft Drink",
+    "score": 0.87,
+    "confirmed": false
+  },
+  "276": {
+    "class_name": "mtr_badam_mix_sachet",
+    "product_id": null,
+    "display_name": "MTR Badam Drink Mix",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "277": {
+    "class_name": "mtr_garam_masala",
+    "product_id": null,
+    "display_name": "MTR Rasam Masala",
+    "score": 0.875,
+    "confirmed": false
+  },
+  "278": {
+    "class_name": "mtr_rasam_powder",
+    "product_id": null,
+    "display_name": "Catch Rasam Powder",
+    "score": 0.824,
+    "confirmed": false
+  },
+  "279": {
+    "class_name": "mtr_sambar_powder",
+    "product_id": null,
+    "display_name": "Aachi Sambhar Powder",
+    "score": 0.757,
+    "confirmed": false
+  },
+  "280": {
+    "class_name": "munch_chocolate",
+    "product_id": null,
+    "display_name": "Burst Chocolate",
+    "score": 0.733,
+    "confirmed": false
+  },
+  "281": {
+    "class_name": "mysore_sandal_agarbathi",
+    "product_id": null,
+    "display_name": "Mysore sandal soap",
+    "score": 0.732,
+    "confirmed": false
+  },
+  "282": {
+    "class_name": "mysore_sandal_gold_soap",
+    "product_id": null,
+    "display_name": "Mysore Sandal Gold Soap 125 g",
+    "score": 0.885,
+    "confirmed": false
+  },
+  "283": {
+    "class_name": "mysore_sandal_soap",
+    "product_id": 513,
+    "display_name": "Mysore sandal soap",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "284": {
+    "class_name": "mysore_sandal_trio_box",
+    "product_id": null,
+    "display_name": "Mysore sandal soap",
+    "score": 0.75,
+    "confirmed": false
+  },
+  "285": {
+    "class_name": "naivedya_doop",
+    "product_id": null,
+    "display_name": "Farmveda Jowar Flour",
+    "score": 0.485,
+    "confirmed": false
+  },
+  "286": {
+    "class_name": "nani_ghee",
+    "product_id": null,
+    "display_name": "Jivika A2 Gir Ghee",
+    "score": 0.519,
+    "confirmed": false
+  },
+  "287": {
+    "class_name": "navaratna_hair_oil",
+    "product_id": null,
+    "display_name": "Navratna Cool Ayurvedic Hair Oil",
+    "score": 0.68,
+    "confirmed": false
+  },
+  "288": {
+    "class_name": "nestle_milkmaid",
+    "product_id": null,
+    "display_name": "Nestle Milo Kaw Milk Drink",
+    "score": 0.683,
+    "confirmed": false
+  },
+  "289": {
+    "class_name": "nilon's_pasta_masala",
+    "product_id": null,
+    "display_name": "MTR Rasam Masala",
+    "score": 0.611,
+    "confirmed": false
+  },
+  "290": {
+    "class_name": "niloufer_elaichi_tea_sachet",
+    "product_id": null,
+    "display_name": "Cafe Niloufer Platinum Tea Powder",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "291": {
+    "class_name": "niloufer_supreme_tea_100g",
+    "product_id": null,
+    "display_name": "Cafe Niloufer Supreme Tea Leaves",
+    "score": 0.737,
+    "confirmed": false
+  },
+  "292": {
+    "class_name": "nimyle_floor_cleaner",
+    "product_id": null,
+    "display_name": "ITC Nimyle Herbal Floor Cleaner",
+    "score": 0.784,
+    "confirmed": false
+  },
+  "293": {
+    "class_name": "nippo_aaa_batteries",
+    "product_id": null,
+    "display_name": "Hiphop Facial Wax Strips",
+    "score": 0.558,
+    "confirmed": false
+  },
+  "294": {
+    "class_name": "nisha_hair_color",
+    "product_id": null,
+    "display_name": "Inde Wild Champi Hair Oil",
+    "score": 0.585,
+    "confirmed": false
+  },
+  "295": {
+    "class_name": "nova_cream",
+    "product_id": null,
+    "display_name": "Nova",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "296": {
+    "class_name": "nutrela_soya_chunks",
+    "product_id": null,
+    "display_name": "Natureland Organic Cashews",
+    "score": 0.578,
+    "confirmed": false
+  },
+  "297": {
+    "class_name": "nutri_choice_biscuit",
+    "product_id": null,
+    "display_name": "Sunfeast Nice Biscuit",
+    "score": 0.683,
+    "confirmed": false
+  },
+  "298": {
+    "class_name": "nycil_cool_powder",
+    "product_id": null,
+    "display_name": "Eastern Chilli Powder",
+    "score": 0.632,
+    "confirmed": false
+  },
+  "299": {
+    "class_name": "odonil_air_freshner",
+    "product_id": null,
+    "display_name": "Odonil Zipper Room Freshener (Assorted)",
+    "score": 0.621,
+    "confirmed": false
+  },
+  "300": {
+    "class_name": "odonil_room_freshner",
+    "product_id": null,
+    "display_name": "Odonil Zipper Room Freshener (Assorted)",
+    "score": 0.678,
+    "confirmed": false
+  },
+  "301": {
+    "class_name": "old_spice_shaving_cream",
+    "product_id": null,
+    "display_name": "Havmor Slice Cassata Ice Cream",
+    "score": 0.604,
+    "confirmed": false
+  },
+  "302": {
+    "class_name": "oorvasi_soap",
+    "product_id": null,
+    "display_name": "Rin Soap",
+    "score": 0.7,
+    "confirmed": false
+  },
+  "303": {
+    "class_name": "orange_kurkure",
+    "product_id": null,
+    "display_name": "Orange Carrot",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "304": {
+    "class_name": "orange_lays",
+    "product_id": null,
+    "display_name": "Orange Carrot",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "305": {
+    "class_name": "oreo_biscuit_packet",
+    "product_id": null,
+    "display_name": "Lotte Pepero Biscuit Sticks",
+    "score": 0.609,
+    "confirmed": false
+  },
+  "306": {
+    "class_name": "pampers_l",
+    "product_id": null,
+    "display_name": "Parsley",
+    "score": 0.625,
+    "confirmed": false
+  },
+  "307": {
+    "class_name": "pampers_s",
+    "product_id": null,
+    "display_name": "Lazer Paper Soap",
+    "score": 0.56,
+    "confirmed": false
+  },
+  "308": {
+    "class_name": "pampers_xl",
+    "product_id": null,
+    "display_name": "Parsley",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "309": {
+    "class_name": "parachute aloe vera oil",
+    "product_id": null,
+    "display_name": "Parachute Advansed Gold 5X Aloe Vera Hair Oil",
+    "score": 0.676,
+    "confirmed": false
+  },
+  "310": {
+    "class_name": "Parachute hair oil",
+    "product_id": null,
+    "display_name": "Parachute 250ml",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "311": {
+    "class_name": "parachute oil_100ml",
+    "product_id": null,
+    "display_name": "Parachute 250ml",
+    "score": 0.765,
+    "confirmed": false
+  },
+  "312": {
+    "class_name": "parachute_aloevera_hair_oil",
+    "product_id": null,
+    "display_name": "Parachute Advansed Gold 5X Aloe Vera Hair Oil",
+    "score": 0.75,
+    "confirmed": false
+  },
+  "313": {
+    "class_name": "parachute_oil_1l",
+    "product_id": null,
+    "display_name": "Parachute 250ml",
+    "score": 0.71,
+    "confirmed": false
+  },
+  "314": {
+    "class_name": "parachute_oil_200ml",
+    "product_id": null,
+    "display_name": "Parachute 250ml",
+    "score": 0.824,
+    "confirmed": false
+  },
+  "315": {
+    "class_name": "parachute_oil_50ml",
+    "product_id": null,
+    "display_name": "Parachute 250ml",
+    "score": 0.848,
+    "confirmed": false
+  },
+  "316": {
+    "class_name": "parachute_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Parachute 250ml",
+    "score": 0.564,
+    "confirmed": false
+  },
+  "317": {
+    "class_name": "park_avenue_perfume",
+    "product_id": null,
+    "display_name": "Koparo Clean Sponge Wipe (Reusable)",
+    "score": 0.481,
+    "confirmed": false
+  },
+  "318": {
+    "class_name": "park_avenue_shaving_cream",
+    "product_id": null,
+    "display_name": "Amul Fresh Cream",
+    "score": 0.537,
+    "confirmed": false
+  },
+  "319": {
+    "class_name": "parle-g_biscuit_packet",
+    "product_id": null,
+    "display_name": "Parle 20-20 Nice Biscuit - Pack of 2",
+    "score": 0.655,
+    "confirmed": false
+  },
+  "320": {
+    "class_name": "patanjali_soap",
+    "product_id": null,
+    "display_name": "Mysore sandal soap",
+    "score": 0.562,
+    "confirmed": false
+  },
+  "321": {
+    "class_name": "pears_oil_control_and_glow",
+    "product_id": null,
+    "display_name": "Varklin Toilet Cleaner Block",
+    "score": 0.519,
+    "confirmed": false
+  },
+  "322": {
+    "class_name": "pears_original_glycerin_bar",
+    "product_id": 518,
+    "display_name": "pears original glycerine bar",
+    "score": 0.982,
+    "confirmed": true
+  },
+  "323": {
+    "class_name": "pears_pure_and_gentle",
+    "product_id": null,
+    "display_name": "Pears Pure & Gentle Soap",
+    "score": 0.8,
+    "confirmed": false
+  },
+  "324": {
+    "class_name": "pepsodent_tooth_paste",
+    "product_id": null,
+    "display_name": "Pepsodent Toothpaste 200g",
+    "score": 0.87,
+    "confirmed": false
+  },
+  "325": {
+    "class_name": "peri_peri_masala",
+    "product_id": null,
+    "display_name": "Priya Biryani Masala",
+    "score": 0.722,
+    "confirmed": false
+  },
+  "326": {
+    "class_name": "perk_chocolate",
+    "product_id": null,
+    "display_name": "Burst Chocolate",
+    "score": 0.759,
+    "confirmed": false
+  },
+  "327": {
+    "class_name": "pitambari_powder",
+    "product_id": null,
+    "display_name": "Aachi Sambhar Powder",
+    "score": 0.722,
+    "confirmed": false
+  },
+  "328": {
+    "class_name": "Ponds powder",
+    "product_id": null,
+    "display_name": "Sabena Dishwash Powder",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "329": {
+    "class_name": "ponds_lavenderpowder",
+    "product_id": null,
+    "display_name": "Rivaaj Coriander Powder",
+    "score": 0.558,
+    "confirmed": false
+  },
+  "330": {
+    "class_name": "ponds_powder_pink_lily",
+    "product_id": null,
+    "display_name": "Milo Powder Health Drink",
+    "score": 0.522,
+    "confirmed": false
+  },
+  "331": {
+    "class_name": "ponds_powder_pink_lily_100g",
+    "product_id": null,
+    "display_name": "Dove Pink 100g",
+    "score": 0.585,
+    "confirmed": false
+  },
+  "332": {
+    "class_name": "ponds_powder_pink_lily_50g",
+    "product_id": null,
+    "display_name": "Bolas Peri Peri Trail Mix",
+    "score": 0.51,
+    "confirmed": false
+  },
+  "333": {
+    "class_name": "ponds_sandal_powder",
+    "product_id": null,
+    "display_name": "Mysore sandal gold",
+    "score": 0.595,
+    "confirmed": false
+  },
+  "334": {
+    "class_name": "ponds_white_beauty",
+    "product_id": null,
+    "display_name": "Modern White Bread",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "335": {
+    "class_name": "pril_lime_dishwash_liquid",
+    "product_id": null,
+    "display_name": "Odopic Lime Dishwash Powder",
+    "score": 0.692,
+    "confirmed": false
+  },
+  "336": {
+    "class_name": "red_hit",
+    "product_id": null,
+    "display_name": "Sweat Shirt",
+    "score": 0.556,
+    "confirmed": false
+  },
+  "337": {
+    "class_name": "red_label_instant_masala_chai",
+    "product_id": null,
+    "display_name": "Cookd Butter Instant Gravy Masala",
+    "score": 0.613,
+    "confirmed": false
+  },
+  "338": {
+    "class_name": "red_label_natural_care_tea",
+    "product_id": null,
+    "display_name": "Red label Natural Care 500g",
+    "score": 0.868,
+    "confirmed": false
+  },
+  "339": {
+    "class_name": "red_label_tea_powder",
+    "product_id": null,
+    "display_name": "MTR Red Chilli Powder",
+    "score": 0.634,
+    "confirmed": false
+  },
+  "340": {
+    "class_name": "red_label_tea_powder_10rs/-",
+    "product_id": null,
+    "display_name": "Red label Natural 100g",
+    "score": 0.625,
+    "confirmed": false
+  },
+  "341": {
+    "class_name": "red_lays",
+    "product_id": null,
+    "display_name": "Red label 250g",
+    "score": 0.545,
+    "confirmed": false
+  },
+  "342": {
+    "class_name": "revive_fabric_stiffener",
+    "product_id": null,
+    "display_name": "Levista Classic Instant Coffee",
+    "score": 0.528,
+    "confirmed": false
+  },
+  "343": {
+    "class_name": "rexona_soap",
+    "product_id": null,
+    "display_name": "Rin Soap",
+    "score": 0.737,
+    "confirmed": false
+  },
+  "344": {
+    "class_name": "rin_bar_10/-",
+    "product_id": null,
+    "display_name": "Vim bar 110g",
+    "score": 0.696,
+    "confirmed": false
+  },
+  "345": {
+    "class_name": "rin_bar_20/-",
+    "product_id": null,
+    "display_name": "Vim bar 60g",
+    "score": 0.636,
+    "confirmed": false
+  },
+  "346": {
+    "class_name": "rin_matic_liquid_1L_pouch",
+    "product_id": null,
+    "display_name": "Vim liquid 115ML",
+    "score": 0.585,
+    "confirmed": false
+  },
+  "347": {
+    "class_name": "rin_surf_1kg",
+    "product_id": null,
+    "display_name": "Rin Soap(145g)",
+    "score": 0.538,
+    "confirmed": false
+  },
+  "348": {
+    "class_name": "rudraksha_agarbathi",
+    "product_id": null,
+    "display_name": "Chheda's Bhavnagari Gathiya",
+    "score": 0.565,
+    "confirmed": false
+  },
+  "349": {
+    "class_name": "saffola_masala_oats",
+    "product_id": 12443,
+    "display_name": "Saffola Masala Oats",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "350": {
+    "class_name": "Saffola_soft_creamy_oats",
+    "product_id": null,
+    "display_name": "Saffola Soft & Creamy Rolled Oats",
+    "score": 0.842,
+    "confirmed": false
+  },
+  "351": {
+    "class_name": "sandal_agarbathi",
+    "product_id": null,
+    "display_name": "iD Aloo Paratha",
+    "score": 0.581,
+    "confirmed": false
+  },
+  "352": {
+    "class_name": "santoor_aloevera_soaps",
+    "product_id": null,
+    "display_name": "Santoor Royal Sandal Soap",
+    "score": 0.681,
+    "confirmed": false
+  },
+  "353": {
+    "class_name": "santoor_baby_soap",
+    "product_id": null,
+    "display_name": "Santoor soap 39g",
+    "score": 0.727,
+    "confirmed": false
+  },
+  "354": {
+    "class_name": "santoor_soap",
+    "product_id": null,
+    "display_name": "Santoor soap 39g",
+    "score": 0.857,
+    "confirmed": false
+  },
+  "355": {
+    "class_name": "santoor_white_soap",
+    "product_id": null,
+    "display_name": "Santoor soap 39g",
+    "score": 0.706,
+    "confirmed": false
+  },
+  "356": {
+    "class_name": "sensodyne_tooth_paste",
+    "product_id": null,
+    "display_name": "Sensora Sensitive Toothpaste",
+    "score": 0.735,
+    "confirmed": false
+  },
+  "357": {
+    "class_name": "sensodyne_tooth_paste_20/-",
+    "product_id": null,
+    "display_name": "Pepsodent Toothpaste 200g",
+    "score": 0.76,
+    "confirmed": false
+  },
+  "358": {
+    "class_name": "shivan_agarbathi",
+    "product_id": null,
+    "display_name": "Chheda's Bhavnagari Gathiya",
+    "score": 0.558,
+    "confirmed": false
+  },
+  "359": {
+    "class_name": "snickers_chocolate",
+    "product_id": null,
+    "display_name": "Burst Chocolate",
+    "score": 0.727,
+    "confirmed": false
+  },
+  "360": {
+    "class_name": "softouch_bottle",
+    "product_id": null,
+    "display_name": "Scotch Brite Scrub Pad",
+    "score": 0.486,
+    "confirmed": false
+  },
+  "361": {
+    "class_name": "sprite_1L",
+    "product_id": null,
+    "display_name": "HIT red 125ML",
+    "score": 0.545,
+    "confirmed": false
+  },
+  "362": {
+    "class_name": "stayfree_secure_xl",
+    "product_id": null,
+    "display_name": "Stayfree Secure",
+    "score": 0.909,
+    "confirmed": false
+  },
+  "363": {
+    "class_name": "sting",
+    "product_id": null,
+    "display_name": "Samsung",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "364": {
+    "class_name": "sukhibava_deepam_oil",
+    "product_id": null,
+    "display_name": "Ruchi Gold Refined Palmolein Oil",
+    "score": 0.538,
+    "confirmed": false
+  },
+  "365": {
+    "class_name": "sunrise_coffee_powder_sachet",
+    "product_id": null,
+    "display_name": "Sskullhit Instant Coffee Powder Sachets",
+    "score": 0.746,
+    "confirmed": false
+  },
+  "366": {
+    "class_name": "sunsilk shampoo",
+    "product_id": null,
+    "display_name": "Sunsilk Thick &Long Shampoo",
+    "score": 0.714,
+    "confirmed": false
+  },
+  "367": {
+    "class_name": "sunsilk_pink_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Sunsilk Thick &Long Shampoo",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "368": {
+    "class_name": "sunsilk_shampoo_bottle",
+    "product_id": null,
+    "display_name": "Sunsilk Thick &Long Shampoo",
+    "score": 0.612,
+    "confirmed": false
+  },
+  "369": {
+    "class_name": "sunsilk_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Sunsilk Thick &Long Shampoo",
+    "score": 0.612,
+    "confirmed": false
+  },
+  "370": {
+    "class_name": "sunsilk_yellow_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Sunsilk Thick &Long Shampoo",
+    "score": 0.643,
+    "confirmed": false
+  },
+  "371": {
+    "class_name": "surf_excel_matic_liquid_FL_pouch",
+    "product_id": null,
+    "display_name": "Surf Excel Matic Top Load",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "372": {
+    "class_name": "surf_excel_matic_liquid_TL_pouch",
+    "product_id": null,
+    "display_name": "Surf Excel Matic Top Load",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "373": {
+    "class_name": "surf_excel_matic_sachet",
+    "product_id": null,
+    "display_name": "Surf Excel Matic Top Load Sachet 70ml",
+    "score": 0.767,
+    "confirmed": false
+  },
+  "374": {
+    "class_name": "surf_excelmatic_topload_sachet",
+    "product_id": null,
+    "display_name": "Surf Excel Matic Top Load Sachet 70ml",
+    "score": 0.896,
+    "confirmed": false
+  },
+  "375": {
+    "class_name": "surfexcel_matic_liquid_TL_sachet",
+    "product_id": null,
+    "display_name": "Surf Excel Matic Top Load Sachet 70ml",
+    "score": 0.725,
+    "confirmed": false
+  },
+  "376": {
+    "class_name": "surfexcel_soap",
+    "product_id": null,
+    "display_name": "Surf Excel (145g)",
+    "score": 0.645,
+    "confirmed": false
+  },
+  "377": {
+    "class_name": "surfexcel_soap_10/-",
+    "product_id": null,
+    "display_name": "Surf Excel (145g)",
+    "score": 0.629,
+    "confirmed": false
+  },
+  "378": {
+    "class_name": "swastik_chilli_powder_sachet",
+    "product_id": null,
+    "display_name": "Swastik Red Chilli Powder",
+    "score": 0.792,
+    "confirmed": false
+  },
+  "379": {
+    "class_name": "swastik_turmeric_powder_sachet",
+    "product_id": null,
+    "display_name": "Swastik Turmeric Powder/Haldi",
+    "score": 0.814,
+    "confirmed": false
+  },
+  "380": {
+    "class_name": "Swastiks ginger pickle",
+    "product_id": null,
+    "display_name": "Mango Pickle",
+    "score": 0.837,
+    "confirmed": false
+  },
+  "381": {
+    "class_name": "Swastiks mango pickle",
+    "product_id": 509,
+    "display_name": "Mango Pickle",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "382": {
+    "class_name": "Swastiks red  chilli pickle",
+    "product_id": null,
+    "display_name": "Swaadikaa Red Chilli Pickle",
+    "score": 0.852,
+    "confirmed": false
+  },
+  "383": {
+    "class_name": "swastiks_ginger_&_garlic_paste",
+    "product_id": null,
+    "display_name": "Catch Ginger Garlic Paste",
+    "score": 0.8,
+    "confirmed": false
+  },
+  "384": {
+    "class_name": "swastiks_mango_pickle_200g",
+    "product_id": null,
+    "display_name": "Mango Pickle",
+    "score": 0.894,
+    "confirmed": false
+  },
+  "385": {
+    "class_name": "swastiks_tomato_pickle_200g",
+    "product_id": null,
+    "display_name": "Mango Pickle",
+    "score": 0.792,
+    "confirmed": false
+  },
+  "386": {
+    "class_name": "swastiks_tomato_pickle_500g",
+    "product_id": null,
+    "display_name": "Mango Pickle",
+    "score": 0.792,
+    "confirmed": false
+  },
+  "387": {
+    "class_name": "synthetic_vinegar_bottle_1l",
+    "product_id": null,
+    "display_name": "Beard Oil 50ml",
+    "score": 0.531,
+    "confirmed": false
+  },
+  "388": {
+    "class_name": "taj_mahal_tea_powder",
+    "product_id": null,
+    "display_name": "Gramaahar Turmeric Powder",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "389": {
+    "class_name": "tang_orange_instant_mix_powder",
+    "product_id": null,
+    "display_name": "MTR Khaman Dhokla- Instant Mix",
+    "score": 0.6,
+    "confirmed": false
+  },
+  "390": {
+    "class_name": "tata_tea_agni",
+    "product_id": null,
+    "display_name": "Tata Tea Gold",
+    "score": 0.769,
+    "confirmed": false
+  },
+  "391": {
+    "class_name": "tata_tea_gold",
+    "product_id": 1677,
+    "display_name": "Tata Tea Gold",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "392": {
+    "class_name": "tetley_green_tea",
+    "product_id": null,
+    "display_name": "Tata Gemini Tea",
+    "score": 0.645,
+    "confirmed": false
+  },
+  "393": {
+    "class_name": "thumsup_200ml",
+    "product_id": null,
+    "display_name": "Thums Up Cola Soft Drink 250ml",
+    "score": 0.558,
+    "confirmed": false
+  },
+  "394": {
+    "class_name": "tide_surf_1kg",
+    "product_id": null,
+    "display_name": "Tide Double Power 1kg",
+    "score": 0.647,
+    "confirmed": false
+  },
+  "395": {
+    "class_name": "tresemme shampoo",
+    "product_id": null,
+    "display_name": "BBlunt Refresh Dry Shampoo",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "396": {
+    "class_name": "tressme_conditioner_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.579,
+    "confirmed": false
+  },
+  "397": {
+    "class_name": "tressme_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "398": {
+    "class_name": "tressmee_shampoo_sachet",
+    "product_id": null,
+    "display_name": "Meera Sachet",
+    "score": 0.629,
+    "confirmed": false
+  },
+  "399": {
+    "class_name": "twinkle_round_dishwash_250g",
+    "product_id": null,
+    "display_name": "Vim Lemon Dishwash Gel",
+    "score": 0.653,
+    "confirmed": false
+  },
+  "400": {
+    "class_name": "ujala_blue",
+    "product_id": null,
+    "display_name": "Ujala(75 Ml)",
+    "score": 0.636,
+    "confirmed": false
+  },
+  "401": {
+    "class_name": "unibic_butter_biscuits",
+    "product_id": null,
+    "display_name": "Unibic Caramel Biscotti",
+    "score": 0.622,
+    "confirmed": false
+  },
+  "402": {
+    "class_name": "vanish_liquid",
+    "product_id": null,
+    "display_name": "Vim Liquid 250ml",
+    "score": 0.621,
+    "confirmed": false
+  },
+  "403": {
+    "class_name": "vaseline cocoa glow body lotion",
+    "product_id": null,
+    "display_name": "Nivea Super 10 Glow Serum Lotion",
+    "score": 0.571,
+    "confirmed": false
+  },
+  "404": {
+    "class_name": "vaseline deep moisture",
+    "product_id": null,
+    "display_name": "Vaseline Cloud Soft-Light Face & Body Moisturizer",
+    "score": 0.563,
+    "confirmed": false
+  },
+  "405": {
+    "class_name": "vasmol_33_kesh_kala",
+    "product_id": null,
+    "display_name": "Amul Fresh Malai Paneer",
+    "score": 0.524,
+    "confirmed": false
+  },
+  "406": {
+    "class_name": "vatika_hair_oil",
+    "product_id": null,
+    "display_name": "Dabur Vatika Rosemary Hair Oil",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "407": {
+    "class_name": "vatika_shampoo",
+    "product_id": null,
+    "display_name": "Epitight Dry Shampoo",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "408": {
+    "class_name": "veet",
+    "product_id": null,
+    "display_name": "Veet 30g",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "409": {
+    "class_name": "VI-john_shaving_cream",
+    "product_id": null,
+    "display_name": "Cetaphil Moisturizing Cream",
+    "score": 0.542,
+    "confirmed": false
+  },
+  "410": {
+    "class_name": "vicco_turmeric_skin_creame",
+    "product_id": null,
+    "display_name": "Vicco Turmeric Wso Skin Cream 7g",
+    "score": 0.862,
+    "confirmed": false
+  },
+  "411": {
+    "class_name": "vicco_vajradanti_toothpaste",
+    "product_id": null,
+    "display_name": "Vicco Vajradanti Ayurvedic Tooth Powder",
+    "score": 0.727,
+    "confirmed": false
+  },
+  "412": {
+    "class_name": "vijaya_deepam_oil_1L",
+    "product_id": null,
+    "display_name": "Vijaya Ghee (Neyyi)",
+    "score": 0.564,
+    "confirmed": false
+  },
+  "413": {
+    "class_name": "vijaya_deepam_oil_500ml",
+    "product_id": null,
+    "display_name": "Jersey Toned Milk 500ml",
+    "score": 0.565,
+    "confirmed": false
+  },
+  "414": {
+    "class_name": "vim dishwash liquid gel",
+    "product_id": null,
+    "display_name": "Vim Lemon Dishwash Gel",
+    "score": 0.711,
+    "confirmed": false
+  },
+  "415": {
+    "class_name": "vim_bar_20/-",
+    "product_id": null,
+    "display_name": "Vim bar 60g",
+    "score": 0.818,
+    "confirmed": false
+  },
+  "416": {
+    "class_name": "vim_bar_box_50/-",
+    "product_id": null,
+    "display_name": "Vim soap box 250g",
+    "score": 0.75,
+    "confirmed": false
+  },
+  "417": {
+    "class_name": "vim_dishwash_bar_10/-",
+    "product_id": null,
+    "display_name": "Vim Lemon Dishwash Bar (300 g)",
+    "score": 0.72,
+    "confirmed": false
+  },
+  "418": {
+    "class_name": "vim_dishwash_maha_tub",
+    "product_id": null,
+    "display_name": "Vim Lemon Tub Dishwashing Tub",
+    "score": 0.64,
+    "confirmed": false
+  },
+  "419": {
+    "class_name": "vim_liquid_bottle_200ml",
+    "product_id": null,
+    "display_name": "Vim Liquid 250ml",
+    "score": 0.769,
+    "confirmed": false
+  },
+  "420": {
+    "class_name": "vim_liquid_bottle_500ml",
+    "product_id": null,
+    "display_name": "Vim Liquid 250ml",
+    "score": 0.769,
+    "confirmed": false
+  },
+  "421": {
+    "class_name": "vim_liquid_packet_120ml",
+    "product_id": null,
+    "display_name": "Vim Liquid 250ml",
+    "score": 0.769,
+    "confirmed": false
+  },
+  "422": {
+    "class_name": "vim_pudina_fresh_bar",
+    "product_id": null,
+    "display_name": "Vim Pudina Fresh(250 G)",
+    "score": 0.791,
+    "confirmed": false
+  },
+  "423": {
+    "class_name": "wagh_bakri_tea_powder",
+    "product_id": null,
+    "display_name": "Wagh Bakri Spiced Tea",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "424": {
+    "class_name": "wagh_bakri_tea_powder_10rs/-",
+    "product_id": null,
+    "display_name": "Gemini Tea powder 100g",
+    "score": 0.653,
+    "confirmed": false
+  },
+  "425": {
+    "class_name": "weikfield_baking_powder_50g",
+    "product_id": null,
+    "display_name": "Weikfield Mango Falooda Mix",
+    "score": 0.63,
+    "confirmed": false
+  },
+  "426": {
+    "class_name": "weikfield_baking_soda",
+    "product_id": null,
+    "display_name": "Weikfield Mango Falooda Mix",
+    "score": 0.708,
+    "confirmed": false
+  },
+  "427": {
+    "class_name": "weikfield_custard_powder",
+    "product_id": null,
+    "display_name": "Puramio Vanilla Custard Powder",
+    "score": 0.667,
+    "confirmed": false
+  },
+  "428": {
+    "class_name": "wheel_surf_1kg",
+    "product_id": null,
+    "display_name": "Red label Natural 100g",
+    "score": 0.5,
+    "confirmed": false
+  },
+  "429": {
+    "class_name": "wheel_surf_500g",
+    "product_id": null,
+    "display_name": "Hatsun Curd 500g",
+    "score": 0.581,
+    "confirmed": false
+  },
+  "430": {
+    "class_name": "whisper choice xl pads",
+    "product_id": null,
+    "display_name": "Whisper Choice Ultra Sanitary Pads",
+    "score": 0.75,
+    "confirmed": false
+  },
+  "431": {
+    "class_name": "whisper_choice_nights_xxl",
+    "product_id": null,
+    "display_name": "Whisper Choice Nights Sanitary Pads",
+    "score": 0.733,
+    "confirmed": false
+  },
+  "432": {
+    "class_name": "whisper_choice_ultra_xl",
+    "product_id": null,
+    "display_name": "Whisper Choice Ultra Sanitary Pads",
+    "score": 0.737,
+    "confirmed": false
+  },
+  "433": {
+    "class_name": "xxx matic liquid",
+    "product_id": null,
+    "display_name": "Amul Masti Cup Curd",
+    "score": 0.514,
+    "confirmed": false
+  },
+  "434": {
+    "class_name": "xxx_detergent_bar",
+    "product_id": null,
+    "display_name": "Rin Detergent Bar",
+    "score": 0.824,
+    "confirmed": false
+  },
+  "435": {
+    "class_name": "xxx_soap_10/-",
+    "product_id": null,
+    "display_name": "santoor soap 100g",
+    "score": 0.552,
+    "confirmed": false
+  },
+  "436": {
+    "class_name": "yellow_lays",
+    "product_id": null,
+    "display_name": "Kellogg's Oats",
+    "score": 0.56,
+    "confirmed": false
+  },
+  "437": {
+    "class_name": "yippee_noodles",
+    "product_id": null,
+    "display_name": "Koka Chicken Noodles",
+    "score": 0.588,
+    "confirmed": false
+  },
+  "438": {
+    "class_name": "z_powder",
+    "product_id": null,
+    "display_name": "Keya Garlic Powder",
+    "score": 0.538,
+    "confirmed": false
+  },
+  "439": {
+    "class_name": "zandu_balm",
+    "product_id": 12446,
+    "display_name": "Zandu Balm",
+    "score": 1.0,
+    "confirmed": true
+  },
+  "440": {
+    "class_name": "zblack_agarbathi",
+    "product_id": null,
+    "display_name": "Black Shirt",
+    "score": 0.593,
+    "confirmed": false
+  },
+  "441": {
+    "class_name": "zinda_tilismath",
+    "product_id": null,
+    "display_name": "Hybrid Tomato",
+    "score": 0.5,
+    "confirmed": false
+  }
+}

@@ -1,12 +1,14 @@
-"""Bulk stock-in shelf-photo storage — Azure Blob.
+"""Vision shelf-photo storage — Azure Blob (onboarding + daily shelf scans).
 
-The daily shelf-scan images use a local-disk seam (storage.py). Onboarding photos
-are different: they're the raw (image → detected products) training data that grows
-the model, and they're captured once at store setup, so they MUST survive container
-redeploys → durable Azure Blob (same infra as udhaar consent clips).
+Shelf photos are the raw (image → detected products) data that both feeds the review
+screen (crop thumbnails) and grows the model, so they MUST survive container redeploys
+→ durable Azure Blob (same infra as udhaar consent clips). Both the bulk-onboarding
+flow and the daily morning/evening shelf scan upload here; the crop endpoint reads
+them back via download_shelf_image. When Azure isn't configured (dev), callers fall
+back to the local-disk seam (storage.py) instead.
 
 Configure via env:
-  AZURE_STORAGE_CONNECTION_STRING   (empty disables onboarding upload → 503)
+  AZURE_STORAGE_CONNECTION_STRING   (empty ⇒ callers use local-disk fallback)
   ONBOARDING_SHELF_CONTAINER        (default "onboarding-shelf")
 """
 from __future__ import annotations

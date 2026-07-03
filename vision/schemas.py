@@ -35,6 +35,7 @@ class VisionItemOut(BaseModel):
     match_score: float
     is_unknown: bool
     bbox_json: Optional[str] = None
+    image_index: int = 0
     corrected_product_id: Optional[int] = None
 
 
