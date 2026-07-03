@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import ClientDisconnect
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -242,6 +243,27 @@ def create_app() -> FastAPI:
         # is listening for the response, so just close quietly.
         logger.debug("Client disconnected mid-request on %s", request.url.path)
         return Response(status_code=499)  # nginx-style "client closed request"
+
+    @app.exception_handler(IntegrityError)
+    async def integrity_error(request: Request, exc: IntegrityError):
+        """Turn any DB constraint violation into a clean 4xx instead of a 500.
+        A bad reference (FK), a duplicate (unique), or a missing required field is a
+        client problem, not a server crash — surface it as such and log at WARNING
+        (no scary traceback). Endpoints should still validate up-front for a precise
+        message; this is the backstop so a missed check never 500s."""
+        pgcode = getattr(getattr(exc, "orig", None), "pgcode", None)
+        if pgcode == "23503":      # foreign_key_violation
+            status, msg = 400, "References a record that doesn't exist."
+        elif pgcode == "23505":    # unique_violation
+            status, msg = 409, "That record already exists."
+        elif pgcode == "23502":    # not_null_violation
+            status, msg = 400, "A required field is missing."
+        else:
+            status, msg = 409, "The request conflicts with existing data."
+        logger.warning("Integrity error (%s) on %s: %s",
+                       pgcode, request.url.path, str(getattr(exc, "orig", exc))[:200])
+        return JSONResponse(status_code=status, content={"success": False, "error": msg},
+                            headers=_CORS_HEADERS)
 
     @app.exception_handler(Exception)
     async def generic_error(request: Request, exc: Exception):
