@@ -255,19 +255,67 @@ def calc_arpu(engine, store_id: int | None = None, days: int = 30) -> dict:
 
 
 def calc_brand_conversion(engine, store_id: int | None = None, days: int = 90) -> dict:
-    # Placeholder: Brand deals/investments aren't fully modeled in tables yet
+    p_from, p_to = _period(days)
+    params: dict = {"p_from": p_from, "p_to": p_to}
+    order_clause = ""
+    if store_id:
+        params["sid"] = store_id
+        order_clause = " AND o.store_id = :sid"
+
+    sql = f"""
+    WITH catalog AS (
+        SELECT DISTINCT brand FROM kirana_oltp.product
+        WHERE brand IS NOT NULL AND brand != ''
+    ),
+    rev_by_brand AS (
+        SELECT p.brand,
+               COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS revenue
+        FROM kirana_oltp.order_item oi
+        JOIN kirana_oltp.orders  o  ON oi.order_id  = o.order_id
+        JOIN kirana_oltp.product p  ON oi.product_id = p.product_id
+        WHERE o.order_status = 'completed'
+          AND o.order_date BETWEEN :p_from AND :p_to
+          {order_clause}
+          AND p.brand IS NOT NULL AND p.brand != ''
+        GROUP BY p.brand
+    )
+    SELECT
+        (SELECT COUNT(*) FROM catalog)                                      AS total_brands,
+        (SELECT COUNT(*) FROM rev_by_brand WHERE revenue > 0)              AS active_brands,
+        (SELECT brand   FROM rev_by_brand ORDER BY revenue DESC LIMIT 1)   AS top_brand,
+        (SELECT revenue FROM rev_by_brand ORDER BY revenue DESC LIMIT 1)   AS top_brand_revenue,
+        (SELECT COALESCE(SUM(revenue), 0) FROM rev_by_brand)               AS total_revenue
+    """
+    r = _row(engine, sql, params)
+
+    total = int(r.get("total_brands") or 0)
+    active = int(r.get("active_brands") or 0)
+    conversion_pct = round(active / total * 100, 2) if total > 0 else 0.0
+    top_rev = float(r.get("top_brand_revenue") or 0)
+    total_rev = float(r.get("total_revenue") or 0)
+    top_brand_share = round(top_rev / total_rev * 100, 2) if total_rev > 0 else 0.0
+
     return {
-        "conversion_pct": 0.0,
-        "status": "Data source pending (Brand Deals table)",
-        "trend": _trend(0.0, None),
+        "conversion_pct": conversion_pct,
+        "total_brands_in_catalog": total,
+        "active_selling_brands": active,
+        "top_brand": r.get("top_brand"),
+        "top_brand_revenue_share_pct": top_brand_share,
+        "note": "proxy — brands-with-sales ÷ catalog brands (Brand Deals table not yet seeded)",
+        "trend": _trend(conversion_pct, None),
     }
 
 
 def calc_customer_credit_risk(engine, store_id: int = None) -> dict:
-    sql = """
+    params: dict = {}
+    store_clause = ""
+    if store_id:
+        params["sid"] = store_id
+        store_clause = " AND store_id = :sid"
+    sql = f"""
     SELECT ROUND(SUM(amount - amount_paid) * 100.0 / NULLIF(SUM(amount), 0), 2) AS risk_pct
     FROM kirana_oltp.khata
-    WHERE status != 'settled'
+    WHERE status != 'settled'{store_clause}
     """
-    val = float(_scalar(engine, sql, {}) or 0)
+    val = float(_scalar(engine, sql, params) or 0)
     return {"risk_pct": val, "trend": _trend(val, None, higher_is_better=False)}

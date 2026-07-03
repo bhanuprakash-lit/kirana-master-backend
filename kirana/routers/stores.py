@@ -16,6 +16,7 @@ from kirana.schemas import (
     StoreUpdateRequest,
 )
 from kirana.service import KiranaService
+from pos.auth import create_access_token
 from whatsapp.templates import basket_promo_payload
 
 router = APIRouter(prefix="/kirana", tags=["Kirana AI"])
@@ -99,6 +100,7 @@ async def add_store(request: Request, user: dict = Depends(_auth)):
     b = await request.json()
     if not b.get("store_name"):
         raise HTTPException(status_code=400, detail="store_name required")
+    make_active = b.get("make_active", True)
     store = _repo(request).add_store_for_user(
         uid,
         store_name=b["store_name"],
@@ -109,22 +111,37 @@ async def add_store(request: Request, user: dict = Depends(_auth)):
         location=b.get("location"),
         region=b.get("region"),
         city=b.get("city"),
-        make_active=b.get("make_active", True),
+        make_active=make_active,
     )
+    # Mint the POS JWT for the new store in this same call when it becomes
+    # active — saves the client a second round trip to /pos/token-from-kirana
+    # (same reasoning as /stores/switch above).
+    if make_active:
+        store["pos_access_token"] = create_access_token(
+            {"sub": user["username"], "store_id": store["store_id"]}
+        )
     return store
 
 
 @router.post("/stores/switch")
 async def switch_store(request: Request, user: dict = Depends(_auth)):
-    """Switch the owner's active store. Body: {store_id}. Membership-checked."""
+    """Switch the owner's active store. Body: {store_id}. Membership-checked.
+
+    Also mints the new POS JWT (it bakes in store_id) in this same call —
+    the client used to make a second round trip to /pos/token-from-kirana
+    right after this one, which doubled the perceived switch latency for no
+    reason since we already know the new store_id here.
+    """
     uid = _require_user(user)
     b = await request.json()
     sid = b.get("store_id")
     if not sid:
         raise HTTPException(status_code=400, detail="store_id required")
-    if not _repo(request).set_active_store(uid, int(sid)):
+    sid = int(sid)
+    if not _repo(request).set_active_store(uid, sid):
         raise HTTPException(status_code=403, detail="You don't own this store")
-    return {"active_store_id": int(sid)}
+    pos_token = create_access_token({"sub": user["username"], "store_id": sid})
+    return {"active_store_id": sid, "pos_access_token": pos_token}
 
 
 @router.patch("/stores/{store_id}")

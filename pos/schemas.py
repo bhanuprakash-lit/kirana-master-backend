@@ -48,6 +48,7 @@ class ProductOut(BaseModel):
     image_url: Optional[str] = None
     hsn_code: Optional[str] = None       # F3 — GST HSN/SAC
     gst_rate: Optional[float] = None     # F3 — per-product GST %
+    warranty_months: Optional[int] = None  # tester #11 — per-product warranty
     # joined from pricing
     price: Optional[float] = None
     mrp: Optional[float] = None
@@ -65,6 +66,14 @@ class OrderItemCreate(BaseModel):
     quantity: float
     unit_price: Optional[float] = None
     selling_price: Optional[float] = None
+
+
+class SerialItemCreate(BaseModel):
+    """Tester #4 — a serial/IMEI captured per cart line so it links to the
+    specific phone it was billed against (not a flat list)."""
+    serial_no: str
+    product_id: int
+    variant_id: Optional[int] = None
 
 
 class OrderCreate(BaseModel):
@@ -92,6 +101,9 @@ class OrderCreate(BaseModel):
     #   M7 serials sold on this bill, M4 membership session used + appointment
     #   billed, M9 job card billed.
     serials: Optional[List[str]] = None
+    # Tester #4 — per-line serials (preferred over the flat `serials` list); each
+    # links to its product/variant for warranty + receipt.
+    serial_items: Optional[List[SerialItemCreate]] = None
     membership_id: Optional[int] = None
     appointment_id: Optional[int] = None
     job_card_id: Optional[int] = None

@@ -64,6 +64,7 @@ def test_settings():
         google_play_credentials_json="",
         azure_storage_connection_string="",
         consent_audio_container="",
+        onboarding_shelf_container="",
     )
 
 

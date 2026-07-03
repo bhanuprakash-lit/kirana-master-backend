@@ -31,6 +31,35 @@ def _product_tbl(store_id: int) -> str:
     return "kirana_oltp.product_catalog" if store_id in CATALOG_STORES else "kirana_oltp.product"
 
 
+# ── Per-product stock aggregation (F2 variants) ───────────────────────────────
+# A product has one inventory row per (store, product, variant): the base
+# row (variant_id IS NULL) plus one per real variant (kept in sync by
+# VariantsRepository._sync_variant_inventory). Joining inventory directly made
+# the product list emit one row PER variant — the same product showing several
+# times with different stock numbers (tester #7). This correlated LATERAL
+# collapses inventory to ONE stock figure per product:
+#   • product has real (non-implicit, active) variants → SUM of variant rows
+#   • otherwise (grocery / implicit)                    → the base NULL row
+# Picking by-variant vs base also corrects pre-existing rows where the base
+# row still carries the old summed stock. `inv_rows` preserves the original
+# INNER-JOIN semantics (only products actually stocked at this store show).
+# Correlates on p.product_id and the :sid bind, so it slots into each query
+# that already exposes those.
+_INV_STOCK_LATERAL = """
+    SELECT
+        CASE WHEN EXISTS (
+                 SELECT 1 FROM kirana_oltp.product_variant v
+                 WHERE v.product_id = p.product_id
+                   AND v.is_implicit = FALSE AND v.is_active = TRUE)
+             THEN COALESCE(SUM(i.quantity) FILTER (WHERE i.variant_id IS NOT NULL), 0)
+             ELSE COALESCE(SUM(i.quantity) FILTER (WHERE i.variant_id IS NULL), 0)
+        END AS quantity,
+        COUNT(*) AS inv_rows
+    FROM kirana_oltp.inventory i
+    WHERE i.product_id = p.product_id AND i.store_id = :sid
+"""
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _current_price(db: Session, product_id: int, store_id: int) -> KiranaPricing | None:
@@ -146,14 +175,13 @@ def get_products(db: Session, store_id: int, skip: int = 0, limit: int = 100) ->
         SELECT p.product_id, p.name, p.brand, p.unit,
                p.weight::float            AS weight,
                p.sku, p.barcode, p.is_perishable, p.is_loose, p.image_url, p.category_id,
-               p.hsn_code, p.gst_rate::float AS gst_rate,
+               p.hsn_code, p.gst_rate::float AS gst_rate, p.warranty_months,
                COALESCE(pr.price,    0.0)::float AS price,
                pr.mrp::float                     AS mrp,
                COALESCE(inv.quantity, 0)          AS stock_quantity,
                TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
         FROM   {tbl} p
-        JOIN   kirana_oltp.inventory inv
-                   ON inv.product_id = p.product_id AND inv.store_id = :sid
+        JOIN   LATERAL ({_INV_STOCK_LATERAL}) inv ON inv.inv_rows > 0
         LEFT   JOIN LATERAL (
                    SELECT price, mrp
                    FROM   kirana_oltp.pricing
@@ -168,7 +196,8 @@ def get_products(db: Session, store_id: int, skip: int = 0, limit: int = 100) ->
                   AND ib.qty_in_stock > 0
         GROUP  BY p.product_id, p.name, p.brand, p.unit, p.weight,
                   p.sku, p.barcode, p.is_perishable, p.is_loose,
-                  p.image_url, p.category_id, p.hsn_code, p.gst_rate, pr.price, pr.mrp, inv.quantity
+                  p.image_url, p.category_id, p.hsn_code, p.gst_rate, p.warranty_months,
+                  pr.price, pr.mrp, inv.quantity
         ORDER  BY p.product_id
         LIMIT  :limit OFFSET :skip
     """), {"sid": store_id, "limit": limit, "skip": skip}).mappings().all()
@@ -188,8 +217,7 @@ def get_product(db: Session, product_id: int, store_id: int) -> dict | None:
                    COALESCE(inv.quantity, 0)          AS stock_quantity,
                    TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
             FROM   {tbl} p
-            JOIN   kirana_oltp.inventory inv
-                       ON inv.product_id = p.product_id AND inv.store_id = :sid
+            JOIN   LATERAL ({_INV_STOCK_LATERAL}) inv ON inv.inv_rows > 0
             LEFT   JOIN LATERAL (
                        SELECT price, mrp
                        FROM   kirana_oltp.pricing
@@ -235,8 +263,7 @@ def get_product_by_barcode(db: Session, barcode: str, store_id: int) -> dict | N
             COALESCE(inv.quantity, 0)        AS stock_quantity,
             TO_CHAR(MIN(ib.expiry_date), 'YYYY-MM-DD') AS expiry_date
         FROM   {tbl} p
-        JOIN   kirana_oltp.inventory inv
-                   ON inv.product_id = p.product_id AND inv.store_id = :sid
+        JOIN   LATERAL ({_INV_STOCK_LATERAL}) inv ON inv.inv_rows > 0
         LEFT   JOIN LATERAL (
                    SELECT price, mrp
                    FROM   kirana_oltp.pricing
@@ -445,9 +472,27 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
     try:
         from kirana.repositories.main import KiranaRepository
         repo = KiranaRepository(db.get_bind())
-        for sn in (order.serials or []):
-            if sn and sn.strip():
-                repo.mark_serial_sold(store_id, sn.strip(), db_order.order_id, db_order.customer_id)
+        # Register + sell each serial so a freshly-typed IMEI also lands in the
+        # warranty-claim picker (tester #3) and gets a warranty_until derived
+        # from the product's warranty_months (#11).
+        if order.serial_items:
+            # Tester #4 — per-line serials carry their own product/variant, so
+            # each IMEI links to the exact phone it was billed against.
+            for si in order.serial_items:
+                if si.serial_no and si.serial_no.strip():
+                    repo.register_serial_sold(
+                        store_id, si.serial_no.strip(), db_order.order_id,
+                        db_order.customer_id, product_id=si.product_id,
+                        variant_id=si.variant_id)
+        else:
+            # Legacy flat list: attribute to the single product line if the bill
+            # has exactly one, else just mark a pre-registered serial sold.
+            distinct_pids = {it.product_id for it in order.items}
+            serial_pid = next(iter(distinct_pids)) if len(distinct_pids) == 1 else None
+            for sn in (order.serials or []):
+                if sn and sn.strip():
+                    repo.register_serial_sold(store_id, sn.strip(), db_order.order_id,
+                                              db_order.customer_id, product_id=serial_pid)
         if order.membership_id:
             repo.use_membership_session(int(order.membership_id), store_id)
         if order.appointment_id:

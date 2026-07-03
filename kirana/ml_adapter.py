@@ -364,6 +364,8 @@ class MLAdapter:
         return self._frame
 
     def get_ml_state(self) -> pd.DataFrame | None:
+        if self._ml_state is None:
+            self.refresh()
         return self._ml_state
 
     # ── Quick summary for a single store ──────────────────────────────────────

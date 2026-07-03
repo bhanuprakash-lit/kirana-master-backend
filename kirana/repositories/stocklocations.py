@@ -19,6 +19,12 @@ class StockLocationsRepositoryMixin:
             """), {"sid": store_id, "pid": product_id}).mappings().all()
         return [dict(r) for r in rows]
 
+    def product_exists(self, product_id: int) -> bool:
+        with self._conn() as conn:
+            return conn.execute(text(
+                "SELECT 1 FROM kirana_oltp.product WHERE product_id = :pid"),
+                {"pid": product_id}).first() is not None
+
     def upsert_location(self, store_id: int, product_id: int, rack: str,
                         quantity: float, variant_id: int | None = None) -> dict:
         with self._conn() as conn:

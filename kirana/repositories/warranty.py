@@ -8,18 +8,67 @@ logger = logging.getLogger("kirana.repository")
 class WarrantyRepositoryMixin:
     """Module M7 — serial/IMEI register + warranty-claim tracking (electronics)."""
 
+    # ── Per-product warranty (tester #11) ────────────────────────────────────
+    def set_product_warranty(self, product_id: int, warranty_months: int | None) -> dict:
+        """Set a product's warranty length in months (None/0 clears it)."""
+        wm = int(warranty_months) if warranty_months else None
+        with self._conn() as conn:
+            conn.execute(text(
+                "UPDATE kirana_oltp.product SET warranty_months = :wm "
+                "WHERE product_id = :pid"
+            ), {"wm": wm, "pid": product_id})
+            conn.commit()
+        return {"product_id": product_id, "warranty_months": wm}
+
+    def register_serial_sold(self, store_id: int, serial_no: str,
+                             order_id: int | None, customer_id: int | None,
+                             product_id: int | None,
+                             variant_id: int | None = None) -> bool:
+        """Register a serial/IMEI as sold at checkout, creating it if the
+        shopkeeper typed a fresh one (so it shows in the warranty-claim picker —
+        tester #3/#4). Links to the specific product (and variant) it was billed
+        against, and derives warranty_until from that product's warranty_months
+        and the sale date (tester #11). When product_id is unknown (no per-line
+        mapping) we fall back to updating a pre-registered serial only."""
+        if product_id is None:
+            return self.mark_serial_sold(store_id, serial_no, order_id, customer_id)
+        with self._conn() as conn:
+            n = conn.execute(text("""
+                INSERT INTO kirana_oltp.product_serial
+                    (store_id, product_id, variant_id, serial_no, status, order_id,
+                     customer_id, sold_at, warranty_until)
+                SELECT :sid, :pid, :vid, :sn, 'sold', :oid, :cid, NOW(),
+                       CASE WHEN COALESCE(p.warranty_months, 0) > 0
+                            THEN (CURRENT_DATE + (p.warranty_months || ' months')::interval)::date
+                            ELSE NULL END
+                FROM kirana_oltp.product p
+                WHERE p.product_id = :pid
+                ON CONFLICT (store_id, serial_no) DO UPDATE SET
+                    status = 'sold', order_id = EXCLUDED.order_id,
+                    customer_id = EXCLUDED.customer_id, variant_id = EXCLUDED.variant_id,
+                    sold_at = NOW(), warranty_until = EXCLUDED.warranty_until
+            """), {"sid": store_id, "pid": product_id, "vid": variant_id,
+                   "sn": serial_no, "oid": order_id, "cid": customer_id}).rowcount
+            conn.commit()
+        return n > 0
+
     # ── Serials ───────────────────────────────────────────────────────────────
     def list_serials(self, store_id: int, product_id: int | None = None,
-                     status: str | None = None) -> list[dict]:
-        sql = ("SELECT serial_id, product_id, variant_id, serial_no, status, "
-               "order_id, customer_id, warranty_until, sold_at "
-               "FROM kirana_oltp.product_serial WHERE store_id = :sid")
+                     status: str | None = None, order_id: int | None = None) -> list[dict]:
+        sql = ("SELECT ps.serial_id, ps.product_id, ps.variant_id, ps.serial_no, "
+               "ps.status, ps.order_id, ps.customer_id, ps.warranty_until, ps.sold_at, "
+               "p.name AS product_name "
+               "FROM kirana_oltp.product_serial ps "
+               "LEFT JOIN kirana_oltp.product p ON p.product_id = ps.product_id "
+               "WHERE ps.store_id = :sid")
         params: dict = {"sid": store_id}
         if product_id is not None:
-            sql += " AND product_id = :pid"; params["pid"] = product_id
+            sql += " AND ps.product_id = :pid"; params["pid"] = product_id
         if status:
-            sql += " AND status = :st"; params["st"] = status
-        sql += " ORDER BY serial_id DESC"
+            sql += " AND ps.status = :st"; params["st"] = status
+        if order_id is not None:
+            sql += " AND ps.order_id = :oid"; params["oid"] = order_id
+        sql += " ORDER BY ps.serial_id DESC"
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(text(sql), params).mappings().all()]
 

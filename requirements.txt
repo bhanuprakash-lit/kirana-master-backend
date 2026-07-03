@@ -25,6 +25,10 @@ mistralai>=1.0.0
 
 # Vision (shelf-scan catalog matching; falls back to stdlib difflib if absent)
 rapidfuzz>=3.9.0
+# On-server custom YOLO shelf detector (ONNX Runtime — no torch). Optional at
+# runtime: vision/detector.py degrades to Gemini-only if these can't import.
+onnxruntime>=1.17.0
+pillow>=10.0.0
 
 # Firebase (FCM push notifications)
 firebase-admin>=6.5.0

@@ -59,6 +59,7 @@ class Settings:
     # ── Azure Blob (udhaar voice-consent clips — durable, legal record) ───────
     azure_storage_connection_string: str  # empty = consent upload disabled
     consent_audio_container: str          # blob container name for consent clips
+    onboarding_shelf_container: str       # blob container for bulk stock-in shelf photos
 
 
 @lru_cache(maxsize=1)
@@ -116,4 +117,5 @@ def get_settings() -> Settings:
 
         azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING", ""),
         consent_audio_container=os.getenv("CONSENT_AUDIO_CONTAINER", "udhaar-consent"),
+        onboarding_shelf_container=os.getenv("ONBOARDING_SHELF_CONTAINER", "onboarding-shelf"),
     )

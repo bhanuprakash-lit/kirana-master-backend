@@ -71,11 +71,32 @@ def calc_ops_cost_per_outlet(engine, store_id: int = None) -> dict:
 
 
 def calc_process_automation(engine, store_id: int = None) -> dict:
-    # Ratio of auto-generated orders / total orders
+    params: dict = {}
+    store_clause = ""
+    if store_id:
+        params["sid"] = store_id
+        store_clause = " AND store_id = :sid"
+    sql = f"""
+    SELECT
+        COUNT(*) AS total_orders,
+        COUNT(*) FILTER (WHERE order_channel IN ('whatsapp', 'app', 'delivery', 'api')) AS auto_orders,
+        COUNT(*) FILTER (WHERE order_channel IN ('walk_in', 'pos'))                     AS manual_orders,
+        COUNT(*) FILTER (WHERE order_channel IS NULL)                                    AS unknown_orders
+    FROM kirana_oltp.orders
+    WHERE order_status = 'completed'
+      AND order_date >= CURRENT_DATE - 30{store_clause}
+    """
+    r = _row(engine, sql, params)
+    total = int(r.get("total_orders") or 0)
+    auto = int(r.get("auto_orders") or 0)
+    pct = round(auto / total * 100, 2) if total > 0 else 0.0
     return {
-        "automation_pct": 53.92,
-        "status": "Partial simulation",
-        "trend": _trend(53.92, None),
+        "automation_pct": pct,
+        "total_orders": total,
+        "auto_orders": auto,
+        "manual_orders": int(r.get("manual_orders") or 0),
+        "unknown_channel_orders": int(r.get("unknown_orders") or 0),
+        "trend": _trend(pct, None),
     }
 
 

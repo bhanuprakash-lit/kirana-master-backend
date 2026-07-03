@@ -246,8 +246,7 @@ async def create_payment_order(
     if sid is None:
         raise HTTPException(status_code=403, detail="Store owner login required")
     s = request.app.state.settings
-    s = request.app.state.settings
-    prices = {"basic": s.basic_price_inr, "pro": s.pro_price_inr}
+    prices = _svc(request).get_segment_prices(int(sid))
     if body.tier not in prices:
         raise HTTPException(status_code=400, detail="Invalid tier")
     # If Razorpay keys not configured, return test-mode placeholder
@@ -255,7 +254,7 @@ async def create_payment_order(
         return {
             "mode": "test",
             "order_id": f"test_order_{body.tier}",
-            "amount": prices[body.tier] * 100,
+            "amount": int(prices[body.tier] * 100),
             "currency": "INR",
             "key_id": "",
             "tier": body.tier,

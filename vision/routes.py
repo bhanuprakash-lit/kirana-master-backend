@@ -19,18 +19,25 @@ import base64
 import asyncio
 import json
 import logging
+import os
 from datetime import date as _date
 from typing import Optional
 
 from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      Query, Request, UploadFile)
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
+from . import counter_repository as counter_repo
+from . import detector
+from . import onboarding_repository as onboarding_repo
+from . import onboarding_storage
 from . import repository as repo
 from . import storage
 from .analyzer import GEMINI_MODEL, SHELF_PROMPT, parse_detections
-from .matcher import match_detections
-from .schemas import (CorrectionInput, SalesResponse, SessionAccepted,
+from .matcher import get_matcher, match_detections
+from .schemas import (CorrectionInput, CounterSummaryResponse, CounterSyncInput,
+                      CounterSyncResponse, OnboardingCommitInput,
+                      OnboardingCommitResponse, SalesResponse, SessionAccepted,
                       SessionSummary, VisionItemOut)
 
 logger = logging.getLogger("vision")
@@ -41,6 +48,18 @@ _VALID_TYPES = {"morning", "evening"}
 _MAX_IMAGE_BYTES = 12 * 1024 * 1024  # 12 MB guard per image
 _MIN_IMAGES = 3
 _MAX_IMAGES = 10
+# YOLO class labels are terse ('red label tea powder') and fuzzy-match generic
+# catalog names on shared words; require a high score before auto-mapping so a weak
+# match becomes 'unknown' (owner reviews) instead of wrong stock.
+_YOLO_MATCH_MIN_SCORE = 0.82
+# Bulk stock-in is ungated (new stores onboard before Pro) but rate-limited to bound
+# per-photo detection cost. Override via env ONBOARDING_DAILY_LIMIT.
+_ONBOARDING_DAILY_LIMIT = int(os.getenv("ONBOARDING_DAILY_LIMIT", "5"))
+# Cap how many images we analyze at once. A full 10-photo batch firing 10 concurrent
+# Gemini calls + 10 CPU-bound YOLO inferences saturates cores and risks Gemini
+# rate-limit failures (which would silently drop those images). Bound it so batches
+# stay reliable; override via env VISION_ANALYZE_CONCURRENCY.
+_ANALYZE_CONCURRENCY = max(1, int(os.getenv("VISION_ANALYZE_CONCURRENCY", "4")))
 
 
 # ── Auth (same pattern as ai/routes) ─────────────────────────────────────────
@@ -77,6 +96,26 @@ def _gemini_api_key(request: Request) -> str:
 
 # ── Background analysis worker ────────────────────────────────────────────────
 
+def _sniff_image_mime(data: bytes, declared: Optional[str]) -> str:
+    """Return a Gemini-supported image mime for an upload. Android's image picker
+    frequently reports 'application/octet-stream' (or nothing), which Gemini rejects
+    with a 400 'Unsupported MIME type' — so we sniff the magic bytes and only trust a
+    declared type when it's already a real image/* type."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:12].endswith(b"ftypheic") or data[4:12] in (b"ftypheic", b"ftypheif"):
+        return "image/heic"
+    if declared and declared.startswith("image/") and declared != "image/octet-stream":
+        return declared
+    return "image/jpeg"  # safe default — most phone captures are JPEG
+
+
 async def _gemini_one(api_key: str, b64: str, mime: str) -> list:
     """Analyze a single image. Returns its parsed detections (raises on API error)."""
     from ai.routes import call_gemini
@@ -86,6 +125,91 @@ async def _gemini_one(api_key: str, b64: str, mime: str) -> list:
     ]
     raw = await call_gemini(GEMINI_MODEL, parts, api_key)
     return parse_detections(raw)
+
+
+def _merge_image_detections(dets: list) -> list:
+    """Combine one image's YOLO + Gemini detections without double-counting.
+
+    Matched products (same product_id from either detector) collapse to a single
+    entry keeping the higher facings count. Unmatched detections (product_id None)
+    are all kept — those are the coverage/growth items the owner reviews and that
+    become the next YOLO training labels.
+    """
+    by_pid: dict = {}
+    unknowns: list = []
+    for d in dets:
+        if d.product_id is None:
+            unknowns.append(d)
+            continue
+        cur = by_pid.get(d.product_id)
+        if cur is None or d.count > cur.count:
+            by_pid[d.product_id] = d
+    return list(by_pid.values()) + unknowns
+
+
+async def _detect_one(engine, api_key: str, image: dict, image_index: int = 0) -> list:
+    """Detect products in one image using the custom YOLO as PRIMARY detector and
+    Gemini as the FALLBACK that fills what YOLO doesn't know. Both run concurrently
+    (YOLO offloaded to a thread — it's CPU-bound numpy); results are catalog-matched
+    then merged. If YOLO is disabled/absent this is exactly the old Gemini-only path.
+
+    Gemini is the FALLBACK, so its failure (quota/mime/timeout) must NOT discard a
+    good YOLO result — that's the whole point of running on-device detection. We only
+    surface a per-image failure when we're left with nothing to show (YOLO absent or
+    empty AND Gemini errored), so that image counts as failed → owner retakes."""
+    b64, mime = image["b64"], image["mime"]
+    yolo_ran = detector.is_available()
+    if yolo_ran:
+        img_bytes = base64.b64decode(b64)
+        yolo_res, gemini_res = await asyncio.gather(
+            asyncio.to_thread(detector.detect, img_bytes),
+            _gemini_one(api_key, b64, mime),
+            return_exceptions=True,
+        )
+    else:
+        yolo_res = []
+        gemini_res = (await asyncio.gather(
+            _gemini_one(api_key, b64, mime), return_exceptions=True))[0]
+
+    if isinstance(yolo_res, Exception):
+        logger.warning("vision.detector failed on one image: %s", yolo_res)
+        yolo_dets = []
+    else:
+        yolo_dets = list(yolo_res)
+
+    if isinstance(gemini_res, Exception):
+        # No YOLO detections to fall back on → let this image count as failed.
+        if not yolo_dets:
+            raise gemini_res
+        logger.warning("vision: Gemini fallback failed, using YOLO only: %s", gemini_res)
+        gemini_dets = []
+    else:
+        gemini_dets = list(gemini_res)
+
+    # Match separately: YOLO labels are terse and collide with generic catalog
+    # names on shared words, so they need a stricter cutoff than Gemini's rich names.
+    # Weak YOLO matches fall through to 'unknown' → owner review (never wrong stock).
+    match_detections(yolo_dets, engine, min_score=_YOLO_MATCH_MIN_SCORE)
+    match_detections(gemini_dets, engine)
+    merged = _merge_image_detections(yolo_dets + gemini_dets)
+    for d in merged:  # stamp origin photo so the review UI can crop it later
+        d.image_index = image_index
+    return merged
+
+
+async def _detect_all(engine, api_key: str, images: list[dict]) -> list:
+    """Detect across a whole photo batch with bounded concurrency. Returns one
+    result (list of detections) or an Exception per image, positionally — callers
+    skip the failures and keep the rest, so a couple of bad photos never sink the
+    whole scan."""
+    sem = asyncio.Semaphore(_ANALYZE_CONCURRENCY)
+
+    async def _one(idx: int, im: dict):
+        async with sem:
+            return await _detect_one(engine, api_key, im, image_index=idx)
+
+    return await asyncio.gather(*[_one(i, im) for i, im in enumerate(images)],
+                                return_exceptions=True)
 
 
 async def _process_shelf(
@@ -101,10 +225,7 @@ async def _process_shelf(
     double-count — instruct owners to cover distinct shelves.)
     """
     try:
-        results = await asyncio.gather(
-            *[_gemini_one(api_key, im["b64"], im["mime"]) for im in images],
-            return_exceptions=True,
-        )
+        results = await _detect_all(engine, api_key, images)
         detections = []
         ok = 0
         for r in results:
@@ -116,7 +237,6 @@ async def _process_shelf(
         if ok == 0:
             raise RuntimeError("All images failed to analyze")
 
-        match_detections(detections, engine)
         repo.save_items(engine, session_id, detections)
 
         total_units = sum(d.count for d in detections)
@@ -170,8 +290,12 @@ async def shelf_analyze(
         )
     store_id = _require_store(user)
     api_key = _gemini_api_key(request)
+    # Durable Azure Blob in production so the review-screen crop thumbnails survive
+    # container restarts; fall back to the local-disk seam so a dev backend without
+    # Azure configured still works end-to-end (same pattern as onboarding).
+    use_blob = onboarding_storage.is_configured()
 
-    urls: list[str] = []
+    refs: list[str] = []
     images: list[dict] = []
     for f in files:
         data = await f.read()
@@ -179,14 +303,18 @@ async def shelf_analyze(
             raise HTTPException(status_code=400, detail="One of the images is empty")
         if len(data) > _MAX_IMAGE_BYTES:
             raise HTTPException(status_code=413, detail="An image is too large (max 12 MB each)")
-        mime = f.content_type or "image/jpeg"
-        _, url = storage.save_image(store_id, session_type, data, mime)
-        urls.append(url)
+        mime = _sniff_image_mime(data, f.content_type)
+        if use_blob:
+            refs.append("blob:" + onboarding_storage.upload_shelf_image(store_id, data, mime))
+        else:
+            _, url = storage.save_image(store_id, session_type, data, mime)
+            refs.append(url)
         images.append({"b64": base64.b64encode(data).decode("ascii"), "mime": mime})
 
-    # image_url column holds a JSON array of all photo URLs for this session.
+    # image_url column holds a JSON array of all photo refs for this session
+    # (local '/kirana/vision/image/...' urls or durable 'blob:<name>' refs).
     session_id = repo.create_session(
-        request.app.state.engine, store_id, session_type, json.dumps(urls))
+        request.app.state.engine, store_id, session_type, json.dumps(refs))
 
     background.add_task(
         _process_shelf,
@@ -223,6 +351,83 @@ def session_items(session_id: int, request: Request, user: dict = Depends(_auth)
     return [VisionItemOut(**r) for r in rows]
 
 
+def _load_source_image_bytes(image_url: Optional[str], image_index: int) -> Optional[bytes]:
+    """Resolve one detection's source photo → raw bytes. The session image_url holds
+    a JSON array of refs; local disk refs ('/kirana/vision/image/...') are read from
+    disk, Azure Blob refs ('blob:<name>') are downloaded. Returns None if unavailable
+    (e.g. ephemeral container disk lost the file after a restart)."""
+    if not image_url:
+        return None
+    try:
+        refs = json.loads(image_url)
+    except (json.JSONDecodeError, TypeError):
+        refs = [image_url]
+    if not isinstance(refs, list) or not refs:
+        return None
+    ref = refs[image_index] if 0 <= image_index < len(refs) else refs[0]
+    try:
+        if isinstance(ref, str) and ref.startswith("blob:"):
+            data, _ = onboarding_storage.download_shelf_image(ref[len("blob:"):])
+            return data
+        abs_path = storage.resolve_url(ref)
+        if abs_path:
+            with open(abs_path, "rb") as f:
+                return f.read()
+    except Exception as exc:  # noqa: BLE001 — best-effort; missing image ⇒ no thumbnail
+        logger.warning("vision: could not load source image for crop: %s", exc)
+    return None
+
+
+@router.get("/item/{item_id}/crop")
+def item_crop(item_id: int, request: Request, user: dict = Depends(_auth)):
+    """Return a cropped JPEG of one detected item (its bbox out of its source photo),
+    so the owner can visually recognise what each row is when reviewing/correcting.
+    404 if the item/image is unavailable — the app just falls back to no thumbnail."""
+    store_id = _require_store(user)
+    src = repo.get_item_source(request.app.state.engine, store_id, item_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="Item not found for this store")
+
+    data = _load_source_image_bytes(src.get("image_url"), int(src.get("image_index") or 0))
+    if not data:
+        raise HTTPException(status_code=404, detail="Source image unavailable")
+
+    from io import BytesIO
+    from PIL import Image
+    try:
+        img = Image.open(BytesIO(data)).convert("RGB")
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="Source image unreadable")
+    w, h = img.size
+
+    # bbox_json = normalized [x1, y1, x2, y2]; pad ~10% so the owner sees context, not
+    # a tight crop. Missing/degenerate bbox ⇒ fall back to the whole photo.
+    box = None
+    try:
+        if src.get("bbox_json"):
+            x1, y1, x2, y2 = (float(v) for v in json.loads(src["bbox_json"])[:4])
+            if x2 > x1 and y2 > y1:
+                box = (x1, y1, x2, y2)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        box = None
+
+    if box:
+        x1, y1, x2, y2 = box
+        px, py = (x2 - x1) * 0.10, (y2 - y1) * 0.10
+        left = int(max(0.0, x1 - px) * w)
+        top = int(max(0.0, y1 - py) * h)
+        right = int(min(1.0, x2 + px) * w)
+        bottom = int(min(1.0, y2 + py) * h)
+        if right > left and bottom > top:
+            img = img.crop((left, top, right, bottom))
+
+    img.thumbnail((480, 480), Image.LANCZOS)  # cap payload; thumbnails are small
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=82)
+    return Response(content=buf.getvalue(), media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
 @router.get("/sales", response_model=SalesResponse)
 def sales(
     request: Request,
@@ -251,6 +456,191 @@ def correct(item_id: int, body: CorrectionInput, request: Request, user: dict = 
     if not ok:
         raise HTTPException(status_code=404, detail="Item not found for this store")
     return {"status": "ok", "item_id": item_id, "corrected_product_id": body.corrected_product_id}
+
+
+# ── Bulk stock-in / onboarding ────────────────────────────────────────────────
+
+async def _process_onboarding(
+    engine, kirana_service, api_key: str, session_id: int, store_id: int,
+    user_id: Optional[int], images: list[dict],
+) -> None:
+    """Background worker for bulk stock-in: Gemini per image → parse → catalog match
+    → persist as vision_item → finalize → FCM to open the review screen. Mirrors
+    _process_shelf but the notification deep-links to the onboarding review, and the
+    detected count becomes the SUGGESTED opening quantity (owner edits before commit)."""
+    try:
+        results = await _detect_all(engine, api_key, images)
+        detections = []
+        ok = 0
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning("onboarding: image failed in session %s: %s", session_id, r)
+                continue
+            ok += 1
+            detections.extend(r)
+        if ok == 0:
+            raise RuntimeError("All images failed to analyze")
+
+        repo.save_items(engine, session_id, detections)
+
+        total_units = sum(d.count for d in detections)
+        total_skus = len({d.product_id for d in detections if d.product_id is not None})
+        unknown = sum(1 for d in detections if d.is_unknown)
+        repo.finalize_session(engine, session_id, total_skus, total_units, unknown, "done")
+
+        if user_id is not None:
+            kirana_service.send_fcm_to_user(
+                user_id,
+                title="Your shelves are ready to review",
+                body=f"We found {total_skus} products. Set the quantity of each to add them to your stock."
+                     + (f" · {unknown} need a quick check" if unknown else ""),
+                data={"action": "open_onboarding_review", "channel": "vision",
+                      "session_id": str(session_id)},
+            )
+        logger.info("onboarding: session %s done (skus=%d units=%d unknown=%d)",
+                    session_id, total_skus, total_units, unknown)
+    except Exception as exc:  # noqa: BLE001 — background task must never propagate
+        logger.exception("onboarding: session %s failed: %s", session_id, exc)
+        try:
+            repo.fail_session(engine, session_id, str(exc))
+            if user_id is not None:
+                kirana_service.send_fcm_to_user(
+                    user_id, title="Couldn't read your shelf photos",
+                    body="Please retake the photos in good light and try again.",
+                    data={"action": "open_onboarding_review", "channel": "vision",
+                          "session_id": str(session_id)},
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("onboarding: failed to mark session %s failed", session_id)
+
+
+@router.post("/onboarding/analyze", response_model=SessionAccepted, status_code=202)
+async def onboarding_analyze(
+    request: Request,
+    background: BackgroundTasks,
+    files: list[UploadFile] = File(..., description="3–10 in-app shelf photos"),
+    user: dict = Depends(_auth),
+):
+    """Bulk stock-in: upload shelf photos captured in-app → durable Azure Blob →
+    async detection. Returns 202 with a pending onboarding session; an FCM fires when
+    detection finishes so the app can open the review screen."""
+    if not _MIN_IMAGES <= len(files) <= _MAX_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload between {_MIN_IMAGES} and {_MAX_IMAGES} photos (got {len(files)})",
+        )
+    store_id = _require_store(user)
+    # Ungated but rate-limited: bulk stock-in triggers Gemini+YOLO per photo, so cap
+    # scans/store/day to bound cost without blocking new-store onboarding.
+    if user.get("role") != "admin":
+        used = onboarding_repo.count_today_onboarding_sessions(request.app.state.engine, store_id)
+        if used >= _ONBOARDING_DAILY_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=f"You've reached today's limit of {_ONBOARDING_DAILY_LIMIT} shelf scans. "
+                       "Please continue tomorrow or add remaining items manually.",
+            )
+    api_key = _gemini_api_key(request)
+    use_blob = onboarding_storage.is_configured()
+
+    refs: list[str] = []
+    images: list[dict] = []
+    for f in files:
+        data = await f.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="One of the images is empty")
+        if len(data) > _MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="An image is too large (max 12 MB each)")
+        mime = _sniff_image_mime(data, f.content_type)
+        # Durable Azure Blob in production; fall back to the local-disk seam so a
+        # dev backend without Azure configured still works end-to-end.
+        if use_blob:
+            refs.append("blob:" + onboarding_storage.upload_shelf_image(store_id, data, mime))
+        else:
+            _, url = storage.save_image(store_id, "onboarding", data, mime)
+            refs.append(url)
+        images.append({"b64": base64.b64encode(data).decode("ascii"), "mime": mime})
+
+    session_id = repo.create_session(
+        request.app.state.engine, store_id, "onboarding", json.dumps(refs))
+
+    background.add_task(
+        _process_onboarding,
+        request.app.state.engine, request.app.state.kirana_service, api_key,
+        session_id, store_id, user.get("user_id"), images,
+    )
+    return SessionAccepted(session_id=session_id, store_id=store_id,
+                           session_type="onboarding", status="pending")
+
+
+@router.post("/onboarding/commit/{session_id}", response_model=OnboardingCommitResponse)
+def onboarding_commit(
+    session_id: int, body: OnboardingCommitInput, request: Request,
+    user: dict = Depends(_auth),
+):
+    """Write the owner-reviewed quantities into store inventory and mark the session
+    committed. Idempotent: quantities are SET, so a re-commit is safe."""
+    store_id = _require_store(user)
+    engine = request.app.state.engine
+    sess = onboarding_repo.get_onboarding_session(engine, store_id, session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Onboarding session not found")
+    if sess["session_type"] != "onboarding":
+        raise HTTPException(status_code=400, detail="Not an onboarding session")
+
+    result = onboarding_repo.commit_to_inventory(
+        engine, store_id, session_id,
+        [{"product_id": i.product_id, "quantity": i.quantity} for i in body.items],
+        add_to_existing=body.add_to_existing,
+    )
+    return OnboardingCommitResponse(session_id=session_id, **result)
+
+
+# ── Sale-area counter (on-device) ─────────────────────────────────────────────
+
+@router.post("/counter/sync", response_model=CounterSyncResponse)
+def counter_sync(body: CounterSyncInput, request: Request, user: dict = Depends(_auth)):
+    """Sync a finalized on-device counter session. Detection + line-crossing counting
+    happened on the phone; here we resolve each class_name → product_id via the shared
+    catalog matcher and persist the tally. Idempotent by (store_id, client_uid)."""
+    store_id = _require_store(user)
+    engine = request.app.state.engine
+    matcher = get_matcher(engine)
+
+    items = []
+    for it in body.items:
+        cls = (it.class_name or "").strip()
+        if not cls or it.qty <= 0:
+            continue
+        res = matcher.match(cls)
+        matched = res is not None and not res.is_unknown
+        items.append({
+            "class_name": cls,
+            "qty": int(it.qty),
+            "product_id": res.product_id if matched else None,
+            "display_name": res.display_name if matched else None,
+            "match_score": res.score if res else 0.0,
+            "is_unknown": not matched,
+            "avg_confidence": it.avg_confidence,
+        })
+
+    saved = counter_repo.upsert_session(
+        engine, store_id, body.client_uid, body.session_date, body.device_label,
+        body.started_at, body.ended_at, items,
+    )
+    return CounterSyncResponse(**saved)
+
+
+@router.get("/counter/summary", response_model=CounterSummaryResponse)
+def counter_summary(
+    request: Request,
+    date: Optional[str] = Query(default=None, description="YYYY-MM-DD, default today"),
+    user: dict = Depends(_auth),
+):
+    """Aggregated per-product tally for the day across all counter sessions."""
+    store_id = _require_store(user)
+    summary = counter_repo.get_summary(request.app.state.engine, store_id, date)
+    return CounterSummaryResponse(**summary)
 
 
 @router.get("/image/{path:path}")

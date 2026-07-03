@@ -398,9 +398,12 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.vision_session (
     total_units   INT NOT NULL DEFAULT 0,
     unknown_count INT NOT NULL DEFAULT 0,
     error         TEXT,
+    committed_at  TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """)
+step("col:vision_session.committed_at",
+     "ALTER TABLE kirana_oltp.vision_session ADD COLUMN IF NOT EXISTS committed_at TIMESTAMPTZ")
 
 step("table:vision_item", """
 CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
@@ -415,9 +418,45 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
     match_score          REAL NOT NULL DEFAULT 0,
     is_unknown           BOOLEAN NOT NULL DEFAULT TRUE,
     bbox_json            TEXT,
+    image_index          SMALLINT NOT NULL DEFAULT 0,
     corrected_product_id BIGINT,
     corrected_at         TIMESTAMPTZ,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+""")
+step("col:vision_item.image_index",
+     "ALTER TABLE kirana_oltp.vision_item ADD COLUMN IF NOT EXISTS image_index SMALLINT NOT NULL DEFAULT 0")
+
+step("table:counter_session", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.counter_session (
+    session_id   BIGSERIAL PRIMARY KEY,
+    store_id     BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+    client_uid   VARCHAR(64) NOT NULL,
+    session_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    device_label VARCHAR(120),
+    source       VARCHAR(30) NOT NULL DEFAULT 'on_device',
+    started_at   TIMESTAMPTZ,
+    ended_at     TIMESTAMPTZ,
+    total_units  INT NOT NULL DEFAULT 0,
+    total_skus   INT NOT NULL DEFAULT 0,
+    unknown_count INT NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (store_id, client_uid)
+)
+""")
+
+step("table:counter_item", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.counter_item (
+    item_id        BIGSERIAL PRIMARY KEY,
+    session_id     BIGINT NOT NULL REFERENCES kirana_oltp.counter_session(session_id) ON DELETE CASCADE,
+    product_id     BIGINT,
+    class_name     VARCHAR(255) NOT NULL,
+    display_name   VARCHAR(255),
+    qty            INT NOT NULL DEFAULT 1,
+    match_score    REAL NOT NULL DEFAULT 0,
+    is_unknown     BOOLEAN NOT NULL DEFAULT TRUE,
+    avg_confidence REAL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """)
 
@@ -472,6 +511,40 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.subscription (
     requested_tier  VARCHAR(40),
     UNIQUE (store_id)
 )
+""")
+
+# Segment-wise subscription pricing — keyed by store.store_type (the granular
+# onboarding dropdown), NOT vertical_code. '__default__' is the fallback row
+# for any store_type with no dedicated price. Mirrors the table created in
+# kirana/repositories/base.py:_ensure_schema() (the live boot path) — kept in
+# sync here for manual runs against Azure.
+step("table:segment_pricing", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.segment_pricing (
+    store_type   TEXT PRIMARY KEY,
+    basic_price  NUMERIC(10,2) NOT NULL,
+    pro_price    NUMERIC(10,2) NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+""")
+
+step("seed:segment_pricing", """
+INSERT INTO kirana_oltp.segment_pricing (store_type, basic_price, pro_price) VALUES
+    ('kirana',           200, 500),
+    ('supermarket',      1300, 1700),
+    ('mini_supermarket', 600, 1000),
+    ('mono_brand',       600, 1000),
+    ('apparel',          500, 900),
+    ('boutique',         400, 800),
+    ('salon',            400, 600),
+    ('fancy_gift',       300, 500),
+    ('sports_fitness',   500, 900),
+    ('electronics',      700, 1100),
+    ('footwear',         400, 600),
+    ('optical',          400, 800),
+    ('bakery',           300, 500),
+    ('stationery',       200, 400),
+    ('__default__',      200, 500)
+ON CONFLICT (store_type) DO NOTHING
 """)
 
 
@@ -959,13 +1032,29 @@ RETURNS TRIGGER AS $$
 DECLARE
     order_store_id BIGINT;
     current_stock  INT;
+    is_real_variant BOOLEAN := FALSE;
 BEGIN
     SELECT store_id INTO order_store_id
     FROM kirana_oltp.orders WHERE order_id = NEW.order_id;
 
+    -- F2: real (non-implicit) variants are decremented at the application
+    -- level (pos/crud.py), together with product_variant.stock, scoped to
+    -- the exact variant sold. Skip here to avoid double-decrementing and to
+    -- avoid this product-only (not variant-scoped) UPDATE clobbering every
+    -- sibling variant's inventory row.
+    IF NEW.variant_id IS NOT NULL THEN
+        SELECT NOT is_implicit INTO is_real_variant
+        FROM kirana_oltp.product_variant WHERE variant_id = NEW.variant_id;
+    END IF;
+
+    IF is_real_variant THEN
+        RETURN NEW;
+    END IF;
+
     SELECT quantity INTO current_stock
     FROM kirana_oltp.inventory
     WHERE store_id = order_store_id AND product_id = NEW.product_id
+      AND variant_id IS NOT DISTINCT FROM NEW.variant_id
     FOR UPDATE;
 
     IF current_stock IS NULL THEN
@@ -978,7 +1067,8 @@ BEGIN
 
     UPDATE kirana_oltp.inventory
     SET quantity = quantity - NEW.quantity
-    WHERE store_id = order_store_id AND product_id = NEW.product_id;
+    WHERE store_id = order_store_id AND product_id = NEW.product_id
+      AND variant_id IS NOT DISTINCT FROM NEW.variant_id;
 
     INSERT INTO kirana_oltp.inventory_movements (store_id, product_id, change_quantity, reason, reference_id)
     VALUES (order_store_id, NEW.product_id, -NEW.quantity, 'sale', NEW.order_id);
@@ -1012,6 +1102,25 @@ step("view:product_catalog", """
 CREATE OR REPLACE VIEW kirana_oltp.product_catalog AS
 SELECT * FROM kirana_oltp.product
 WHERE (barcode IS NOT NULL OR is_loose = TRUE)
+""")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14b. ADMIN SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+step("admin_settings:table", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.admin_settings (
+    key        VARCHAR(100) PRIMARY KEY,
+    value      TEXT         NOT NULL,
+    updated_at TIMESTAMPTZ  DEFAULT NOW()
+)
+""")
+
+step("admin_settings:auto_approve_trial", """
+INSERT INTO kirana_oltp.admin_settings (key, value)
+VALUES ('auto_approve_trial', 'false')
+ON CONFLICT (key) DO NOTHING
 """)
 
 

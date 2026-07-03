@@ -42,15 +42,16 @@ def save_items(engine, session_id: int, detections) -> None:
         "match_score": float(d.match_score),
         "is_unknown": bool(d.is_unknown),
         "bbox_json": d.bbox_json(),
+        "image_index": int(getattr(d, "image_index", 0) or 0),
     } for d in detections]
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO kirana_oltp.vision_item
                 (session_id, sku_id, product_id, display_name, gemini_name,
-                 visible_text, count, match_score, is_unknown, bbox_json)
+                 visible_text, count, match_score, is_unknown, bbox_json, image_index)
             VALUES
                 (:sid, :sku_id, :product_id, :display_name, :gemini_name,
-                 :visible_text, :count, :match_score, :is_unknown, :bbox_json)
+                 :visible_text, :count, :match_score, :is_unknown, :bbox_json, :image_index)
         """), rows)
 
 
@@ -102,13 +103,26 @@ def get_items(engine, store_id: int, session_id: int) -> list[dict]:
         rows = conn.execute(text("""
             SELECT i.item_id, i.sku_id, i.product_id, i.display_name, i.gemini_name,
                    i.visible_text, i.count, i.match_score, i.is_unknown, i.bbox_json,
-                   i.corrected_product_id, i.corrected_at
+                   i.image_index, i.corrected_product_id, i.corrected_at
             FROM kirana_oltp.vision_item i
             JOIN kirana_oltp.vision_session s ON s.session_id = i.session_id
             WHERE i.session_id=:sid AND s.store_id=:store_id
             ORDER BY i.item_id
         """), {"sid": session_id, "store_id": store_id}).mappings().all()
     return [dict(r) for r in rows]
+
+
+def get_item_source(engine, store_id: int, item_id: int) -> Optional[dict]:
+    """For cropping the review thumbnail: an item's bbox + which session photo it
+    came from + that session's image_url array. Store-scoped (auth-safe)."""
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT i.bbox_json, i.image_index, s.image_url
+            FROM kirana_oltp.vision_item i
+            JOIN kirana_oltp.vision_session s ON s.session_id = i.session_id
+            WHERE i.item_id=:iid AND s.store_id=:store_id
+        """), {"iid": item_id, "store_id": store_id}).mappings().first()
+    return dict(row) if row else None
 
 
 # ── Sales delta ───────────────────────────────────────────────────────────────

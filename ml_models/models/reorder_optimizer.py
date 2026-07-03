@@ -29,23 +29,28 @@ class ReorderOptimizer:
         self.metrics = {}
 
     def train(self, df: pd.DataFrame, verbose: bool = True):
-        reorder_df = df[df["target_reorder_qty"] > 0].copy()
-        print(f"\n[ReorderOptimizer] Training on {len(reorder_df):,} reorder events out of {len(df):,} store-SKUs")
+        # Train on ALL (store, product) pairs using EOQ as the target.
+        # EOQ is non-zero for every product regardless of current stock level,
+        # so we always have training samples. XGBoost learns the non-linear
+        # interactions (demand variance, lead time, margin) that cause optimal
+        # order quantity to deviate from pure EOQ math.
+        target_col = "target_eoq" if "target_eoq" in df.columns else "eoq"
+        train_df = df[df[target_col] > 0].copy()
+        print(f"\n[ReorderOptimizer] Training on {len(train_df):,} / {len(df):,} store-SKUs "
+              f"(target={target_col})")
 
-        # ── Zero-event case: all products currently well-stocked ─────────────
-        if len(reorder_df) == 0:
+        if len(train_df) < 10:
             self.model = None
             self.trained_feature_cols = [c for c in self.feature_cols if c in df.columns]
-            self.metrics = {"mode": "rule_only", "note": "no products below reorder point at train time"}
+            self.metrics = {"mode": "rule_only", "note": "insufficient training data (<10 samples)"}
             if verbose:
-                print("  All products are well-stocked — no ML training needed.")
-                print("  predict() will use pure EOQ + safety-stock rule.")
+                print("  Too few samples — falling back to pure EOQ + safety-stock rule.")
             self.save()
             return
 
-        feat_cols = [c for c in self.feature_cols if c in reorder_df.columns]
-        X = reorder_df[feat_cols].fillna(0).astype(np.float32)
-        y = np.log1p(reorder_df["target_reorder_qty"].values)
+        feat_cols = [c for c in self.feature_cols if c in train_df.columns]
+        X = train_df[feat_cols].fillna(0).astype(np.float32)
+        y = np.log1p(train_df[target_col].values)
         X_scaled = self.scaler.fit_transform(X)
 
         self.model = xgb.XGBRegressor(
@@ -74,7 +79,8 @@ class ReorderOptimizer:
 
         self.model.fit(X_scaled, y)
         self.trained_feature_cols = feat_cols
-        self.metrics = {"mae": round(mae, 2), "mape": round(mape, 2), "r2": round(r2, 4)}
+        self.metrics = {"mode": "ai_eoq", "n_samples": len(train_df),
+                        "mae": round(mae, 2), "mape": round(mape, 2), "r2": round(r2, 4)}
 
         if verbose:
             print(f"  5-Fold CV  MAE={mae:.1f} units  MAPE={mape:.1f}%  R²={r2:.4f}")

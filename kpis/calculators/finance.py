@@ -459,38 +459,107 @@ def calc_udhar_recovery(engine, store_id: int, days: int = 30) -> dict:
 
 
 def calc_working_capital_cycle(engine, store_id: int = None) -> dict:
-    # Inventory Days + AR Days - AP Days
-    # AR Days = (Khata / Revenue) * 365
-    rev_sql = "SELECT COALESCE(SUM(total_amount),1) FROM kirana_oltp.orders WHERE order_date >= CURRENT_DATE - 365"
-    ar_sql = "SELECT COALESCE(SUM(amount - amount_paid),0) FROM kirana_oltp.khata"
-    inv_sql = "SELECT COALESCE(SUM(quantity * 50),0) FROM kirana_oltp.inventory"  # rough value
+    params: dict = {}
+    store_clause = ""
+    inv_clause = ""
+    pu_clause = ""
+    if store_id:
+        params["sid"] = store_id
+        store_clause = " AND store_id = :sid"
+        inv_clause = " AND i.store_id = :sid"
+        pu_clause = " AND pu.store_id = :sid"
 
-    rev = float(_scalar(engine, rev_sql, {}) or 1)
-    ar = float(_scalar(engine, ar_sql, {}) or 0)
-    inv = float(_scalar(engine, inv_sql, {}) or 0)
+    rev = float(_scalar(engine, f"""
+    SELECT COALESCE(SUM(total_amount), 1) FROM kirana_oltp.orders
+    WHERE order_date >= CURRENT_DATE - 365 AND order_status = 'completed'{store_clause}
+    """, params) or 1)
+
+    ar = float(_scalar(engine, f"""
+    SELECT COALESCE(SUM(amount - amount_paid), 0)
+    FROM kirana_oltp.khata WHERE status != 'settled'{store_clause}
+    """, params) or 0)
+
+    inv = float(_scalar(engine, f"""
+    SELECT COALESCE(SUM(i.quantity * COALESCE(ps.cost_price, 0)), 0)
+    FROM kirana_oltp.inventory i
+    LEFT JOIN kirana_oltp.product_supplier ps ON i.product_id = ps.product_id
+    WHERE i.quantity > 0{inv_clause}
+    """, params) or 0)
+
+    # AP days: avg supplier lead time as proxy for payables cycle
+    ap_days = float(_scalar(engine, f"""
+    SELECT COALESCE(
+        AVG(EXTRACT(EPOCH FROM (pu.arrival_date - pu.order_date)) / 86400), 15
+    )
+    FROM kirana_oltp.purchases pu
+    WHERE pu.arrival_date IS NOT NULL AND pu.order_date >= CURRENT_DATE - 90{pu_clause}
+    """, params) or 15)
 
     ar_days = (ar / rev) * 365
     inv_days = (inv / rev) * 365
-    ap_days = 15  # estimate
-
     cycle = round(inv_days + ar_days - ap_days, 1)
+
     return {
         "working_capital_days": cycle,
         "inventory_days": round(inv_days, 1),
         "ar_days": round(ar_days, 1),
+        "ap_days": round(ap_days, 1),
         "trend": _trend(cycle, None, higher_is_better=False),
     }
 
 
 def calc_ai_roi(engine, store_id: int = None) -> dict:
-    # (Savings from Expiry + Stockout Recovery) / AI Cost (₹599)
-    waste_saved = 1500.0  # hypothetical
-    stockout_rec = 2500.0  # hypothetical
+    params: dict = {}
+    store_clause = ""
+    inv_clause = ""
+    oos_clause = ""
+    if store_id:
+        params["sid"] = store_id
+        store_clause = " AND m.store_id = :sid"
+        inv_clause = " AND i.store_id = :sid"
+        oos_clause = " AND store_id = :sid"
+
+    # Actual monthly expiry waste value
+    monthly_waste = float(_scalar(engine, f"""
+    SELECT COALESCE(SUM(ABS(m.change_quantity) * COALESCE(ps.cost_price, 0)), 0)
+    FROM kirana_oltp.inventory_movements m
+    LEFT JOIN kirana_oltp.product_supplier ps ON m.product_id = ps.product_id
+    WHERE m.reason = 'expiry' AND m.created_at >= CURRENT_DATE - 30{store_clause}
+    """, params) or 0)
+
+    # Stockout impact: current OOS products × their 14-day avg daily revenue
+    oos_daily_impact = float(_scalar(engine, f"""
+    WITH oos AS (
+        SELECT product_id FROM kirana_oltp.inventory
+        WHERE quantity = 0{oos_clause}
+    ),
+    hist AS (
+        SELECT oi.product_id,
+               SUM(oi.quantity * oi.unit_price)::float / 14 AS daily_revenue
+        FROM kirana_oltp.order_item oi
+        JOIN kirana_oltp.orders o ON oi.order_id = o.order_id
+        WHERE o.order_status = 'completed'
+          AND o.order_date >= CURRENT_DATE - 14
+          {'AND o.store_id = :sid' if store_id else ''}
+        GROUP BY oi.product_id
+    )
+    SELECT COALESCE(SUM(h.daily_revenue), 0) FROM oos JOIN hist h USING (product_id)
+    """, params) or 0)
+
     cost = 599.0
-    roi = round((waste_saved + stockout_rec) / cost, 2)
+    # Conservative prevention estimates: AI catches 50% of expiry, 30% of stockout days
+    waste_saved = round(monthly_waste * 0.5, 2)
+    stockout_rec = round(oos_daily_impact * 30 * 0.3, 2)
+    total_savings = round(waste_saved + stockout_rec, 2)
+    roi = round(total_savings / cost, 2) if cost > 0 else 0.0
+
     return {
         "roi_multiplier": roi,
-        "total_savings": waste_saved + stockout_rec,
+        "total_savings": total_savings,
+        "waste_savings": waste_saved,
+        "stockout_savings": stockout_rec,
+        "monthly_expiry_waste": round(monthly_waste, 2),
+        "current_oos_daily_impact": round(oos_daily_impact, 2),
         "monthly_subscription": cost,
         "trend": _trend(roi, None),
     }

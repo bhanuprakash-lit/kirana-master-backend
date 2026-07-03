@@ -188,9 +188,31 @@ class OltpRepository:
             # Identity check before update
             existing = self._fetch_row(conn, table_name, user, keys)
             clean = self._enforce_write_scope(conn, table_name, user, clean, existing_row=existing)
-            
+
+            row_filter = self._row_filter(table_name, table, keys)
+
+            # Guard against ambiguous filters: if the caller's keys don't
+            # uniquely identify a single row (e.g. PATCH /oltp/inventory with
+            # store_id+product_id but no variant_id, which matches every
+            # variant row for that product), refuse to update rather than
+            # silently clobbering whichever row the DB happens to match.
+            # Tables keyed by their full primary key always match 0 or 1 rows
+            # here, so this only fires for genuinely ambiguous cases.
+            match_count = conn.execute(
+                select(func.count()).select_from(table).where(row_filter)
+            ).scalar()
+            if match_count > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Ambiguous update for {table_name}: filter keys {sorted(keys)} "
+                        f"match {match_count} rows. Provide additional keys "
+                        f"(e.g. variant_id) to uniquely identify a single row."
+                    ),
+                )
+
             # Perform update using the same filter logic
-            stmt = update(table).where(self._row_filter(table_name, table, keys)).values(**clean)
+            stmt = update(table).where(row_filter).values(**clean)
             result = conn.execute(stmt)
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail=f"{table_name} record not found")

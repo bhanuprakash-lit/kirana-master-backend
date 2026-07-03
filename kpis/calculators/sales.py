@@ -209,10 +209,18 @@ def calc_new_product_trial(engine, store_id: int, trial_days: int = 30) -> dict:
         SELECT fs.product_id,
                p.name AS product_name,
                c.name AS category_name,
+               p.category_id,
+               p.is_perishable::int AS is_perishable,
+               p.is_loose::int      AS is_loose,
                fs.first_sale_date,
                (CURRENT_DATE - fs.first_sale_date) AS days_since_launch,
                COALESCE(SUM(oi.quantity), 0)                                   AS units_30d,
-               COALESCE(SUM(oi.quantity * oi.unit_price), 0)                   AS revenue_30d
+               COALESCE(SUM(oi.quantity * oi.unit_price), 0)                   AS revenue_30d,
+               (SELECT price FROM kirana_oltp.pricing
+                WHERE product_id = fs.product_id AND store_id = :sid
+                ORDER BY valid_from DESC LIMIT 1)                               AS price,
+               (SELECT cost_price FROM kirana_oltp.product_supplier
+                WHERE product_id = fs.product_id LIMIT 1)                      AS cost_price
         FROM first_sale fs
         JOIN kirana_oltp.product p  ON fs.product_id = p.product_id
         JOIN kirana_oltp.category c ON p.category_id = c.category_id
@@ -223,7 +231,8 @@ def calc_new_product_trial(engine, store_id: int, trial_days: int = 30) -> dict:
            AND o.order_date::date BETWEEN fs.first_sale_date
                                       AND fs.first_sale_date + :trial_days
         WHERE (CURRENT_DATE - fs.first_sale_date) <= :trial_days * 2
-        GROUP BY fs.product_id, p.name, c.name, fs.first_sale_date
+        GROUP BY fs.product_id, p.name, c.name, p.category_id,
+                 p.is_perishable, p.is_loose, fs.first_sale_date
     )
     SELECT * FROM trial ORDER BY revenue_30d DESC
     """
@@ -248,11 +257,20 @@ def calc_new_product_trial(engine, store_id: int, trial_days: int = 30) -> dict:
     for r in rows:
         u = int(r["units_30d"])
         label = "hit" if u >= p67 else ("average" if u >= p33 else "slow")
+        price      = float(r.get("price") or 0)
+        cost_price = float(r.get("cost_price") or 0)
+        margin_pct = round((price - cost_price) / max(price, 1e-6) * 100, 2)
         products.append(
             {
                 "product_id": int(r["product_id"]),
                 "product_name": r["product_name"],
                 "category_name": r["category_name"],
+                "category_id": int(r.get("category_id") or 0),
+                "is_perishable": int(r.get("is_perishable") or 0),
+                "is_loose": int(r.get("is_loose") or 0),
+                "price": round(price, 2),
+                "cost_price": round(cost_price, 2),
+                "margin_pct": margin_pct,
                 "days_since_launch": int(r["days_since_launch"]),
                 "units_sold_30d": u,
                 "revenue_30d": round(float(r["revenue_30d"] or 0), 2),
@@ -371,56 +389,6 @@ def calc_cross_category_basket(engine, store_id: int, days: int = 30) -> dict:
             for p in pairs
         ],
         "trend": _trend(cur_pct, float(prev_pct or 0)),
-    }
-
-    # ── 6. WhatsApp Order Conversion ──────────────────────────────────────────────
-
-    """Calculate conversion of WhatsApp sessions to actual orders.
-    Logic:
-      1. Find unique phone numbers in wa_sessions for this store.
-      2. Join with kirana_oltp.customer to find matching customer_ids.
-      3. Count how many of those customers placed orders in the period.
-    """
-    p_from, p_to = _period(days)
-
-    sql = """
-    WITH store_sessions AS (
-        -- Unique phones that chatted with this store
-        SELECT DISTINCT phone 
-        FROM wa_sessions 
-        WHERE store_id = :sid 
-          AND (last_message_at >= :p_from OR updated_at >= :p_from)
-    ),
-    linked_customers AS (
-        -- Map them to our customer master
-        SELECT s.phone, c.customer_id
-        FROM store_sessions s
-        JOIN kirana_oltp.customer c ON regexp_replace(c.phone, '\D', '', 'g') = regexp_replace(s.phone, '\D', '', 'g')
-    ),
-    converting_customers AS (
-        -- See who actually bought
-        SELECT DISTINCT lc.customer_id
-        FROM linked_customers lc
-        JOIN kirana_oltp.orders o ON o.customer_id = lc.customer_id
-        WHERE o.store_id = :sid
-          AND o.order_status = 'completed'
-          AND o.order_date BETWEEN :p_from AND :p_to
-    )
-    SELECT
-        (SELECT COUNT(*) FROM store_sessions)        AS total_whatsapp_users,
-        (SELECT COUNT(*) FROM converting_customers)  AS converted_users
-    """
-    r = _row(engine, sql, {"sid": store_id, "p_from": p_from, "p_to": p_to})
-
-    total_users = int(r.get("total_whatsapp_users") or 0)
-    converted = int(r.get("converted_users") or 0)
-    conv_pct = round(converted * 100.0 / max(total_users, 1), 1)
-
-    return {
-        "total_whatsapp_users": total_users,
-        "converted_users": converted,
-        "conversion_proxy_pct": conv_pct,
-        "period_days": days,
     }
 
 
@@ -555,6 +523,8 @@ def calc_distributor_terms(engine, store_id: int, days: int = 90) -> dict:
                 "avg_standard_cost": round(float(r.get("avg_standard") or 0), 2),
                 "price_variance_pct": float(r.get("price_variance_pct") or 0),
                 "reliability_score": _reliability(r),
+                "avg_actual_lead_days": round(float(r.get("avg_actual_lead") or 3.0), 1),
+                "avg_expected_lead_days": round(float(r.get("avg_expected_lead") or 3.0), 1),
                 "lead_time_accuracy_pct": float(r.get("lead_time_accuracy") or 0),
                 "recommendation": "Negotiate better rates"
                 if float(r.get("price_variance_pct") or 0) > 5
@@ -933,56 +903,6 @@ def calc_festive_uplift(engine, store_id: int, days: int = 90) -> dict:
         "baseline_days": int(r.get("baseline_days") or 0),
         "top_festivals": top,
         "trend": _trend(uplift, None),
-    }
-
-    # ── K_TL_14: WhatsApp Order Conversion ────────────────────────────────────────
-
-    """Calculate conversion of WhatsApp sessions to actual orders.
-    Logic:
-      1. Find unique phone numbers in wa_sessions for this store.
-      2. Join with kirana_oltp.customer to find matching customer_ids.
-      3. Count how many of those customers placed orders in the period.
-    """
-    p_from, p_to = _period(days)
-
-    sql = """
-    WITH store_sessions AS (
-        -- Unique phones that chatted with this store
-        SELECT DISTINCT phone 
-        FROM wa_sessions 
-        WHERE store_id = :sid 
-          AND (last_message_at >= :p_from OR updated_at >= :p_from)
-    ),
-    linked_customers AS (
-        -- Map them to our customer master
-        SELECT s.phone, c.customer_id
-        FROM store_sessions s
-        JOIN kirana_oltp.customer c ON regexp_replace(c.phone, '\D', '', 'g') = regexp_replace(s.phone, '\D', '', 'g')
-    ),
-    converting_customers AS (
-        -- See who actually bought
-        SELECT DISTINCT lc.customer_id
-        FROM linked_customers lc
-        JOIN kirana_oltp.orders o ON o.customer_id = lc.customer_id
-        WHERE o.store_id = :sid
-          AND o.order_status = 'completed'
-          AND o.order_date BETWEEN :p_from AND :p_to
-    )
-    SELECT
-        (SELECT COUNT(*) FROM store_sessions)        AS total_whatsapp_users,
-        (SELECT COUNT(*) FROM converting_customers)  AS converted_users
-    """
-    r = _row(engine, sql, {"sid": store_id, "p_from": p_from, "p_to": p_to})
-
-    total_users = int(r.get("total_whatsapp_users") or 0)
-    converted = int(r.get("converted_users") or 0)
-    conv_pct = round(converted * 100.0 / max(total_users, 1), 1)
-
-    return {
-        "total_whatsapp_users": total_users,
-        "converted_users": converted,
-        "conversion_proxy_pct": conv_pct,
-        "period_days": days,
     }
 
 

@@ -38,10 +38,17 @@ def _repo(request: Request):
 
 @router.get("/attribute-defs")
 async def attribute_defs(request: Request, user: dict = Depends(_auth)):
-    """The variant axes + attributes the caller's vertical exposes (F2)."""
+    """The variant axes + attributes the caller's vertical exposes (F2).
+
+    Optional ?category=<name> narrows to that category's axes plus the
+    vertical-wide ones (tester #1 — e.g. electronics Storage vs mAh)."""
     repo = _repo(request)
     vc = repo.get_vertical_config(user.get("store_id") or 0).get("vertical_code", "grocery")
-    return {"vertical_code": vc, "attributes": repo.list_attribute_defs(vc)}
+    category = request.query_params.get("category")
+    return {
+        "vertical_code": vc,
+        "attributes": repo.list_attribute_defs(vc, category=category),
+    }
 
 
 # ── Product variants ──────────────────────────────────────────────────────────

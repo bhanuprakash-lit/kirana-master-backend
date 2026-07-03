@@ -46,7 +46,12 @@ async def upsert_location(product_id: int, request: Request, user: dict = Depend
     b = await request.json()
     if not b.get("rack"):
         raise HTTPException(status_code=400, detail="rack required")
-    return _repo(request).upsert_location(
+    repo = _repo(request)
+    # Guard the FK up-front: a bad product_id would otherwise raise an IntegrityError
+    # (now caught globally, but a 404 here is precise for the client).
+    if not repo.product_exists(product_id):
+        raise HTTPException(status_code=404, detail="Product not found")
+    return repo.upsert_location(
         _sid(user), product_id, b["rack"], b.get("quantity") or 0, b.get("variant_id"))
 
 

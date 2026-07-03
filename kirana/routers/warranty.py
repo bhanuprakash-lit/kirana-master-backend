@@ -40,8 +40,10 @@ def _sid(user: dict) -> int:
 async def list_serials(request: Request, user: dict = Depends(_auth)):
     qp = request.query_params
     pid = qp.get("product_id")
+    oid = qp.get("order_id")
     return {"serials": _repo(request).list_serials(
-        _sid(user), int(pid) if pid else None, qp.get("status"))}
+        _sid(user), int(pid) if pid else None, qp.get("status"),
+        order_id=int(oid) if oid else None)}
 
 
 @router.post("/serials")
@@ -64,6 +66,14 @@ async def mark_sold(request: Request, user: dict = Depends(_auth)):
     if not ok:
         raise HTTPException(status_code=404, detail="Serial not found")
     return {"updated": True}
+
+
+@router.post("/products/{product_id}/warranty")
+async def set_product_warranty(product_id: int, request: Request, user: dict = Depends(_auth)):
+    """Set a product's warranty length in months (tester #11). 0/None clears it."""
+    _sid(user)  # store-owner guard
+    b = await request.json()
+    return _repo(request).set_product_warranty(product_id, b.get("warranty_months"))
 
 
 @router.get("/warranty-claims")

@@ -100,3 +100,44 @@ def test_difflib_fallback_when_rapidfuzz_absent(monkeypatch):
     m = _loaded_matcher(CATALOG)
     res = m.match("Maggi Masala Noodles")
     assert res is not None and res.product_id == 3
+
+
+# ── Look-alike variant disambiguation via visible_text (2026-07-03) ────────────
+# These exercise the token_set_ratio path (production ships rapidfuzz). The plain
+# difflib fallback is character-based and can't do token-level disambiguation, so
+# the feature — and these tests — require rapidfuzz. We assert only the WITH-text
+# outcome; which variant a bare name tie-breaks to is arbitrary and not contracted.
+
+def test_visible_text_overrides_ambiguous_flavor_variant():
+    """A bare 'Santoor Soap' is a subset of every Santoor variant (token_set_ratio
+    saturates at 1.0), so it can land on the wrong one; the printed variant text must
+    resolve it to the right SKU."""
+    pytest.importorskip("rapidfuzz")
+    rows = [(2, "Santoor Neem Soap"), (1, "Santoor Sandal & Turmeric Soap")]
+    m = _loaded_matcher(rows)
+    assert m.match("Santoor Soap",
+                   visible_text="SANTOOR Sandal & Turmeric").product_id == 1
+
+
+def test_visible_text_disambiguates_weight_variant_despite_spacing():
+    """'500 g' (read text) vs '500g' (catalog) must still match after unit
+    normalization, so weight variants resolve to the right pack size."""
+    pytest.importorskip("rapidfuzz")
+    rows = [(10, "Dabur Honey 200g"), (11, "Dabur Honey 500g")]
+    m = _loaded_matcher(rows)
+    assert m.match("Dabur Honey",
+                   visible_text="Dabur Honey 500 g Net Wt").product_id == 11
+
+
+def test_visible_text_noise_does_not_degrade_a_good_name_match():
+    m = _loaded_matcher(CATALOG)
+    res = m.match("Tata Salt 1kg", visible_text="MRP 28 Batch B12 Net Wt")
+    assert res.product_id == 2 and res.is_unknown is False
+
+
+def test_norm_units_folds_weight_spellings():
+    from vision.matcher import _norm_units
+    assert _norm_units("Dabur Honey 500 g") == "dabur honey 500g"
+    assert _norm_units("Maggi 500gm") == "maggi 500g"
+    assert _norm_units("Oil 1 kg") == "oil 1kg"
+    assert _norm_units("Coke 750 ml") == "coke 750ml"

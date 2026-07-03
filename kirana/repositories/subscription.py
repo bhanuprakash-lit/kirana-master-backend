@@ -6,6 +6,24 @@ logger = logging.getLogger("kirana.repository")
 
 
 class SubscriptionRepositoryMixin:
+    def get_segment_prices(self, store_id: int) -> dict:
+        """Basic/Pro monthly price for this store's segment (store.store_type),
+        falling back to the '__default__' row for any store_type with no
+        dedicated price (e.g. fruits_vegetables, other, unknown)."""
+        sql = """
+        SELECT COALESCE(sp.basic_price, d.basic_price) AS basic_price,
+               COALESCE(sp.pro_price,   d.pro_price)   AS pro_price
+        FROM kirana_oltp.store s
+        LEFT JOIN kirana_oltp.segment_pricing sp ON sp.store_type = s.store_type
+        LEFT JOIN kirana_oltp.segment_pricing d ON d.store_type = '__default__'
+        WHERE s.store_id = :sid
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"sid": store_id}).mappings().first()
+        if not row or row["basic_price"] is None:
+            return {"basic": 200, "pro": 500}
+        return {"basic": row["basic_price"], "pro": row["pro_price"]}
+
     def get_active_subscription(self, store_id: int) -> dict | None:
         sql = """
         SELECT * FROM kirana_oltp.subscription
@@ -36,6 +54,15 @@ class SubscriptionRepositoryMixin:
             d["started_at"] = d["started_at"].isoformat()
         if d.get("ended_at"):
             d["ended_at"] = d["ended_at"].isoformat()
+        prices = self.get_segment_prices(store_id)
+        d["basic_price"] = prices["basic"]
+        d["pro_price"] = prices["pro"]
+        with self._conn() as conn:
+            store_type = conn.execute(
+                text("SELECT store_type FROM kirana_oltp.store WHERE store_id = :sid"),
+                {"sid": store_id},
+            ).scalar()
+        d["store_type"] = store_type
         return d
 
     def request_trial(self, store_id: int, requested_tier: str = "basic") -> dict:
@@ -234,7 +261,7 @@ class SubscriptionRepositoryMixin:
         return d
 
     def upgrade_subscription(self, store_id: int, tier: str) -> dict:
-        prices = {"basic": 200, "pro": 500}
+        prices = self.get_segment_prices(store_id)
         if tier not in prices:
             raise ValueError(f"Invalid tier: {tier}")
         with self._conn() as conn:
@@ -274,10 +301,10 @@ class SubscriptionRepositoryMixin:
         """Call Razorpay API to create a payment order. Returns order details."""
         import requests as req_lib
 
-        prices = {"basic": 200, "pro": 500}
+        prices = self.get_segment_prices(store_id)
         if tier not in prices:
             raise ValueError(f"Invalid tier: {tier}")
-        amount_paise = prices[tier] * 100  # Razorpay uses paise
+        amount_paise = int(prices[tier] * 100)  # Razorpay uses paise
         payload = {
             "amount": amount_paise,
             "currency": "INR",
@@ -322,3 +349,21 @@ class SubscriptionRepositoryMixin:
         if expected != razorpay_signature:
             raise ValueError("Payment signature verification failed")
         return self.upgrade_subscription(store_id, tier)
+
+    # ── Admin settings ────────────────────────────────────────────────────────
+
+    def get_admin_setting(self, key: str, default: str = "") -> str:
+        sql = "SELECT value FROM kirana_oltp.admin_settings WHERE key = :key"
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"key": key}).mappings().first()
+        return row["value"] if row else default
+
+    def set_admin_setting(self, key: str, value: str) -> None:
+        sql = """
+        INSERT INTO kirana_oltp.admin_settings (key, value, updated_at)
+        VALUES (:key, :value, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = :value, updated_at = NOW()
+        """
+        with self._conn() as conn:
+            conn.execute(text(sql), {"key": key, "value": value})
+            conn.commit()
