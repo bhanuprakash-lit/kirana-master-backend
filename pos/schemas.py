@@ -81,6 +81,8 @@ class OrderCreate(BaseModel):
     customer_id: Optional[int] = None
     total_amount: Optional[float] = None
     payment_method: str = "cash"
+    # M5 — staff member who billed this order (optional), for sales/commission.
+    staff_id: Optional[int] = None
     # Split / partial-udhaar: cash collected now + amount put on credit.
     # Only set when payment_method == "udhaar" and it's a partial split.
     udhaar_amount: Optional[float] = None

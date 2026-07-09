@@ -319,6 +319,7 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
         basket_name=order.basket_name,
         basket_gross=order.basket_gross,
         basket_savings=order.basket_savings,
+        staff_id=order.staff_id,
     )
     db.add(db_order)
     db.flush()

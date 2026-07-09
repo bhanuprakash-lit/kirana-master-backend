@@ -53,6 +53,17 @@ class TestAuth:
             "/kirana/vision/sessions", headers={"Authorization": "Bearer t-nostore"})
         assert res.status_code == 400
 
+    def test_analytics_requires_auth(self, vision_client):
+        assert vision_client.get("/kirana/vision/analytics").status_code == 401
+
+
+class TestAnalyticsValidation:
+    def test_days_out_of_range_rejected(self, vision_client):
+        assert vision_client.get(
+            "/kirana/vision/analytics?days=0", headers=_OWNER).status_code == 422
+        assert vision_client.get(
+            "/kirana/vision/analytics?days=400", headers=_OWNER).status_code == 422
+
 
 class TestAnalyzeValidation:
     def test_invalid_session_type_rejected(self, vision_client):

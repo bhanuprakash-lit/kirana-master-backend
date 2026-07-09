@@ -183,7 +183,10 @@ async def record_return(
     items = [it.model_dump() for it in body.items]
     if not items:
         raise HTTPException(status_code=400, detail="No items to return")
-    return repo.record_return(int(sid), body.order_id, items, body.reason)
+    return repo.record_return(
+        int(sid), body.order_id, items, body.reason,
+        refund_amount=body.refund_amount, is_exchange=body.is_exchange,
+        customer_id=body.customer_id)
 
 
 @router.get("/customers/{customer_id}/purchases")

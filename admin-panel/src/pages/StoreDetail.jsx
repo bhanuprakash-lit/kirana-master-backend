@@ -4,6 +4,7 @@ import Chart from 'chart.js/auto';
 import { api } from '../api';
 import Badge from '../components/Badge';
 import { useUI } from '../components/UIProvider';
+import { DISPOSITIONS, USAGE, TAGS, labelOf } from './callcenter/constants';
 
 export default function StoreDetail() {
   const ui = useUI();
@@ -14,9 +15,12 @@ export default function StoreDetail() {
   const [extendDays, setExtendDays] = useState(7);
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
+  const [callHistory, setCallHistory] = useState([]);
 
   useEffect(() => {
     fetchData();
+    // Call-center history is best-effort (feature may not be in use for this store).
+    api.ccStoreHistory(id).then((d) => setCallHistory(d.items || [])).catch(() => {});
   }, [id]);
 
   const fetchData = async () => {
@@ -88,6 +92,17 @@ export default function StoreDetail() {
   const statusMeta = STATUS_META[subStatus] || STATUS_META.none;
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString() : '—';
 
+  // Location: the store table carries latitude/longitude, so we can pin it on a
+  // map directly instead of making the admin eyeball a free-text address.
+  const lat = store.latitude, lng = store.longitude;
+  const hasCoords = lat != null && lng != null && lat !== '' && lng !== '';
+  const mapsLink = hasCoords
+    ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+    : null;
+  const mapEmbed = hasCoords
+    ? `https://maps.google.com/maps?q=${lat},${lng}&z=16&output=embed`
+    : null;
+
   const recoveryRate = udhaar.total_given > 0
     ? Math.round((udhaar.total_recovered / udhaar.total_given) * 100) 
     : 0;
@@ -101,7 +116,18 @@ export default function StoreDetail() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">{store.name}</h1>
           <p className="text-slate-500 text-sm flex items-center gap-2">
-            <span>📍 {store.location || 'No location'}</span>
+            {mapsLink ? (
+              <a
+                href={mapsLink}
+                target="_blank"
+                rel="noreferrer"
+                className="text-indigo-600 hover:text-indigo-800 hover:underline"
+              >
+                📍 {store.location || 'View on map'}
+              </a>
+            ) : (
+              <span>📍 {store.location || 'No location'}</span>
+            )}
             <span className="text-slate-300">•</span>
             <span>📞 {store.phone_number || 'No phone'}</span>
             <span className="text-slate-300">•</span>
@@ -140,7 +166,47 @@ export default function StoreDetail() {
         
         {/* Left Column (Wider) */}
         <div className="lg:col-span-2 space-y-8">
-          
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-slate-50 bg-slate-50/50 flex items-center justify-between gap-4">
+              <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                <span>🗺️</span> Store Location
+              </h3>
+              {mapsLink && (
+                <a
+                  href={mapsLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm font-semibold text-indigo-600 hover:text-indigo-800 hover:underline whitespace-nowrap"
+                >
+                  Open in Google Maps ↗
+                </a>
+              )}
+            </div>
+            {hasCoords ? (
+              <>
+                <iframe
+                  title="Store location map"
+                  src={mapEmbed}
+                  className="w-full h-[280px] border-0"
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                  allowFullScreen
+                ></iframe>
+                <div className="px-6 py-3 text-xs text-slate-400 flex items-center gap-3">
+                  <span>{store.location || 'No address on file'}</span>
+                  <span className="text-slate-300">•</span>
+                  <span className="font-mono">{lat}, {lng}</span>
+                </div>
+              </>
+            ) : (
+              <div className="px-6 py-10 text-center text-slate-400 italic">
+                No coordinates on file for this store yet.
+                {store.location && <div className="mt-1 not-italic text-slate-500">{store.location}</div>}
+              </div>
+            )}
+          </div>
+
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col h-[300px]">
             <h3 className="font-bold text-slate-900 mb-6">Revenue Trend (Last 7 Days)</h3>
             <div className="flex-1 relative flex items-center justify-center">
@@ -384,6 +450,38 @@ export default function StoreDetail() {
           </div>
 
         </div>
+      </div>
+
+      {/* ── Call center history ── */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-slate-50 bg-slate-50/50">
+          <h3 className="font-bold text-slate-900 flex items-center gap-2">
+            <span>📞</span> Call History &amp; Feedback
+          </h3>
+        </div>
+        {callHistory.length === 0 ? (
+          <div className="px-6 py-8 text-center text-slate-400 italic">No calls logged for this store yet.</div>
+        ) : (
+          <div className="divide-y divide-slate-50">
+            {callHistory.map((h) => (
+              <div key={h.call_id} className="px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-800 text-sm">{labelOf(DISPOSITIONS, h.disposition)}</span>
+                  <span className="text-xs text-slate-400">{new Date(h.called_at).toLocaleString()}</span>
+                </div>
+                {h.feedback_text && <p className="mt-1 text-sm text-slate-600">{h.feedback_text}</p>}
+                <div className="mt-1.5 flex flex-wrap gap-1.5 items-center text-[11px] text-slate-400">
+                  {h.app_usage_status && <span>{labelOf(USAGE, h.app_usage_status)}</span>}
+                  {h.rating && <span className="text-amber-500">{'⭐'.repeat(h.rating)}</span>}
+                  {(h.tags || []).map((t) => (
+                    <span key={t} className="bg-indigo-50 text-indigo-600 font-semibold px-1.5 py-0.5 rounded">{labelOf(TAGS, t)}</span>
+                  ))}
+                  <span className="ml-auto font-medium text-slate-500">{h.executive_name}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

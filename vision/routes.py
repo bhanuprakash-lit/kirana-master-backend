@@ -5,6 +5,7 @@ GET  /kirana/vision/sessions?date=                              — today's sess
 GET  /kirana/vision/session/{id}/items                          — detected items
 GET  /kirana/vision/sales?date=                                 — morning-evening delta
 POST /kirana/vision/correct/{item_id}                           — owner correction
+GET  /kirana/vision/analytics?days=                             — usage/accuracy analytics
 GET  /kirana/vision/image/{path}                                — stored shelf image
 
 Analysis runs in a FastAPI background task: the upload returns 202 immediately with a
@@ -38,7 +39,7 @@ from .matcher import get_matcher, match_detections
 from .schemas import (CorrectionInput, CounterSummaryResponse, CounterSyncInput,
                       CounterSyncResponse, OnboardingCommitInput,
                       OnboardingCommitResponse, SalesResponse, SessionAccepted,
-                      SessionSummary, VisionItemOut)
+                      SessionSummary, VisionAnalyticsResponse, VisionItemOut)
 
 logger = logging.getLogger("vision")
 
@@ -447,6 +448,21 @@ def sales(
         items=[d for d in deltas],
         total_sold=sum(d["sold"] for d in deltas),
     )
+
+
+@router.get("/analytics", response_model=VisionAnalyticsResponse)
+def analytics(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365, description="Lookback window in days"),
+    user: dict = Depends(_auth),
+):
+    """Vision usage + accuracy analytics for the store: session volume and processing
+    latency, unknown/correction rates (accuracy proxies), own-YOLO vs Gemini detector
+    split, per-day trend series, and the most-seen unknown products (next labels to
+    train). Derived entirely from vision_session / vision_item."""
+    store_id = _require_store(user)
+    data = repo.get_analytics(request.app.state.engine, store_id, days)
+    return VisionAnalyticsResponse(store_id=store_id, **data)
 
 
 @router.post("/correct/{item_id}")

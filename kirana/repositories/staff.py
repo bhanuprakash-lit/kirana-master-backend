@@ -118,6 +118,37 @@ class StaffRepositoryMixin:
             conn.commit()
         return n > 0
 
+    def delete_task(self, task_id: int, store_id: int) -> bool:
+        with self._conn() as conn:
+            n = conn.execute(text(
+                "DELETE FROM kirana_oltp.staff_task WHERE task_id = :id AND store_id = :sid"),
+                {"id": task_id, "sid": store_id}).rowcount
+            conn.commit()
+        return n > 0
+
+    # ── Sales & commission per staff member (from orders.staff_id) ────────────
+    def staff_sales(self, store_id: int, days: int = 30) -> list[dict]:
+        """For each staff member: completed-order count, revenue billed under them,
+        and the commission earned (revenue × their commission_pct) over [days]."""
+        with self._conn() as conn:
+            rows = conn.execute(text("""
+                SELECT s.staff_id, s.name, s.commission_pct,
+                       COUNT(o.order_id) AS orders,
+                       ROUND(COALESCE(SUM(o.total_amount), 0)::numeric, 2) AS revenue,
+                       ROUND(COALESCE(SUM(o.total_amount), 0)::numeric
+                             * COALESCE(s.commission_pct, 0) / 100.0, 2) AS commission
+                FROM kirana_oltp.staff s
+                LEFT JOIN kirana_oltp.orders o
+                       ON o.staff_id = s.staff_id
+                      AND o.store_id = s.store_id
+                      AND o.order_status = 'completed'
+                      AND o.order_date >= NOW() - (:days || ' days')::interval
+                WHERE s.store_id = :sid AND s.is_active = TRUE
+                GROUP BY s.staff_id, s.name, s.commission_pct
+                ORDER BY revenue DESC
+            """), {"sid": store_id, "days": days}).mappings().all()
+        return [dict(r) for r in rows]
+
     # ── Performance (drives F4 staff KPI) ───────────────────────────────────
     def staff_performance(self, store_id: int, days: int = 30) -> dict:
         with self._conn() as conn:
