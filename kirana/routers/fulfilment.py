@@ -72,10 +72,14 @@ async def set_estimate_status(estimate_id: int, request: Request, user: dict = D
 
 # ── Customer returns / exchanges ─────────────────────────────────────────────
 @router.get("/sales-returns")
-async def list_returns(request: Request, days: int = 90, user: dict = Depends(_auth)):
-    return {"returns": _repo(request).list_sales_returns(_sid(user), days)}
+async def list_returns(request: Request, days: int = 90,
+                       order_id: int | None = None, user: dict = Depends(_auth)):
+    return {"returns": _repo(request).list_sales_returns(_sid(user), days, order_id)}
 
 
+# LEGACY: bare header-only return (no items, no stock movement). The app now
+# records all returns through POST /kirana/returns (item-level: restock + RTV +
+# unified sales_return history in one transaction). Kept for old app builds only.
 @router.post("/sales-returns")
 async def create_return(request: Request, user: dict = Depends(_auth)):
     b = await request.json()

@@ -2,16 +2,27 @@
 
 let _baseUrl = '';
 let _apiKey  = '';
+let _token   = '';             // executive bearer token (call-center login)
 let _onUnauthorized = null;     // set by App → clears session + redirects to login
 const REQUEST_TIMEOUT_MS = 20000;
 
+// Admin mode: authenticate with the shared X-API-Key.
 export function configure(baseUrl, apiKey) {
   _baseUrl = baseUrl.replace(/\/+$/, '');
   _apiKey  = apiKey;
+  _token   = '';
+}
+
+// Executive mode: authenticate with a bearer token from /callcenter/login.
+// Pass an empty token to set only the base URL (used just before logging in).
+export function configureExecutive(baseUrl, token) {
+  _baseUrl = baseUrl.replace(/\/+$/, '');
+  _token   = token || '';
+  _apiKey  = '';
 }
 
 export function isConfigured() {
-  return !!_baseUrl && !!_apiKey;
+  return !!_baseUrl && (!!_apiKey || !!_token);
 }
 
 /** Register a handler invoked when any request returns 401/403 (bad/revoked key). */
@@ -34,7 +45,8 @@ async function request(method, path, body, params) {
     signal: ctrl.signal,
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': _apiKey,
+      ...(_apiKey ? { 'X-API-Key': _apiKey } : {}),
+      ...(_token ? { Authorization: `Bearer ${_token}` } : {}),
     },
   };
   if (body !== undefined && method !== 'GET' && method !== 'HEAD') {
@@ -119,6 +131,31 @@ export const api = {
   userActivity:    ()                     => request('GET',  '/kirana/admin/user-activity'),
   adminSessions:   ()                     => request('GET',  '/kirana/admin/sessions'),
   
+  // Vision AI analytics (fleet-wide by default; pass storeId to scope to one store)
+  visionAnalytics: (days = 30, storeId)   => request('GET',  '/kirana/admin/vision/analytics', null, { days, store_id: storeId }),
+
+  // ── Call center ─────────────────────────────────────────────────────────────
+  // Auth
+  ccLogin:         (username, password)   => request('POST', '/kirana/callcenter/login', { username, password }),
+  ccMe:            ()                      => request('GET',  '/kirana/callcenter/me'),
+  ccLogout:        ()                      => request('POST', '/kirana/callcenter/logout'),
+  // Executive work
+  ccQueue:         (limit = 200)          => request('GET',  '/kirana/callcenter/queue', null, { limit }),
+  ccCallbacks:     ()                      => request('GET',  '/kirana/callcenter/callbacks'),
+  ccStats:         ()                      => request('GET',  '/kirana/callcenter/stats'),
+  ccCallSheet:     (storeId)              => request('GET',  `/kirana/callcenter/stores/${storeId}`),
+  ccLogCall:       (storeId, body)        => request('POST', `/kirana/callcenter/stores/${storeId}/calls`, body),
+  // Manager
+  ccExecutives:    ()                      => request('GET',  '/kirana/callcenter/executives'),
+  ccCreateExec:    (body)                 => request('POST', '/kirana/callcenter/executives', body),
+  ccUpdateExec:    (id, body)             => request('PATCH', `/kirana/callcenter/executives/${id}`, body),
+  ccAssign:        (executiveId, storeIds) => request('POST', '/kirana/callcenter/assignments', { executive_id: executiveId, store_ids: storeIds }),
+  ccUnassign:      (storeId)              => request('DELETE', `/kirana/callcenter/assignments/${storeId}`),
+  ccLoad:          ()                      => request('GET',  '/kirana/callcenter/load'),
+  ccAssignableStores: (params)            => request('GET',  '/kirana/callcenter/assignable-stores', null, params),
+  ccFeedback:      (params)               => request('GET',  '/kirana/callcenter/feedback', null, params),
+  ccStoreHistory:  (storeId)             => request('GET',  `/kirana/callcenter/stores/${storeId}/history`),
+
   // Intelligence
   intelTriggers:   ()                     => request('GET',  '/kirana/admin/intelligence/triggers'),
   fireTrigger:     (name)                 => request('POST', `/kirana/admin/intelligence/fire/${name}`),

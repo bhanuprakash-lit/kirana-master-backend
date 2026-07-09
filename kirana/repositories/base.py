@@ -233,6 +233,7 @@ class BaseRepositoryMixin:
                     total_units   INT NOT NULL DEFAULT 0,
                     unknown_count INT NOT NULL DEFAULT 0,
                     error         TEXT,
+                    finished_at   TIMESTAMPTZ,
                     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
@@ -249,6 +250,14 @@ class BaseRepositoryMixin:
                 text(
                     "ALTER TABLE kirana_oltp.vision_session "
                     "ADD COLUMN IF NOT EXISTS committed_at TIMESTAMPTZ"
+                )
+            )
+            # finished_at = when background analysis finalized (or failed) the session;
+            # finished_at - created_at is the processing latency shown in analytics.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.vision_session "
+                    "ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ"
                 )
             )
 
@@ -271,6 +280,7 @@ class BaseRepositoryMixin:
                     is_unknown           BOOLEAN NOT NULL DEFAULT TRUE,
                     bbox_json            TEXT,
                     image_index          SMALLINT NOT NULL DEFAULT 0,
+                    detector_source      VARCHAR(16) NOT NULL DEFAULT 'gemini',
                     corrected_product_id BIGINT,
                     corrected_at         TIMESTAMPTZ,
                     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -290,6 +300,14 @@ class BaseRepositoryMixin:
                 text(
                     "ALTER TABLE kirana_oltp.vision_item "
                     "ADD COLUMN IF NOT EXISTS image_index SMALLINT NOT NULL DEFAULT 0"
+                )
+            )
+            # detector_source = 'yolo' (our custom model) | 'gemini' (fallback); rows
+            # from before the column existed default to 'gemini' — YOLO shipped later.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.vision_item "
+                    "ADD COLUMN IF NOT EXISTS detector_source VARCHAR(16) NOT NULL DEFAULT 'gemini'"
                 )
             )
 
@@ -348,6 +366,134 @@ class BaseRepositoryMixin:
                 text(
                     "CREATE INDEX IF NOT EXISTS idx_counter_item_session "
                     "ON kirana_oltp.counter_item(session_id)"
+                )
+            )
+
+            # ── Call center / tele-calling ──────────────────────────────────
+            # kirana_oltp.call_executive — a tele-calling agent or their manager.
+            # Own credentials (not app users): they log into the admin panel with a
+            # username+password session (role gates the panel), so every call is
+            # attributed to a real person.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.call_executive (
+                    executive_id  BIGSERIAL PRIMARY KEY,
+                    username      VARCHAR(100) UNIQUE NOT NULL,
+                    full_name     VARCHAR(255) NOT NULL,
+                    phone         VARCHAR(20),
+                    email         VARCHAR(255),
+                    role          VARCHAR(20) NOT NULL DEFAULT 'call_executive',  -- | 'call_manager'
+                    password_salt VARCHAR(64),
+                    password_hash VARCHAR(128),
+                    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            # kirana_oltp.call_executive_session — bearer token per login (mirrors
+            # user_sessions; token in Authorization: Bearer for the panel).
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.call_executive_session (
+                    session_id   BIGSERIAL PRIMARY KEY,
+                    executive_id BIGINT NOT NULL
+                                     REFERENCES kirana_oltp.call_executive(executive_id) ON DELETE CASCADE,
+                    access_token VARCHAR(128) UNIQUE NOT NULL,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    revoked_at   TIMESTAMPTZ
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_call_exec_session_token "
+                    "ON kirana_oltp.call_executive_session(access_token)"
+                )
+            )
+            # kirana_oltp.store_assignment — which executive owns which store.
+            # status lets us unassign without losing history.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.store_assignment (
+                    assignment_id BIGSERIAL PRIMARY KEY,
+                    store_id      BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+                    executive_id  BIGINT NOT NULL
+                                      REFERENCES kirana_oltp.call_executive(executive_id) ON DELETE CASCADE,
+                    assigned_by   BIGINT,      -- executive_id of the manager (NULL = admin key)
+                    assigned_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    status        VARCHAR(20) NOT NULL DEFAULT 'active',  -- active | unassigned
+                    priority      SMALLINT NOT NULL DEFAULT 0
+                )
+            """)
+            )
+            # One ACTIVE assignment per store (a store belongs to one exec at a time).
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uidx_store_assignment_active "
+                    "ON kirana_oltp.store_assignment(store_id) WHERE status = 'active'"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_store_assignment_exec "
+                    "ON kirana_oltp.store_assignment(executive_id, status)"
+                )
+            )
+            # kirana_oltp.call_log — one row per call attempt (the heart of it).
+            # duration_sec / recording_url are reserved for future click-to-call.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.call_log (
+                    call_id          BIGSERIAL PRIMARY KEY,
+                    store_id         BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+                    executive_id     BIGINT NOT NULL REFERENCES kirana_oltp.call_executive(executive_id),
+                    called_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    answered         BOOLEAN,
+                    disposition      VARCHAR(24) NOT NULL,   -- answered|no_answer|busy|switched_off|wrong_number|invalid_number
+                    app_usage_status VARCHAR(24),            -- using_active|using_rare|stopped|never_started|needs_training
+                    feedback_text    TEXT,
+                    sentiment        VARCHAR(12),            -- positive|neutral|negative
+                    rating           SMALLINT,               -- 1..5
+                    next_action      VARCHAR(16),            -- callback|escalate|done|do_not_call
+                    callback_at      TIMESTAMPTZ,
+                    duration_sec     INT,
+                    recording_url    TEXT,
+                    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_call_log_store "
+                    "ON kirana_oltp.call_log(store_id, called_at DESC)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_call_log_exec "
+                    "ON kirana_oltp.call_log(executive_id, called_at DESC)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_call_log_callback "
+                    "ON kirana_oltp.call_log(callback_at) WHERE next_action = 'callback'"
+                )
+            )
+            # kirana_oltp.call_feedback_tag — multi-tag a call for the feedback digest.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.call_feedback_tag (
+                    id      BIGSERIAL PRIMARY KEY,
+                    call_id BIGINT NOT NULL REFERENCES kirana_oltp.call_log(call_id) ON DELETE CASCADE,
+                    tag     VARCHAR(24) NOT NULL   -- bug|feature_request|pricing|training|happy|churn_risk
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_call_feedback_tag_call "
+                    "ON kirana_oltp.call_feedback_tag(call_id)"
                 )
             )
 
@@ -1169,6 +1315,9 @@ class BaseRepositoryMixin:
                 "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS delivery_status VARCHAR(20)",
                 "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS delivery_address VARCHAR(500)",
                 "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(10,2)",
+                # M5 — which staff member billed this order (optional), so sales +
+                # commission can be attributed per staff member.
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS staff_id BIGINT",
             ]:
                 conn.execute(text(ddl))
             conn.execute(text("""
@@ -1207,6 +1356,24 @@ class BaseRepositoryMixin:
                     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """))
+            # Per-item detail for a return, written by the SAME transaction that
+            # restocks / RTVs stock (inventory.record_return) — one source of truth,
+            # so the Returns history shows what came back and where it went.
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.sales_return_item (
+                    id          BIGSERIAL PRIMARY KEY,
+                    return_id   BIGINT NOT NULL
+                                    REFERENCES kirana_oltp.sales_return(return_id) ON DELETE CASCADE,
+                    product_id  BIGINT,
+                    name        VARCHAR(200),
+                    qty         NUMERIC NOT NULL DEFAULT 1,
+                    resaleable  BOOLEAN NOT NULL DEFAULT TRUE
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_sales_return_item_return "
+                "ON kirana_oltp.sales_return_item(return_id)"
+            ))
 
             # ── Module M3: Multi-location / multi-rack stock ──────────────────
             conn.execute(text("""
@@ -1606,6 +1773,23 @@ class BaseRepositoryMixin:
                 VALUES ('auto_approve_trial', 'false')
                 ON CONFLICT (key) DO NOTHING
             """)
+            )
+
+            # kirana_oltp.intelligence_log — widen the status CHECK to allow
+            # 'internal' (in-app-only nudges past the daily FCM cap). Older DBs
+            # were created before this status existed, so those inserts fail.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.intelligence_log "
+                    "DROP CONSTRAINT IF EXISTS intelligence_log_status_check"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.intelligence_log "
+                    "ADD CONSTRAINT intelligence_log_status_check "
+                    "CHECK (status IN ('sent','failed','opened','skipped','internal'))"
+                )
             )
 
             conn.commit()

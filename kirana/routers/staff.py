@@ -105,9 +105,22 @@ async def set_task(task_id: int, request: Request, user: dict = Depends(_auth)):
     return {"updated": True}
 
 
+@router.delete("/staff/tasks/{task_id}")
+async def delete_task(task_id: int, request: Request, user: dict = Depends(_auth)):
+    if not _repo(request).delete_task(task_id, _sid(user)):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"deleted": True}
+
+
 @router.get("/staff/performance")
 async def staff_performance(request: Request, days: int = 30, user: dict = Depends(_auth)):
     return _repo(request).staff_performance(_sid(user), days)
+
+
+@router.get("/staff/sales")
+async def staff_sales(request: Request, days: int = 30, user: dict = Depends(_auth)):
+    """Sales + commission per staff member (from orders.staff_id)."""
+    return {"staff": _repo(request).staff_sales(_sid(user), days)}
 
 
 # ── Admin: per-store staff view + bulk add ────────────────────────────────────

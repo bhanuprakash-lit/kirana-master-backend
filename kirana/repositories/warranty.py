@@ -104,10 +104,12 @@ class WarrantyRepositoryMixin:
         with self._conn() as conn:
             rows = conn.execute(text("""
                 SELECT w.claim_id, w.product_id, w.serial_id, w.customer_id, w.issue,
-                       w.status, w.claim_date, ps.serial_no, p.name AS product_name
+                       w.status, w.claim_date, ps.serial_no, p.name AS product_name,
+                       c.name AS customer_name
                 FROM kirana_oltp.warranty_claim w
                 LEFT JOIN kirana_oltp.product_serial ps ON w.serial_id = ps.serial_id
                 LEFT JOIN kirana_oltp.product p ON w.product_id = p.product_id
+                LEFT JOIN kirana_oltp.customer c ON w.customer_id = c.customer_id
                 WHERE w.store_id = :sid ORDER BY w.created_at DESC
             """), {"sid": store_id}).mappings().all()
         return [dict(r) for r in rows]

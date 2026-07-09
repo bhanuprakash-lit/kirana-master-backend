@@ -37,6 +37,7 @@ class VisionItemOut(BaseModel):
     bbox_json: Optional[str] = None
     image_index: int = 0
     corrected_product_id: Optional[int] = None
+    detector_source: str = "gemini"  # 'yolo' (our model) | 'gemini' (fallback)
 
 
 class SalesDeltaItem(BaseModel):
@@ -56,6 +57,62 @@ class SalesResponse(BaseModel):
 
 class CorrectionInput(BaseModel):
     corrected_product_id: Optional[int] = None  # null clears the correction
+
+
+# ── Analytics ────────────────────────────────────────────────────────────────
+
+class AnalyticsSessions(BaseModel):
+    total: int
+    done: int
+    failed: int
+    pending: int
+    morning: int
+    evening: int
+    onboarding: int
+    committed: int                                  # onboarding sessions written to stock
+    avg_processing_seconds: Optional[float] = None  # upload → finalize, done sessions
+
+
+class AnalyticsDetections(BaseModel):
+    items: int
+    units: int
+    unknown_items: int
+    corrected_items: int
+    unknown_rate: float      # unknown_items / items
+    correction_rate: float   # corrected_items / items (owner had to fix the match)
+    avg_match_score: Optional[float] = None  # auto-matched items only
+
+
+class AnalyticsDetectorSplit(BaseModel):
+    detector_source: str     # 'yolo' | 'gemini'
+    items: int
+    units: int
+    matched_items: int
+
+
+class AnalyticsDaily(BaseModel):
+    date: str
+    sessions: int
+    items: int
+    units: int
+    unknown_items: int
+    corrected_items: int
+
+
+class AnalyticsUnknown(BaseModel):
+    raw_name: str            # what the detector read — the next label to train/map
+    times_seen: int
+    units: int
+
+
+class VisionAnalyticsResponse(BaseModel):
+    store_id: int
+    days: int
+    sessions: AnalyticsSessions
+    detections: AnalyticsDetections
+    detectors: list[AnalyticsDetectorSplit]
+    daily: list[AnalyticsDaily]
+    top_unknowns: list[AnalyticsUnknown]
 
 
 # ── Sale-area counter (on-device) ────────────────────────────────────────────

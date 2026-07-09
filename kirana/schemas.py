@@ -392,6 +392,9 @@ class ReturnCreate(BaseModel):
     order_id: int | None = None
     items: list[ReturnItemInput] = []
     reason: str | None = None
+    refund_amount: float = 0
+    is_exchange: bool = False
+    customer_id: int | None = None
 
 
 class SetPriceRequest(BaseModel):

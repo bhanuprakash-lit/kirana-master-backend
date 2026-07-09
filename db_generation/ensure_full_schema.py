@@ -399,11 +399,14 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.vision_session (
     unknown_count INT NOT NULL DEFAULT 0,
     error         TEXT,
     committed_at  TIMESTAMPTZ,
+    finished_at   TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """)
 step("col:vision_session.committed_at",
      "ALTER TABLE kirana_oltp.vision_session ADD COLUMN IF NOT EXISTS committed_at TIMESTAMPTZ")
+step("col:vision_session.finished_at",
+     "ALTER TABLE kirana_oltp.vision_session ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ")
 
 step("table:vision_item", """
 CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
@@ -419,6 +422,7 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
     is_unknown           BOOLEAN NOT NULL DEFAULT TRUE,
     bbox_json            TEXT,
     image_index          SMALLINT NOT NULL DEFAULT 0,
+    detector_source      VARCHAR(16) NOT NULL DEFAULT 'gemini',
     corrected_product_id BIGINT,
     corrected_at         TIMESTAMPTZ,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -426,6 +430,8 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.vision_item (
 """)
 step("col:vision_item.image_index",
      "ALTER TABLE kirana_oltp.vision_item ADD COLUMN IF NOT EXISTS image_index SMALLINT NOT NULL DEFAULT 0")
+step("col:vision_item.detector_source",
+     "ALTER TABLE kirana_oltp.vision_item ADD COLUMN IF NOT EXISTS detector_source VARCHAR(16) NOT NULL DEFAULT 'gemini'")
 
 step("table:counter_session", """
 CREATE TABLE IF NOT EXISTS kirana_oltp.counter_session (
@@ -459,6 +465,86 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.counter_item (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """)
+
+# ── Call center / tele-calling ────────────────────────────────────────────────
+step("table:call_executive", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.call_executive (
+    executive_id  BIGSERIAL PRIMARY KEY,
+    username      VARCHAR(100) UNIQUE NOT NULL,
+    full_name     VARCHAR(255) NOT NULL,
+    phone         VARCHAR(20),
+    email         VARCHAR(255),
+    role          VARCHAR(20) NOT NULL DEFAULT 'call_executive',
+    password_salt VARCHAR(64),
+    password_hash VARCHAR(128),
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+""")
+step("table:call_executive_session", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.call_executive_session (
+    session_id   BIGSERIAL PRIMARY KEY,
+    executive_id BIGINT NOT NULL REFERENCES kirana_oltp.call_executive(executive_id) ON DELETE CASCADE,
+    access_token VARCHAR(128) UNIQUE NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at   TIMESTAMPTZ
+)
+""")
+step("idx:call_exec_session_token",
+     "CREATE INDEX IF NOT EXISTS idx_call_exec_session_token "
+     "ON kirana_oltp.call_executive_session(access_token)")
+step("table:store_assignment", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.store_assignment (
+    assignment_id BIGSERIAL PRIMARY KEY,
+    store_id      BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+    executive_id  BIGINT NOT NULL REFERENCES kirana_oltp.call_executive(executive_id) ON DELETE CASCADE,
+    assigned_by   BIGINT,
+    assigned_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status        VARCHAR(20) NOT NULL DEFAULT 'active',
+    priority      SMALLINT NOT NULL DEFAULT 0
+)
+""")
+step("idx:store_assignment_active",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uidx_store_assignment_active "
+     "ON kirana_oltp.store_assignment(store_id) WHERE status = 'active'")
+step("idx:store_assignment_exec",
+     "CREATE INDEX IF NOT EXISTS idx_store_assignment_exec "
+     "ON kirana_oltp.store_assignment(executive_id, status)")
+step("table:call_log", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.call_log (
+    call_id          BIGSERIAL PRIMARY KEY,
+    store_id         BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id) ON DELETE CASCADE,
+    executive_id     BIGINT NOT NULL REFERENCES kirana_oltp.call_executive(executive_id),
+    called_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    answered         BOOLEAN,
+    disposition      VARCHAR(24) NOT NULL,
+    app_usage_status VARCHAR(24),
+    feedback_text    TEXT,
+    sentiment        VARCHAR(12),
+    rating           SMALLINT,
+    next_action      VARCHAR(16),
+    callback_at      TIMESTAMPTZ,
+    duration_sec     INT,
+    recording_url    TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+""")
+step("idx:call_log_store",
+     "CREATE INDEX IF NOT EXISTS idx_call_log_store ON kirana_oltp.call_log(store_id, called_at DESC)")
+step("idx:call_log_exec",
+     "CREATE INDEX IF NOT EXISTS idx_call_log_exec ON kirana_oltp.call_log(executive_id, called_at DESC)")
+step("idx:call_log_callback",
+     "CREATE INDEX IF NOT EXISTS idx_call_log_callback "
+     "ON kirana_oltp.call_log(callback_at) WHERE next_action = 'callback'")
+step("table:call_feedback_tag", """
+CREATE TABLE IF NOT EXISTS kirana_oltp.call_feedback_tag (
+    id      BIGSERIAL PRIMARY KEY,
+    call_id BIGINT NOT NULL REFERENCES kirana_oltp.call_log(call_id) ON DELETE CASCADE,
+    tag     VARCHAR(24) NOT NULL
+)
+""")
+step("idx:call_feedback_tag_call",
+     "CREATE INDEX IF NOT EXISTS idx_call_feedback_tag_call ON kirana_oltp.call_feedback_tag(call_id)")
 
 step("table:ai_usage", """
 CREATE TABLE IF NOT EXISTS kirana_oltp.ai_usage (
@@ -564,8 +650,19 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.intelligence_log (
     sent_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     opened_at    TIMESTAMPTZ,
     status       VARCHAR(20) NOT NULL DEFAULT 'sent'
-        CHECK (status IN ('sent','failed','opened','skipped'))
+        CHECK (status IN ('sent','failed','opened','skipped','internal'))
 )
+""")
+
+# Migration: existing DBs were created with a status CHECK that predates the
+# 'internal' status (in-app-only nudges past the daily FCM cap). Widen the
+# constraint in place so those inserts stop failing.
+step("migrate:intelligence_log_status_internal", """
+ALTER TABLE kirana_oltp.intelligence_log
+    DROP CONSTRAINT IF EXISTS intelligence_log_status_check;
+ALTER TABLE kirana_oltp.intelligence_log
+    ADD CONSTRAINT intelligence_log_status_check
+    CHECK (status IN ('sent','failed','opened','skipped','internal'));
 """)
 
 step("table:cart_session", """

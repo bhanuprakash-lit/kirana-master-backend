@@ -191,6 +191,7 @@ class _Detector:
                 x2=max(bx1, bx2), y2=max(by1, by2),
                 visible_text=name,        # the class label grounds the detection
                 confidence=e["best_conf"],
+                source="yolo",
             )
             # Deterministic resolution via the curated map (skips fuzzy matching
             # downstream). Unmapped classes stay unknown → fuzzy fallback / review.

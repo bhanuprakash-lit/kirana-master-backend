@@ -69,15 +69,30 @@ class FulfilmentRepositoryMixin:
         return n > 0
 
     # ── Customer returns / exchanges ─────────────────────────────────────────
-    def list_sales_returns(self, store_id: int, days: int = 90) -> list[dict]:
+    def list_sales_returns(self, store_id: int, days: int = 90,
+                           order_id: int | None = None) -> list[dict]:
+        """Unified returns history: header rows + their item detail (aggregated
+        as a JSON array so one query serves the list). [order_id] filters to a
+        single order — used by the order-details 'returned' badge."""
+        sql = """
+            SELECT sr.return_id, sr.order_id, sr.customer_id, sr.reason,
+                   sr.refund_amount, sr.is_exchange, sr.notes, sr.created_at,
+                   COALESCE(json_agg(json_build_object(
+                       'product_id', i.product_id, 'name', i.name,
+                       'qty', i.qty, 'resaleable', i.resaleable
+                   ) ORDER BY i.id) FILTER (WHERE i.id IS NOT NULL), '[]') AS items
+            FROM kirana_oltp.sales_return sr
+            LEFT JOIN kirana_oltp.sales_return_item i ON i.return_id = sr.return_id
+            WHERE sr.store_id = :sid
+              AND sr.created_at >= NOW() - (:days || ' days')::interval
+        """
+        params: dict = {"sid": store_id, "days": days}
+        if order_id is not None:
+            sql += " AND sr.order_id = :oid"
+            params["oid"] = order_id
+        sql += " GROUP BY sr.return_id ORDER BY sr.created_at DESC"
         with self._conn() as conn:
-            rows = conn.execute(text("""
-                SELECT return_id, order_id, customer_id, reason, refund_amount,
-                       is_exchange, notes, created_at
-                FROM kirana_oltp.sales_return WHERE store_id = :sid
-                  AND created_at >= NOW() - (:days || ' days')::interval
-                ORDER BY created_at DESC
-            """), {"sid": store_id, "days": days}).mappings().all()
+            rows = conn.execute(text(sql), params).mappings().all()
         return [dict(r) for r in rows]
 
     def create_sales_return(self, store_id: int, *, order_id: int | None = None,

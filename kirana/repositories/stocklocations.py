@@ -51,10 +51,25 @@ class StockLocationsRepositoryMixin:
     def find_by_rack(self, store_id: int, rack: str) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(text("""
-                SELECT il.product_id, p.name AS product_name, il.variant_id, il.rack, il.quantity
+                SELECT il.id, il.product_id, p.name AS product_name, il.variant_id,
+                       il.rack, il.quantity
                 FROM kirana_oltp.inventory_location il
                 JOIN kirana_oltp.product p ON p.product_id = il.product_id
                 WHERE il.store_id = :sid AND il.rack ILIKE :rack
-                ORDER BY p.name
+                ORDER BY il.rack, p.name
             """), {"sid": store_id, "rack": f"%{rack}%"}).mappings().all()
+        return [dict(r) for r in rows]
+
+    def list_all_locations(self, store_id: int) -> list[dict]:
+        """Every placement in the store (id + product name), for the rack-browsing
+        view. The app groups these by rack to show 'what's in each rack'."""
+        with self._conn() as conn:
+            rows = conn.execute(text("""
+                SELECT il.id, il.product_id, p.name AS product_name, il.variant_id,
+                       il.rack, il.quantity
+                FROM kirana_oltp.inventory_location il
+                JOIN kirana_oltp.product p ON p.product_id = il.product_id
+                WHERE il.store_id = :sid
+                ORDER BY il.rack, p.name
+            """), {"sid": store_id}).mappings().all()
         return [dict(r) for r in rows]

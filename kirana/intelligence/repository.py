@@ -111,6 +111,20 @@ class IntelligenceRepository:
             row = conn.execute(text(sql), {"sid": store_id, "tt": trigger_type}).fetchone()
         return row is not None
 
+    def count_sent_today(self, store_id: int, trigger_type: str) -> int:
+        """How many FCM pushes of this trigger already went out to this store
+        today (IST). Used to cap noisy triggers (e.g. abandoned cart) per day."""
+        sql = """
+        SELECT COUNT(*) FROM kirana_oltp.intelligence_log
+        WHERE store_id = :sid
+          AND trigger_type = :tt
+          AND status = 'sent'
+          AND sent_at AT TIME ZONE 'Asia/Kolkata' >= CURRENT_DATE
+        """
+        with self._conn() as conn:
+            row = conn.execute(text(sql), {"sid": store_id, "tt": trigger_type}).fetchone()
+        return int(row[0]) if row else 0
+
     def was_sent_this_week(self, store_id: int, trigger_type: str) -> bool:
         """True if this trigger was sent in the last 7 days."""
         sql = """
@@ -350,16 +364,34 @@ class IntelligenceRepository:
             row = conn.execute(text(sql), {"sid": store_id}).mappings().first()
         return dict(row) if row else {"pending_suppliers": 0, "total_due": 0}
 
-    def get_low_stock_count(self, store_id: int) -> int:
+    def get_low_stock_count(self, store_id: int, cover_days: int = 7,
+                            lookback_days: int = 30) -> int:
+        """Count products running low RELATIVE TO their sales velocity — the same
+        signal the reorder-suggestions screen uses. (There is no static
+        `reorder_level` column on inventory; low stock = current stock won't cover
+        the next `cover_days` at the recent average daily sales rate.)"""
         sql = """
         SELECT COUNT(*) AS cnt
-        FROM kirana_oltp.inventory i
-        WHERE i.store_id = :sid
-          AND i.reorder_level IS NOT NULL
-          AND i.quantity <= i.reorder_level
+        FROM kirana_oltp.inventory inv
+        JOIN (
+            SELECT oi.product_id,
+                   SUM(oi.quantity)::float / :lookback AS avg_daily
+            FROM kirana_oltp.order_item oi
+            JOIN kirana_oltp.orders o ON o.order_id = oi.order_id
+            WHERE o.store_id = :sid
+              AND o.order_date >= now() - make_interval(days => :lookback)
+              AND COALESCE(o.order_status, 'completed') <> 'cancelled'
+            GROUP BY oi.product_id
+        ) s ON s.product_id = inv.product_id
+        WHERE inv.store_id = :sid
+          AND s.avg_daily > 0
+          AND COALESCE(inv.quantity, 0) < s.avg_daily * :cover
         """
         with self._conn() as conn:
-            row = conn.execute(text(sql), {"sid": store_id}).fetchone()
+            row = conn.execute(
+                text(sql),
+                {"sid": store_id, "lookback": lookback_days, "cover": cover_days},
+            ).fetchone()
         return row[0] if row else 0
 
     def get_expiring_count(self, store_id: int, days: int = 7) -> int:

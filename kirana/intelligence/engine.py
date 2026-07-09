@@ -31,11 +31,21 @@ logger = logging.getLogger("kirana.intelligence.engine")
 _IST_TZ = ZoneInfo("Asia/Kolkata")
 
 
+def _hour(val, default: int) -> int:
+    """Coerce a stored quiet-hour to an int, defaulting ONLY when it's missing.
+    (Plain `int(val or default)` is wrong because hour 0 = midnight is falsy and
+    would be silently replaced by the default.)"""
+    return default if val is None else int(val)
+
+
 def _in_quiet_hours(start_h: int, end_h: int) -> bool:
     """True if the current IST hour falls inside [start_h, end_h).
-    Handles overnight windows, e.g. start=22 end=7 covers 22:00–06:59."""
+    Handles overnight windows, e.g. start=22 end=7 covers 22:00–06:59.
+    When start == end the window is empty (never quiet), not all-day."""
+    if start_h == end_h:
+        return False
     now_h = datetime.now(_IST_TZ).hour
-    if start_h >= end_h:          # overnight window (e.g. 22 → 7)
+    if start_h > end_h:           # overnight window (e.g. 22 → 7)
         return now_h >= start_h or now_h < end_h
     return start_h <= now_h < end_h
 
@@ -54,6 +64,11 @@ _IST = "Asia/Kolkata"
 # Postgres advisory-lock keys: the scheduler runs in EVERY replica (Azure
 # Container Apps may scale to several), so the heavy nightly jobs guard
 # themselves — only the replica that wins the lock actually runs them.
+# Abandoned-cart is checked every 5 min and re-nudges hourly — cap the phone
+# pushes so we never spam. After this many FCM sends in a day, further nudges
+# go in-app only (logged status='internal', shown in the notification feed).
+_CART_FCM_DAILY_CAP = 3
+
 _SNAPSHOT_LOCK_KEY = 994201
 _ML_RETRAIN_LOCK_KEY = 994202
 _KPI_RETRAIN_LOCK_KEY = 994203
@@ -204,8 +219,8 @@ class IntelligenceEngine:
                 # only catches genuine middle-of-night sends — a wider default
                 # (e.g. 22–07) would collide with real shop hours (6 AM opens,
                 # 22:00 closes) and silently suppress personalised notifications.
-                q_start = int(store.get("quiet_hours_start") or 23)
-                q_end   = int(store.get("quiet_hours_end")   or 5)
+                q_start = _hour(store.get("quiet_hours_start"), 23)
+                q_end   = _hour(store.get("quiet_hours_end"), 5)
                 if _in_quiet_hours(q_start, q_end):
                     skipped += 1
                     continue
@@ -309,7 +324,7 @@ class IntelligenceEngine:
         """Special case: uses cart_session table, not the generic store loop."""
         repo = self._repo()
         sessions = repo.get_abandoned_sessions(stale_minutes=10)
-        sent = skipped = 0
+        sent = skipped = internal = 0
 
         for session in sessions:
             store_id   = session["store_id"]
@@ -319,8 +334,8 @@ class IntelligenceEngine:
             cart_data  = session.get("cart_data") or []
 
             # Respect per-store quiet hours (default 22:00–07:00 IST)
-            q_start = int(session.get("quiet_hours_start") or 22)
-            q_end   = int(session.get("quiet_hours_end")   or 7)
+            q_start = _hour(session.get("quiet_hours_start"), 22)
+            q_end   = _hour(session.get("quiet_hours_end"), 7)
             if _in_quiet_hours(q_start, q_end):
                 skipped += 1
                 continue
@@ -340,6 +355,20 @@ class IntelligenceEngine:
                 title   = result["title"]
                 body    = result["body"]
                 payload = result.get("payload", {})
+
+                # Daily FCM cap: at most 3 abandoned-cart PUSHES per store per day.
+                # Beyond that, keep nudging but ONLY in-app (log with status
+                # 'internal', no FCM) so we stop spamming the owner's phone.
+                if repo.count_sent_today(store_id, "abandoned_cart") >= _CART_FCM_DAILY_CAP:
+                    repo.log_notification(
+                        store_id=store_id, user_id=user_id,
+                        trigger_type="abandoned_cart",
+                        title=title, body=body, payload=payload,
+                        status="internal",
+                    )
+                    repo.mark_cart_notified(store_id)  # keep the hourly cadence
+                    internal += 1
+                    continue
 
                 log_id = repo.log_notification(
                     store_id=store_id, user_id=user_id,
@@ -364,8 +393,9 @@ class IntelligenceEngine:
             except Exception as exc:
                 logger.exception("abandoned_cart dispatch error store_id=%s: %s", store_id, exc)
 
-        if sent or skipped:
-            logger.info("Trigger abandoned_cart sent=%d skipped=%d", sent, skipped)
+        if sent or skipped or internal:
+            logger.info("Trigger abandoned_cart sent=%d internal=%d skipped=%d",
+                        sent, internal, skipped)
 
     # ── Snapshot refresh ─────────────────────────────────────────────────────
 

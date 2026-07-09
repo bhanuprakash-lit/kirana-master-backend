@@ -65,3 +65,8 @@ async def delete_location(location_id: int, request: Request, user: dict = Depen
 @router.get("/racks")
 async def find_by_rack(request: Request, q: str = "", user: dict = Depends(_auth)):
     return {"items": _repo(request).find_by_rack(_sid(user), q)}
+
+
+@router.get("/racks/all")
+async def list_all_racks(request: Request, user: dict = Depends(_auth)):
+    return {"items": _repo(request).list_all_locations(_sid(user))}

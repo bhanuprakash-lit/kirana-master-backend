@@ -377,12 +377,18 @@ class InventoryRepositoryMixin:
         order_id: int | None,
         items: list[dict],
         reason: str | None = None,
+        *,
+        refund_amount: float = 0,
+        is_exchange: bool = False,
+        customer_id: int | None = None,
     ) -> dict:
         """Record a customer return/exchange.
 
         Resaleable units go back into store inventory. Damaged units are logged
         to `return_to_vendor` (so they feed the Return-to-Vendor recovery KPI and
-        the owner can claim credit from the distributor).
+        the owner can claim credit from the distributor). The SAME transaction
+        writes the `sales_return` header + per-item rows, so the Returns history
+        (fulfilment tab) always reflects what POS recorded — one source of truth.
         items: [{product_id, qty, resaleable}].
         """
         restocked = 0
@@ -438,8 +444,45 @@ class InventoryRepositoryMixin:
                         },
                     )
                     to_vendor += qty
+
+            # Unified history: header + item detail in the same transaction.
+            return_id = conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.sales_return
+                    (store_id, order_id, customer_id, reason, refund_amount, is_exchange)
+                VALUES (:sid, :oid, :cid, :reason, :refund, :exch)
+                RETURNING return_id
+            """),
+                {
+                    "sid": store_id,
+                    "oid": order_id,
+                    "cid": customer_id,
+                    "reason": reason[:50] if reason else None,
+                    "refund": round(float(refund_amount or 0), 2),
+                    "exch": bool(is_exchange),
+                },
+            ).scalar()
+            for it in items:
+                qty = int(it.get("qty") or 0)
+                if qty <= 0:
+                    continue
+                conn.execute(
+                    text("""
+                    INSERT INTO kirana_oltp.sales_return_item
+                        (return_id, product_id, name, qty, resaleable)
+                    SELECT :rid, :pid, p.name, :q, :resale
+                    FROM kirana_oltp.product p WHERE p.product_id = :pid
+                """),
+                    {
+                        "rid": return_id,
+                        "pid": int(it["product_id"]),
+                        "q": qty,
+                        "resale": bool(it.get("resaleable", True)),
+                    },
+                )
             conn.commit()
         return {
+            "return_id": int(return_id),
             "order_id": order_id,
             "restocked_units": restocked,
             "to_vendor_units": to_vendor,

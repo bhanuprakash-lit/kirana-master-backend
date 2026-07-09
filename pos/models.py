@@ -112,6 +112,7 @@ class KiranaOrder(POSBase):
     basket_savings = Column(Numeric, nullable=True)
     tax_amount     = Column(Numeric, nullable=True)   # F3 — total GST in the bill
     taxable_amount = Column(Numeric, nullable=True)   # F3 — total minus tax
+    staff_id       = Column(BigInteger, nullable=True)  # M5 — who billed this order
 
     items   = relationship("KiranaOrderItem", back_populates="order")
     payment = relationship("KiranaPayment",   back_populates="order", uselist=False)

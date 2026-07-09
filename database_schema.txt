@@ -411,7 +411,7 @@ intelligence_log
   payload       JSONB        NN DEFAULT '{}'
   sent_at       TIMESTAMPTZ  NN DEFAULT NOW()
   opened_at     TIMESTAMPTZ
-  status        VARCHAR(20)  NN DEFAULT 'sent'  CHECK IN ('sent','failed','opened','skipped')
+  status        VARCHAR(20)  NN DEFAULT 'sent'  CHECK IN ('sent','failed','opened','skipped','internal')
 
 --------------------------------------------------------------------------------
 cart_session

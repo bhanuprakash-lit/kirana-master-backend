@@ -187,6 +187,31 @@ async def admin_store_deep_dive(
     return data
 
 
+@router.get("/admin/vision/analytics")
+async def admin_vision_analytics(
+    request: Request,
+    days: int = 30,
+    store_id: int | None = None,
+    user: dict = Depends(_auth),
+):
+    """Vision AI analytics for the admin panel. Fleet-wide by default (all stores);
+    pass ?store_id= to scope to one store. Returns the same analytics shape the
+    store-facing /kirana/vision/analytics endpoint does, plus a per-store breakdown
+    so the admin can see which stores use vision and how accurate it is for each."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+    from vision import repository as vision_repo
+
+    engine = request.app.state.engine
+    data = vision_repo.get_analytics(engine, store_id, days)
+    data["store_id"] = store_id
+    # The per-store table is only meaningful for the fleet view.
+    data["stores"] = [] if store_id is not None else vision_repo.get_store_breakdown(engine, days)
+    return data
+
+
 @router.get("/admin/intelligence/triggers")
 async def admin_list_triggers(request: Request, user: dict = Depends(_auth)):
     if user.get("role") != "admin":
