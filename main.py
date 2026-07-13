@@ -281,6 +281,7 @@ def create_app() -> FastAPI:
     from vision.routes                import router as vision_router
     from callcenter.routes            import router as callcenter_router
     from kirana.forecasting.routes    import router as forecast_router
+    from analytics.routes             import router as analytics_router
 
     app.include_router(kirana_router)
     app.include_router(pos_router)
@@ -291,6 +292,7 @@ def create_app() -> FastAPI:
     app.include_router(vision_router)
     app.include_router(callcenter_router)
     app.include_router(forecast_router)
+    app.include_router(analytics_router)
 
     # ── Root ──────────────────────────────────────────────────────────────────
     @app.get("/", tags=["Root"], include_in_schema=False)

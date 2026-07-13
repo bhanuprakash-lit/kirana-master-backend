@@ -14,6 +14,7 @@ const adminNav = [
   { path: '/store-ops', label: 'Store Ops', icon: '🧰' },
   { path: '/intelligence', label: 'AI Intelligence', icon: '🧠' },
   { path: '/vision', label: 'Vision AI', icon: '👁️' },
+  { path: '/director-access', label: 'Director Access', icon: '📈' },
   { path: '/kpis', label: 'KPI Settings', icon: '🎯' },
   { path: '/issues', label: 'Support', icon: '🐛' },
   { path: '/whatsapp', label: 'WhatsApp', icon: '💬' },

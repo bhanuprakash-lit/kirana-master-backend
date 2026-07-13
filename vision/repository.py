@@ -94,11 +94,27 @@ def get_sessions(engine, store_id: int, session_date: Optional[str] = None) -> l
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT session_id, session_type, session_date, status,
-                   total_skus, total_units, unknown_count, created_at
+                   total_skus, total_units, unknown_count, created_at, image_url
             FROM kirana_oltp.vision_session
             WHERE store_id=:store_id AND session_date=:sdate
             ORDER BY created_at
         """), {"store_id": store_id, "sdate": sd}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def get_recent_sessions(engine, store_id: int, days: int = 14, limit: int = 60) -> list[dict]:
+    """Sessions across the last N days, newest first — the owner's scan history.
+    Includes image_url so the route can expose how many photos each scan had."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT session_id, session_type, session_date, status,
+                   total_skus, total_units, unknown_count, created_at, image_url
+            FROM kirana_oltp.vision_session
+            WHERE store_id=:store_id
+              AND session_date >= CURRENT_DATE - make_interval(days => :days)
+            ORDER BY created_at DESC
+            LIMIT :lim
+        """), {"store_id": store_id, "days": days, "lim": limit}).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -193,7 +209,12 @@ def correct_item(engine, store_id: int, item_id: int, corrected_product_id: Opti
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
-def get_analytics(engine, store_id: Optional[int] = None, days: int = 30) -> dict:
+def get_analytics(
+    engine,
+    store_id: Optional[int] = None,
+    days: int = 30,
+    store_ids: Optional[list[int]] = None,
+) -> dict:
     """Vision analytics over the last `days` days (shelf + onboarding sessions).
     Scoped to one store when `store_id` is given, else fleet-wide across all stores
     (the admin view). Everything is derived from vision_session / vision_item:
@@ -202,13 +223,23 @@ def get_analytics(engine, store_id: Optional[int] = None, days: int = 30) -> dic
     - detections: unknown rate, owner-correction rate, avg match score of auto-matches
     - detectors: item/unit split by detector_source (own YOLO vs Gemini fallback)
     - daily: per-day series for trend charts
+
+    `store_ids` (used by the director dashboard) restricts a fleet-wide call to a
+    given allowlist of stores; ignored when a single `store_id` is passed.
     """
     # Optional store scoping: the session query hits vision_session unaliased, the
     # item queries alias it `s`. Empty clause ⇒ fleet-wide (all stores).
-    store_pred = "AND store_id = :store_id" if store_id is not None else ""
-    store_pred_s = "AND s.store_id = :store_id" if store_id is not None else ""
+    if store_id is not None:
+        store_pred = "AND store_id = :store_id"
+        store_pred_s = "AND s.store_id = :store_id"
+    elif store_ids is not None:
+        store_pred = "AND store_id = ANY(:store_ids)"
+        store_pred_s = "AND s.store_id = ANY(:store_ids)"
+    else:
+        store_pred = ""
+        store_pred_s = ""
     with engine.connect() as conn:
-        params = {"store_id": store_id, "days": days}
+        params = {"store_id": store_id, "days": days, "store_ids": store_ids}
 
         sess = conn.execute(text(f"""
             SELECT COUNT(*)                                            AS total,

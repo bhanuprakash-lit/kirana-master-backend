@@ -96,6 +96,32 @@ def upsert_session(
     }
 
 
+def attach_prices(engine, store_id: int, items: list[dict]) -> None:
+    """Stamp each item dict (must carry product_id + qty) with the store's active
+    selling price: sets ``price`` (None when unmatched / no pricing row) and
+    ``line_value`` (price × qty). The counter counts sales, so the owner wants to
+    see the money, not just units."""
+    pids = sorted({int(i["product_id"]) for i in items if i.get("product_id")})
+    prices: dict[int, float] = {}
+    if pids:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT p.product_id,
+                       (SELECT price FROM kirana_oltp.pricing
+                        WHERE product_id = p.product_id AND store_id = :sid
+                          AND (valid_to IS NULL OR valid_to >= now())
+                        ORDER BY valid_from DESC LIMIT 1)::float AS price
+                FROM kirana_oltp.product p
+                WHERE p.product_id = ANY(:pids)
+            """), {"sid": store_id, "pids": pids}).all()
+        prices = {int(r[0]): float(r[1]) for r in rows if r[1] is not None}
+    for i in items:
+        price = prices.get(int(i["product_id"])) if i.get("product_id") else None
+        i["price"] = price
+        qty = int(i.get("qty") or 0)
+        i["line_value"] = round(price * qty, 2) if price is not None else None
+
+
 def get_summary(engine, store_id: int, session_date: Optional[str] = None) -> dict:
     """Aggregate all of a day's counter sessions into one per-product tally.
 
@@ -126,12 +152,14 @@ def get_summary(engine, store_id: int, session_date: Optional[str] = None) -> di
             "qty": int(r["qty"]),
             "is_unknown": bool(r["is_unknown"]),
         })
+    attach_prices(engine, store_id, items)
     return {
         "store_id": store_id,
         "session_date": sd,
         "items": items,
         "total_units": sum(i["qty"] for i in items),
         "total_skus": len({i["product_id"] for i in items if i["product_id"] is not None}),
+        "total_value": round(sum(i["line_value"] or 0 for i in items), 2),
     }
 
 
@@ -146,6 +174,60 @@ def get_sessions(engine, store_id: int, session_date: Optional[str] = None) -> l
             ORDER BY created_at DESC
         """), {"store_id": store_id, "sdate": sd}).mappings().all()
     return [dict(r) for r in rows]
+
+
+def get_history(engine, store_id: int, days: int = 14, limit: int = 50) -> list[dict]:
+    """Recent counter sessions (newest first) with their per-product items and
+    prices — the owner's scan history. Bounded by both a day window and a row cap
+    so a heavy counter user still gets a fast response."""
+    with engine.connect() as conn:
+        sessions = conn.execute(text("""
+            SELECT session_id, session_date::text AS session_date,
+                   started_at, ended_at, total_units, total_skus, unknown_count,
+                   created_at
+            FROM kirana_oltp.counter_session
+            WHERE store_id = :sid
+              AND session_date >= CURRENT_DATE - make_interval(days => :days)
+            ORDER BY created_at DESC
+            LIMIT :lim
+        """), {"sid": store_id, "days": days, "lim": limit}).mappings().all()
+        session_ids = [int(s["session_id"]) for s in sessions]
+        items_by_session: dict[int, list[dict]] = {sid: [] for sid in session_ids}
+        if session_ids:
+            rows = conn.execute(text("""
+                SELECT session_id, product_id, class_name, display_name, qty, is_unknown
+                FROM kirana_oltp.counter_item
+                WHERE session_id = ANY(:sids)
+                ORDER BY qty DESC, item_id
+            """), {"sids": session_ids}).mappings().all()
+            for r in rows:
+                items_by_session[int(r["session_id"])].append({
+                    "product_id": int(r["product_id"]) if r["product_id"] is not None else None,
+                    "class_name": r["class_name"],
+                    "display_name": r["display_name"] or _prettify(r["class_name"]),
+                    "qty": int(r["qty"]),
+                    "is_unknown": bool(r["is_unknown"]),
+                })
+
+    all_items = [i for items in items_by_session.values() for i in items]
+    attach_prices(engine, store_id, all_items)  # mutates in place
+
+    out = []
+    for s in sessions:
+        items = items_by_session[int(s["session_id"])]
+        out.append({
+            "session_id": int(s["session_id"]),
+            "session_date": s["session_date"],
+            "started_at": str(s["started_at"]) if s["started_at"] else None,
+            "ended_at": str(s["ended_at"]) if s["ended_at"] else None,
+            "created_at": str(s["created_at"]) if s["created_at"] else None,
+            "total_units": int(s["total_units"]),
+            "total_skus": int(s["total_skus"]),
+            "unknown_count": int(s["unknown_count"]),
+            "total_value": round(sum(i["line_value"] or 0 for i in items), 2),
+            "items": items,
+        })
+    return out
 
 
 def _prettify(class_name: str) -> str:

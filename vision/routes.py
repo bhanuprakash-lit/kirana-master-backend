@@ -36,10 +36,13 @@ from . import repository as repo
 from . import storage
 from .analyzer import GEMINI_MODEL, SHELF_PROMPT, parse_detections
 from .matcher import get_matcher, match_detections
-from .schemas import (CorrectionInput, CounterSummaryResponse, CounterSyncInput,
-                      CounterSyncResponse, OnboardingCommitInput,
-                      OnboardingCommitResponse, SalesResponse, SessionAccepted,
-                      SessionSummary, VisionAnalyticsResponse, VisionItemOut)
+from .schemas import (CorrectionInput, CounterHistoryResponse,
+                      CounterResolveInput, CounterResolveItem,
+                      CounterResolveResponse, CounterSummaryResponse,
+                      CounterSyncInput, CounterSyncResponse,
+                      OnboardingCommitInput, OnboardingCommitResponse,
+                      SalesResponse, SessionAccepted, SessionSummary,
+                      VisionAnalyticsResponse, VisionItemOut)
 
 logger = logging.getLogger("vision")
 
@@ -326,14 +329,30 @@ async def shelf_analyze(
                            session_type=session_type, status="pending")
 
 
+def _photo_count(image_url) -> int:
+    """image_url holds a JSON array of photo refs (or a single legacy ref)."""
+    if not image_url:
+        return 0
+    try:
+        refs = json.loads(image_url)
+        return len(refs) if isinstance(refs, list) else 1
+    except (json.JSONDecodeError, TypeError):
+        return 1
+
+
 @router.get("/sessions", response_model=list[SessionSummary])
 def list_sessions(
     request: Request,
     date: Optional[str] = Query(default=None, description="YYYY-MM-DD, default today"),
+    days: Optional[int] = Query(default=None, ge=1, le=90,
+                                description="History window: sessions of the last N days, newest first"),
     user: dict = Depends(_auth),
 ):
     store_id = _require_store(user)
-    rows = repo.get_sessions(request.app.state.engine, store_id, date)
+    if days is not None:
+        rows = repo.get_recent_sessions(request.app.state.engine, store_id, days)
+    else:
+        rows = repo.get_sessions(request.app.state.engine, store_id, date)
     return [
         SessionSummary(
             session_id=r["session_id"], session_type=r["session_type"],
@@ -341,8 +360,43 @@ def list_sessions(
             total_skus=r["total_skus"], total_units=r["total_units"],
             unknown_count=r["unknown_count"],
             created_at=str(r["created_at"]) if r.get("created_at") else None,
+            photo_count=_photo_count(r.get("image_url")),
         ) for r in rows
     ]
+
+
+@router.get("/session/{session_id}/photo/{index}")
+def session_photo(
+    session_id: int, index: int, request: Request,
+    thumb: int = Query(default=0, description="1 = downscaled 512px JPEG"),
+    user: dict = Depends(_auth),
+):
+    """Serve one of the photos the owner uploaded for a scan, so the history view
+    can show exactly what was photographed. Store-scoped; 404 when the photo is
+    gone (e.g. pre-Blob sessions on a restarted container)."""
+    store_id = _require_store(user)
+    sess = repo.get_session(request.app.state.engine, store_id, session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    data = _load_source_image_bytes(sess.get("image_url"), index)
+    if not data:
+        raise HTTPException(status_code=404, detail="Photo unavailable")
+
+    if thumb:
+        from io import BytesIO
+        from PIL import Image
+        try:
+            img = Image.open(BytesIO(data)).convert("RGB")
+            img.thumbnail((512, 512), Image.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            data, mime = buf.getvalue(), "image/jpeg"
+        except Exception:  # noqa: BLE001 — unreadable ⇒ serve the original bytes
+            mime = _sniff_image_mime(data, None)
+    else:
+        mime = _sniff_image_mime(data, None)
+    return Response(content=data, media_type=mime,
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.get("/session/{session_id}/items", response_model=list[VisionItemOut])
@@ -657,6 +711,54 @@ def counter_summary(
     store_id = _require_store(user)
     summary = counter_repo.get_summary(request.app.state.engine, store_id, date)
     return CounterSummaryResponse(**summary)
+
+
+@router.get("/counter/sessions", response_model=CounterHistoryResponse)
+def counter_sessions(
+    request: Request,
+    days: int = Query(default=14, ge=1, le=90, description="History window in days"),
+    user: dict = Depends(_auth),
+):
+    """Counter scan history: recent sessions (newest first) with their per-product
+    tallies and prices, so the owner can look back at any counting run."""
+    store_id = _require_store(user)
+    sessions = counter_repo.get_history(request.app.state.engine, store_id, days)
+    return CounterHistoryResponse(store_id=store_id, sessions=sessions)
+
+
+@router.post("/counter/resolve", response_model=CounterResolveResponse)
+def counter_resolve(body: CounterResolveInput, request: Request, user: dict = Depends(_auth)):
+    """Resolve on-device model class labels → catalog products + the store's selling
+    price. The app calls this once per counter launch (and caches the map), so the
+    LIVE tally can show prices/value while counting — even before any sync."""
+    store_id = _require_store(user)
+    engine = request.app.state.engine
+    matcher = get_matcher(engine)
+
+    items: list[dict] = []
+    seen: set[str] = set()
+    for raw in body.class_names[:1000]:
+        cls = (raw or "").strip()
+        if not cls or cls in seen:
+            continue
+        seen.add(cls)
+        res = matcher.match(cls)
+        matched = res is not None and not res.is_unknown
+        items.append({
+            "class_name": cls,
+            "qty": 1,  # attach_prices needs a qty; line_value is ignored here
+            "product_id": res.product_id if matched else None,
+            "display_name": (res.display_name if matched
+                             else counter_repo._prettify(cls)),
+            "is_unknown": not matched,
+        })
+    counter_repo.attach_prices(engine, store_id, items)
+    return CounterResolveResponse(store_id=store_id, items=[
+        CounterResolveItem(class_name=i["class_name"], product_id=i["product_id"],
+                           display_name=i["display_name"], price=i["price"],
+                           is_unknown=i["is_unknown"])
+        for i in items
+    ])
 
 
 @router.get("/image/{path:path}")

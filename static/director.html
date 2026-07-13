@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Director Analytics — Kirana</title>
+<style>
+  :root {
+    --bg:#f4f6fb; --surface:#ffffff; --card:#ffffff; --card2:#f8fafc;
+    --border:#e5e9f2; --line:rgba(148,163,184,.22);
+    --accent:#4f46e5; --accent2:#7c3aed;
+    --green:#059669; --amber:#d97706; --red:#dc2626; --blue:#2563eb; --teal:#0d9488;
+    --text:#1e293b; --muted:#64748b; --dim:#94a3b8;
+    --shadow:0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-lg:0 4px 16px rgba(16,24,40,.08);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { background:var(--bg); color:var(--text);
+    font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif; font-size:14px;
+    -webkit-text-size-adjust:100%; }
+  body { padding-bottom:48px; }
+  a { color:var(--accent); }
+
+  /* Sticky top bar wraps header + tabs so wrapping controls never overlap the tabs */
+  .topbar { position:sticky; top:0; z-index:50; background:var(--surface);
+    border-bottom:1px solid var(--border); box-shadow:var(--shadow); }
+
+  header { padding:12px 20px; }
+  .hrow { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .brand h1 { font-size:16px; font-weight:800; letter-spacing:.2px; }
+  .brand p { font-size:11px; color:var(--muted); margin-top:1px; }
+  .brand .dot { color:var(--accent); }
+  .controls { margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  select, .seg button, .refresh {
+    background:var(--surface); color:var(--text); border:1px solid var(--border);
+    border-radius:9px; padding:8px 12px; font-size:13px; cursor:pointer; font-family:inherit; }
+  select:focus { outline:none; border-color:var(--accent); }
+  .seg { display:inline-flex; background:var(--surface); border:1px solid var(--border);
+    border-radius:9px; overflow:hidden; }
+  .seg button { border:none; border-radius:0; padding:8px 13px; color:var(--muted); background:transparent; }
+  .seg button.active { background:var(--accent); color:#fff; }
+  .refresh { font-weight:600; color:var(--accent); }
+  .refresh:hover { border-color:var(--accent); background:#f5f3ff; }
+  .updated { font-size:11px; color:var(--dim); }
+
+  nav.tabs { display:flex; gap:2px; padding:0 12px; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    border-top:1px solid var(--border); scrollbar-width:thin; }
+  nav.tabs::-webkit-scrollbar { height:0; }
+  nav.tabs button { background:none; border:none; color:var(--muted); font-family:inherit; font-size:13px; font-weight:600;
+    padding:11px 14px; cursor:pointer; border-bottom:2px solid transparent; white-space:nowrap; }
+  nav.tabs button:hover { color:var(--text); }
+  nav.tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+  main { padding:20px; max-width:1400px; margin:0 auto; }
+  .grid { display:grid; gap:14px; }
+  .tiles { grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); }
+  .cards2 { grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); }
+  .cards3 { grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
+
+  .tile { background:linear-gradient(160deg,var(--card),var(--card2)); border:1px solid var(--border);
+    border-radius:14px; padding:16px 16px 14px; box-shadow:var(--shadow); }
+  .tile .lbl { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; }
+  .tile .val { font-size:25px; font-weight:800; margin-top:7px; letter-spacing:-.5px; color:var(--text); }
+  .tile .sub { font-size:12px; color:var(--dim); margin-top:4px; }
+  .tile.accent .val { color:var(--accent); } .tile.green .val { color:var(--green); }
+  .tile.amber .val { color:var(--amber); } .tile.red .val { color:var(--red); }
+  .tile.blue .val { color:var(--blue); } .tile.teal .val { color:var(--teal); }
+
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow:var(--shadow); }
+  .card h3 { font-size:13px; font-weight:700; margin-bottom:14px; color:var(--text); display:flex; align-items:center; gap:8px; }
+  .chart-wrap { position:relative; height:260px; }
+  .chart-wrap.tall { height:320px; }
+
+  .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  td { padding:9px 10px; border-bottom:1px solid #f1f4f9; color:var(--text); white-space:nowrap; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr:hover td { background:#f8faff; }
+  .muted { color:var(--muted); }
+
+  .empty { color:var(--dim); font-style:italic; padding:28px; text-align:center; }
+  .loading { color:var(--muted); padding:40px; text-align:center; }
+
+  .overlay { position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; z-index:200; padding:20px; }
+  .overlay .box { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:32px; max-width:420px; text-align:center; box-shadow:var(--shadow-lg); }
+  .overlay h2 { font-size:18px; margin-bottom:10px; }
+  .overlay p { color:var(--muted); font-size:13px; line-height:1.6; }
+  .hidden { display:none !important; }
+
+  /* ── Mobile ── */
+  @media (max-width:640px) {
+    header { padding:10px 14px; }
+    .controls { width:100%; margin-left:0; gap:8px; }
+    #storeSel { flex:1 1 auto; }
+    .seg { flex:1 1 auto; } .seg button { flex:1; padding:9px 6px; }
+    .refresh { flex:0 0 auto; }
+    .updated { width:100%; text-align:right; }
+    main { padding:14px; }
+    .grid { gap:12px; }
+    .tiles { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
+    .cards2, .cards3 { grid-template-columns:1fr; }
+    .tile .val { font-size:22px; }
+    .chart-wrap, .chart-wrap.tall { height:240px; }
+  }
+  @media (max-width:380px) {
+    .tiles { grid-template-columns:1fr 1fr; }
+    .tile { padding:13px; } .tile .val { font-size:20px; }
+  }
+</style>
+</head>
+<body>
+  <div id="overlay" class="overlay hidden">
+    <div class="box">
+      <h2>🔒 Access needed</h2>
+      <p id="overlayMsg">This dashboard link is missing or invalid. Please open the shared link that includes your access token.</p>
+    </div>
+  </div>
+
+  <div class="topbar">
+    <header>
+      <div class="hrow">
+        <div class="brand">
+          <h1>Director Analytics <span class="dot">•</span> Kirana</h1>
+          <p>Live business analytics across every feature</p>
+        </div>
+        <div class="controls">
+          <select id="storeSel" title="Store filter"><option value="">All stores (fleet)</option></select>
+          <div class="seg" id="rangeSeg">
+            <button data-days="7">7d</button>
+            <button data-days="30" class="active">30d</button>
+            <button data-days="90">90d</button>
+            <button data-days="365">1y</button>
+          </div>
+          <button class="refresh" id="refreshBtn" title="Refresh now">↻ Refresh</button>
+          <span class="updated" id="updated"></span>
+        </div>
+      </div>
+    </header>
+    <nav class="tabs" id="tabs"></nav>
+  </div>
+
+  <main id="view"><div class="loading">Loading…</div></main>
+
+  <script src="/director/vendor/chart.js"></script>
+  <script>
+  // ── access token ────────────────────────────────────────────────────────────
+  const qp = new URLSearchParams(location.search);
+  let TOKEN = qp.get('token') || localStorage.getItem('director_token') || '';
+  if (qp.get('token')) {
+    localStorage.setItem('director_token', qp.get('token'));
+    history.replaceState({}, '', location.pathname);
+  }
+
+  // ── state ─────────────────────────────────────────────────────────────────
+  const state = { store_id: '', days: 30, tab: 'overview' };
+  const charts = {};
+
+  // ── formatting ──────────────────────────────────────────────────────────────
+  const nfIN = new Intl.NumberFormat('en-IN');
+  const fmtNum = n => nfIN.format(Math.round(Number(n) || 0));
+  function fmtINR(n) {
+    n = Number(n) || 0;
+    if (Math.abs(n) >= 1e7) return '₹' + (n/1e7).toFixed(2) + ' Cr';
+    if (Math.abs(n) >= 1e5) return '₹' + (n/1e5).toFixed(2) + ' L';
+    return '₹' + nfIN.format(Math.round(n));
+  }
+  const fmtPct = n => (Number(n) || 0).toFixed(1) + '%';
+  const PALETTE = ['#4f46e5','#7c3aed','#0d9488','#d97706','#2563eb','#dc2626','#059669','#db2777','#ea580c','#0891b2'];
+
+  // ── API ─────────────────────────────────────────────────────────────────────
+  async function api(path) {
+    const u = new URL('/director/api/' + path, location.origin);
+    u.searchParams.set('days', state.days);
+    if (state.store_id) u.searchParams.set('store_id', state.store_id);
+    const r = await fetch(u, { headers: { 'X-Director-Token': TOKEN } });
+    if (r.status === 401) { showOverlay(); throw new Error('unauthorized'); }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+  function showOverlay(msg) {
+    if (msg) document.getElementById('overlayMsg').textContent = msg;
+    document.getElementById('overlay').classList.remove('hidden');
+  }
+
+  // ── UI helpers ───────────────────────────────────────────────────────────────
+  function tile(lbl, val, sub, cls) {
+    return `<div class="tile ${cls||''}"><div class="lbl">${lbl}</div>
+      <div class="val">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+  }
+  function card(title, inner) { return `<div class="card"><h3>${title}</h3>${inner}</div>`; }
+  function canvas(id, tall) { return `<div class="chart-wrap ${tall?'tall':''}"><canvas id="${id}"></canvas></div>`; }
+  function tableEl(cols, rows) {
+    if (!rows || !rows.length) return `<div class="empty">No data in this period.</div>`;
+    const head = cols.map(c => `<th class="${c.num?'num':''}">${c.h}</th>`).join('');
+    const body = rows.map(r => `<tr>${cols.map(c =>
+      `<td class="${c.num?'num':''}">${c.fmt ? c.fmt(r[c.k], r) : (r[c.k] ?? '')}</td>`).join('')}</tr>`).join('');
+    return `<div class="table-scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  const CHART_DEFAULTS = {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{ labels:{ color:'#475569', boxWidth:12, font:{size:11} } } },
+    scales:{ x:{ ticks:{ color:'#64748b', font:{size:10} }, grid:{ color:'rgba(148,163,184,.22)' } },
+             y:{ ticks:{ color:'#64748b', font:{size:10} }, grid:{ color:'rgba(148,163,184,.22)' }, beginAtZero:true } }
+  };
+  function mkChart(id, type, data, opts) {
+    const el = document.getElementById(id); if (!el) return;
+    if (charts[id]) charts[id].destroy();
+    const noAxis = (type === 'doughnut' || type === 'pie');
+    charts[id] = new Chart(el.getContext('2d'), {
+      type, data,
+      options: Object.assign({}, CHART_DEFAULTS, noAxis ? { scales:{} } : {}, opts || {})
+    });
+  }
+  function lineChart(id, labels, series) {
+    mkChart(id, 'line', { labels, datasets: series.map((s,i) => ({
+      label:s.label, data:s.data, borderColor:s.color||PALETTE[i], backgroundColor:(s.color||PALETTE[i])+'22',
+      fill:true, tension:.35, pointRadius:2, borderWidth:2, yAxisID:s.yAxisID })) },
+      series.some(s=>s.yAxisID==='y1') ? { scales:{ x:CHART_DEFAULTS.scales.x, y:CHART_DEFAULTS.scales.y,
+        y1:{ position:'right', ticks:{color:'#64748b',font:{size:10}}, grid:{drawOnChartArea:false}, beginAtZero:true } } } : {});
+  }
+  function barChart(id, labels, data, color, horizontal) {
+    mkChart(id, 'bar', { labels, datasets:[{ data, backgroundColor:color||PALETTE[0], borderRadius:5 }] },
+      { indexAxis: horizontal?'y':'x', plugins:{ legend:{ display:false } } });
+  }
+  function doughnut(id, labels, data) {
+    mkChart(id, 'doughnut', { labels, datasets:[{ data, backgroundColor:PALETTE, borderColor:'#ffffff', borderWidth:2 }] },
+      { cutout:'62%' });
+  }
+
+  // ── TABS ─────────────────────────────────────────────────────────────────────
+  const TABS = [
+    ['overview','Overview'], ['sales','Sales & POS'], ['customers','CRM'],
+    ['baskets','Baskets'], ['referrals','Referrals'], ['ai','AI Usage'],
+    ['subscriptions','Subscriptions'], ['engagement','Engagement'],
+    ['footfall','Footfall'], ['vision','Vision AI'],
+  ];
+
+  const RENDER = {
+    overview: async (v) => {
+      const d = await api('overview');
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('Revenue', fmtINR(d.revenue), 'in period', 'green')}
+        ${tile('Orders', fmtNum(d.orders), '', 'accent')}
+        ${tile('Avg Order Value', fmtINR(d.avg_order_value))}
+        ${tile('Active Stores', fmtNum(d.active_stores), '', 'blue')}
+        ${tile('Customers', fmtNum(d.total_customers))}
+        ${tile('MRR', fmtINR(d.mrr), `${fmtNum(d.paying_stores)} paying`, 'green')}
+        ${tile('Active Trials', fmtNum(d.active_trials), '', 'amber')}
+        ${tile('Stores Using AI', fmtNum(d.ai_active_stores), '', 'teal')}
+        ${tile('Udhaar Outstanding', fmtINR(d.udhaar_outstanding), '', 'red')}
+      </div>`;
+    },
+
+    sales: async (v) => {
+      const d = await api('sales'); const t = d.totals || {};
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('Revenue', fmtINR(t.revenue), '', 'green')}
+        ${tile('Orders', fmtNum(t.orders), '', 'accent')}
+        ${tile('Avg Order Value', fmtINR(t.avg_order_value))}
+        ${tile('Gross Margin', fmtPct(d.margin?.gross_margin_pct), fmtINR(d.margin?.gross_profit)+' profit', 'teal')}
+      </div>
+      <div class="grid cards2" style="margin-top:14px">
+        ${card('Revenue trend', canvas('c_sales_daily'))}
+        ${card('Sales by hour', canvas('c_sales_hour'))}
+      </div>
+      <div class="grid cards3" style="margin-top:14px">
+        ${card('Channel mix', canvas('c_sales_channel'))}
+        ${card('Payment mix', canvas('c_sales_pay'))}
+        ${card('Top categories', canvas('c_sales_cat'))}
+      </div>
+      <div class="grid" style="margin-top:14px">
+        ${card('Top products', tableEl(
+          [{h:'Product',k:'product'},{h:'Units',k:'units',num:true,fmt:fmtNum},{h:'Revenue',k:'revenue',num:true,fmt:fmtINR}],
+          d.top_products))}
+      </div>`;
+      lineChart('c_sales_daily', (d.daily||[]).map(x=>x.date),
+        [{label:'Revenue',data:(d.daily||[]).map(x=>x.revenue),color:'#059669'},
+         {label:'Orders',data:(d.daily||[]).map(x=>x.orders),color:'#4f46e5',yAxisID:'y1'}]);
+      barChart('c_sales_hour', (d.by_hour||[]).map(x=>x.hour+':00'), (d.by_hour||[]).map(x=>x.revenue), '#7c3aed');
+      doughnut('c_sales_channel', (d.channels||[]).map(x=>x.channel), (d.channels||[]).map(x=>x.revenue));
+      doughnut('c_sales_pay', (d.payments||[]).map(x=>x.method), (d.payments||[]).map(x=>x.amount));
+      barChart('c_sales_cat', (d.top_categories||[]).map(x=>x.category), (d.top_categories||[]).map(x=>x.revenue), '#0d9488', true);
+    },
+
+    customers: async (v) => {
+      const d = await api('customers'); const t = d.totals||{}, s = d.split||{}, c = d.credit||{};
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('Total Customers', fmtNum(t.total_customers))}
+        ${tile('New (period)', fmtNum(t.new_customers), '', 'green')}
+        ${tile('Active (period)', fmtNum(t.active_customers), '', 'accent')}
+        ${tile('Repeat', fmtNum(s.repeat), `${fmtNum(s.one_time)} one-time`, 'teal')}
+        ${tile('Avg LTV', fmtINR(s.avg_ltv), 'per customer')}
+        ${tile('At-risk (60d+)', fmtNum(d.at_risk?.at_risk_customers), '', 'amber')}
+        ${tile('Credit Outstanding', fmtINR(c.outstanding), `${fmtNum(c.customers_with_credit)} on credit`, 'red')}
+      </div>
+      <div class="grid cards2" style="margin-top:14px">
+        ${card('New vs repeat', canvas('c_cust_split'))}
+        ${card('Recency (days since last order)', canvas('c_cust_recency'))}
+      </div>
+      <div class="grid" style="margin-top:14px">
+        ${card('Top customers', tableEl(
+          [{h:'Name',k:'name'},{h:'Phone',k:'phone',fmt:v=>`<span class="muted">${v||''}</span>`},
+           {h:'Orders',k:'orders',num:true,fmt:fmtNum},{h:'Spend',k:'spend',num:true,fmt:fmtINR}],
+          d.top_customers))}
+      </div>`;
+      doughnut('c_cust_split', ['Repeat','One-time'], [s.repeat||0, s.one_time||0]);
+      barChart('c_cust_recency', (d.recency||[]).map(x=>x.bucket), (d.recency||[]).map(x=>x.customers), '#d97706');
+    },
+
+    baskets: async (v) => {
+      const d = await api('baskets'); const def = d.defined||{}, u = d.usage||{};
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('Active Baskets', fmtNum(def.active_baskets), `${fmtNum(def.total_baskets)} defined`, 'accent')}
+        ${tile('Basket Attach Rate', fmtPct(u.attach_rate_pct), `${fmtNum(u.basket_orders)} of ${fmtNum(u.total_orders)} orders`, 'teal')}
+        ${tile('Basket Revenue', fmtINR(u.basket_revenue), '', 'green')}
+        ${tile('Savings Delivered', fmtINR(u.basket_savings), '', 'amber')}
+      </div>
+      <div class="grid" style="margin-top:14px">
+        ${card('Top baskets by revenue', tableEl(
+          [{h:'Basket',k:'basket'},{h:'Orders',k:'orders',num:true,fmt:fmtNum},
+           {h:'Revenue',k:'revenue',num:true,fmt:fmtINR},{h:'Savings',k:'savings',num:true,fmt:fmtINR}],
+          d.top_baskets))}
+      </div>`;
+    },
+
+    referrals: async (v) => {
+      const d = await api('referrals'); const c = d.campaigns||{}, f = d.funnel||{}, vo = d.vouchers||{};
+      const conv = f.referrals_made ? (100*f.referrals_converted/f.referrals_made) : 0;
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('Active Campaigns', fmtNum(c.active_campaigns), `${fmtNum(c.total_campaigns)} total`, 'accent')}
+        ${tile('Tokens Issued', fmtNum(f.tokens_issued))}
+        ${tile('Referrals Made', fmtNum(f.referrals_made), '', 'blue')}
+        ${tile('Converted to Sale', fmtNum(f.referrals_converted), fmtPct(conv)+' of referrals', 'green')}
+        ${tile('Vouchers Used', fmtNum(vo.used), `${fmtNum(vo.earned)} earned`, 'teal')}
+        ${tile('Discount Given', fmtINR(d.discount?.discount_given), '', 'amber')}
+      </div>
+      <div class="grid cards2" style="margin-top:14px">
+        ${card('Referral funnel', canvas('c_ref_funnel'))}
+        ${card('Vouchers', canvas('c_ref_vouchers'))}
+      </div>`;
+      barChart('c_ref_funnel', ['Tokens','Referrals','Converted'],
+        [f.tokens_issued||0, f.referrals_made||0, f.referrals_converted||0], '#4f46e5');
+      doughnut('c_ref_vouchers', ['Used','Pending'], [vo.used||0, vo.pending||0]);
+    },
+
+    ai: async (v) => {
+      const d = await api('ai'); const t = d.totals||{};
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('AI Actions', fmtNum(t.total_actions), 'in period', 'accent')}
+        ${tile('Active Users', fmtNum(t.active_users))}
+        ${tile('Adoption', fmtPct(t.adoption_pct), 'of store owners', 'teal')}
+        ${tile('Stores Using AI', fmtNum(t.active_stores), '', 'blue')}
+      </div>
+      <div class="grid cards2" style="margin-top:14px">
+        ${card('Usage by feature', canvas('c_ai_feat'))}
+        ${card('Daily AI usage', canvas('c_ai_daily'))}
+      </div>
+      <div class="grid" style="margin-top:14px">
+        ${card('Credit balances by feature', tableEl(
+          [{h:'Feature',k:'feature'},{h:'Balance',k:'balance',num:true,fmt:fmtNum}], d.credits))}
+      </div>`;
+      barChart('c_ai_feat', (d.by_feature||[]).map(x=>x.feature), (d.by_feature||[]).map(x=>x.actions), '#7c3aed', true);
+      lineChart('c_ai_daily', (d.daily||[]).map(x=>x.date), [{label:'Actions',data:(d.daily||[]).map(x=>x.actions),color:'#4f46e5'}]);
+    },
+
+    subscriptions: async (v) => {
+      const d = await api('subscriptions'); const t = d.totals||{};
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('MRR', fmtINR(t.mrr), '', 'green')}
+        ${tile('Paying Stores', fmtNum(t.paying_stores), '', 'accent')}
+        ${tile('Active Trials', fmtNum(t.active_trials), '', 'amber')}
+        ${tile('Trial → Paid', fmtPct(t.trial_conversion_pct), 'snapshot', 'teal')}
+        ${tile('Churned (period)', fmtNum(t.churned), '', 'red')}
+        ${tile('Savings Delivered', fmtINR(t.savings_to_date), 'to date', 'blue')}
+      </div>
+      <div class="grid cards2" style="margin-top:14px">
+        ${card('MRR by tier', canvas('c_sub_tier'))}
+        ${card('Stores by tier', tableEl(
+          [{h:'Tier',k:'tier'},{h:'Stores',k:'stores',num:true,fmt:fmtNum},{h:'MRR',k:'mrr',num:true,fmt:fmtINR}], d.by_tier))}
+      </div>`;
+      doughnut('c_sub_tier', (d.by_tier||[]).map(x=>x.tier), (d.by_tier||[]).map(x=>x.mrr));
+    },
+
+    engagement: async (v) => {
+      const d = await api('engagement'); const a = d.active||{}, t = d.totals||{};
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('DAU', fmtNum(a.dau), 'today', 'green')}
+        ${tile('WAU', fmtNum(a.wau), '7 days', 'accent')}
+        ${tile('MAU', fmtNum(a.mau), '30 days', 'blue')}
+        ${tile('Avg Session', Math.round(t.avg_duration_sec||0)+'s')}
+        ${tile('Events (period)', fmtNum(t.events), '', 'teal')}
+      </div>
+      <div class="grid cards2" style="margin-top:14px">
+        ${card('Daily active users', canvas('c_eng_daily'))}
+        ${card('Activity by event', canvas('c_eng_event'))}
+      </div>`;
+      lineChart('c_eng_daily', (d.daily||[]).map(x=>x.date),
+        [{label:'Active users',data:(d.daily||[]).map(x=>x.active_users),color:'#059669'},
+         {label:'Events',data:(d.daily||[]).map(x=>x.events),color:'#4f46e5',yAxisID:'y1'}]);
+      barChart('c_eng_event', (d.by_event||[]).map(x=>x.event), (d.by_event||[]).map(x=>x.count), '#0d9488', true);
+    },
+
+    footfall: async (v) => {
+      const d = await api('footfall'); const t = d.totals||{}, s = d.schemes||{};
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('Visitors', fmtNum(t.total_visitors), 'in period', 'accent')}
+        ${tile('Orders', fmtNum(t.orders))}
+        ${tile('Walk-in Conversion', fmtPct(t.conversion_pct), 'orders / visitors', 'green')}
+        ${tile('Scheme Claims', fmtNum(s.claims), '', 'blue')}
+        ${tile('Scheme Savings', fmtINR(s.amount_saved), '', 'teal')}
+      </div>
+      <div class="grid cards2" style="margin-top:14px">
+        ${card('Visitors trend', canvas('c_ff_daily'))}
+        ${card('Visitors by hour', canvas('c_ff_hour'))}
+      </div>`;
+      lineChart('c_ff_daily', (d.daily||[]).map(x=>x.date), [{label:'Visitors',data:(d.daily||[]).map(x=>x.visitors),color:'#2563eb'}]);
+      barChart('c_ff_hour', (d.by_hour||[]).map(x=>x.hour+':00'), (d.by_hour||[]).map(x=>x.visitors), '#7c3aed');
+    },
+
+    vision: async (v) => {
+      const d = await api('vision'); const s = d.sessions||{}, det = d.detections||{};
+      const unknownRate = det.items ? (100*det.unknown_items/det.items) : 0;
+      const corrRate = det.items ? (100*det.corrected_items/det.items) : 0;
+      v.innerHTML = `<div class="grid tiles">
+        ${tile('Scan Sessions', fmtNum(s.total), `${fmtNum(s.done)} done · ${fmtNum(s.failed)} failed`, 'accent')}
+        ${tile('Items Detected', fmtNum(det.items), `${fmtNum(det.units)} units`, 'blue')}
+        ${tile('Avg Match Score', ((det.avg_match_score||0)*100).toFixed(0)+'%', '', 'green')}
+        ${tile('Unknown Rate', fmtPct(unknownRate), '', 'amber')}
+        ${tile('Owner Corrections', fmtPct(corrRate), '', 'red')}
+        ${tile('Avg Processing', Math.round(s.avg_processing_seconds||0)+'s', '', 'teal')}
+      </div>
+      <div class="grid cards2" style="margin-top:14px">
+        ${card('Sessions per day', canvas('c_vis_daily'))}
+        ${card('Detector source (own YOLO vs Gemini)', canvas('c_vis_det'))}
+      </div>`;
+      lineChart('c_vis_daily', (d.daily||[]).map(x=>x.day || x.date || x.session_date),
+        [{label:'Sessions',data:(d.daily||[]).map(x=>x.sessions ?? x.total ?? 0),color:'#4f46e5'}]);
+      doughnut('c_vis_det', (d.detectors||d.by_detector||[]).map(x=>x.detector_source),
+        (d.detectors||d.by_detector||[]).map(x=>x.items));
+    },
+  };
+
+  // ── render orchestration ──────────────────────────────────────────────────────
+  async function render() {
+    const v = document.getElementById('view');
+    v.innerHTML = `<div class="loading">Loading…</div>`;
+    try {
+      await RENDER[state.tab](v);
+      document.getElementById('updated').textContent =
+        'Updated ' + new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+    } catch (e) {
+      if (e.message !== 'unauthorized')
+        v.innerHTML = `<div class="empty">Couldn't load this section (${e.message}). Try Refresh.</div>`;
+    }
+  }
+
+  // ── wiring ────────────────────────────────────────────────────────────────────
+  function buildTabs() {
+    const nav = document.getElementById('tabs');
+    nav.innerHTML = TABS.map(([id,label]) =>
+      `<button data-tab="${id}" class="${id===state.tab?'active':''}">${label}</button>`).join('');
+    nav.querySelectorAll('button').forEach(b => b.onclick = () => {
+      state.tab = b.dataset.tab;
+      nav.querySelectorAll('button').forEach(x => x.classList.toggle('active', x===b));
+      b.scrollIntoView({ inline:'center', block:'nearest', behavior:'smooth' });
+      render();
+    });
+  }
+  async function loadStores() {
+    try {
+      const d = await api('stores');
+      const sel = document.getElementById('storeSel');
+      (d.stores||[]).forEach(s => {
+        const o = document.createElement('option'); o.value = s.store_id; o.textContent = s.name; sel.appendChild(o);
+      });
+    } catch (e) { /* overlay already handled on 401 */ }
+  }
+
+  document.getElementById('storeSel').onchange = e => { state.store_id = e.target.value; render(); };
+  document.getElementById('rangeSeg').querySelectorAll('button').forEach(b => b.onclick = () => {
+    state.days = Number(b.dataset.days);
+    document.getElementById('rangeSeg').querySelectorAll('button').forEach(x => x.classList.toggle('active', x===b));
+    render();
+  });
+  document.getElementById('refreshBtn').onclick = render;
+
+  setInterval(() => { if (!document.hidden) render(); }, 60000);
+
+  if (!TOKEN) { showOverlay(); }
+  else { buildTabs(); loadStores(); render(); }
+  </script>
+</body>
+</html>

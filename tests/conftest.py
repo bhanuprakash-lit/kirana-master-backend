@@ -42,6 +42,7 @@ def test_settings():
         cors_origins=["*"],
         db_url="postgresql+psycopg2://test:test@localhost:5432/test",
         kirana_api_key="test-admin-key",
+        director_token="test-director-token",
         ml_results_dir="/tmp/ml_results",
         ml_artifacts_dir="/tmp/ml_artifacts",
         pos_secret_key="test-pos-secret",

@@ -13,7 +13,7 @@ export default function Stores() {
 
   useEffect(() => {
     fetchStores();
-    api.getAdminSettings().then(s => setAutoApprove(s.auto_approve_trial)).catch(() => {});
+    api.getAdminSettings().then(s => setAutoApprove(s.auto_approve_trial)).catch(() => { });
     const interval = setInterval(() => fetchStores(false), 30000);
     return () => clearInterval(interval);
   }, []);
@@ -86,21 +86,28 @@ export default function Stores() {
         </div>
         <div className="flex items-center gap-3">
           {/* Auto-approve trial toggle */}
-          <button
-            onClick={handleToggleAutoApprove}
-            disabled={togglingAuto}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
-              autoApprove
-                ? 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'
-                : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'
-            } disabled:opacity-50`}
-            title={autoApprove ? 'Auto-approve is ON — click to turn off' : 'Auto-approve is OFF — click to turn on'}
-          >
-            <span className={`w-8 h-4 rounded-full relative transition-colors ${autoApprove ? 'bg-green-500' : 'bg-slate-300'}`}>
-              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${autoApprove ? 'translate-x-4' : 'translate-x-0.5'}`} />
+          {/* Auto Approve Toggle */}
+          <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <span className="text-sm font-medium text-slate-700">
+              Auto-approve trials
             </span>
-            Auto-approve trials
-          </button>
+
+            <button
+              type="button"
+              onClick={handleToggleAutoApprove}
+              disabled={togglingAuto}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${autoApprove
+                  ? "bg-emerald-500"
+                  : "bg-slate-300"
+                } ${togglingAuto ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+              aria-pressed={autoApprove}
+            >
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-200 ${autoApprove ? "translate-x-5" : "translate-x-1"
+                  }`}
+              />
+            </button>
+          </div>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}

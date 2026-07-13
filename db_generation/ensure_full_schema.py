@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS kirana_oltp.store (
     daily_budget NUMERIC,
     latitude     NUMERIC(10,7),
     longitude    NUMERIC(10,7),
+    include_in_director BOOLEAN NOT NULL DEFAULT TRUE,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_deleted   BOOLEAN DEFAULT FALSE
 )
@@ -972,6 +973,7 @@ column_patches = [
     ("store.daily_budget",        "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS daily_budget NUMERIC"),
     ("store.latitude",            "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS latitude NUMERIC(10,7)"),
     ("store.longitude",           "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS longitude NUMERIC(10,7)"),
+    ("store.include_in_director", "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS include_in_director BOOLEAN NOT NULL DEFAULT TRUE"),
 
     ("supplier.store_id",         "ALTER TABLE kirana_oltp.supplier ADD COLUMN IF NOT EXISTS store_id BIGINT REFERENCES kirana_oltp.store(store_id)"),
     ("supplier.phone",            "ALTER TABLE kirana_oltp.supplier ADD COLUMN IF NOT EXISTS phone VARCHAR(20)"),
