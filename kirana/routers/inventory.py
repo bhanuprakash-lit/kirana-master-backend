@@ -166,6 +166,98 @@ async def reorder_suggestions(
     }
 
 
+# ── Supplier dashboard ────────────────────────────────────────────────────────
+
+
+@router.get("/suppliers/overview")
+async def suppliers_overview(request: Request, user: dict = Depends(_auth)):
+    """Per-supplier rollup (products supplied, unpaid dues, overdue, next due
+    date), ordered by payment priority — whom to pay first."""
+    from kirana.repositories.main import KiranaRepository
+
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    return {"suppliers": repo.supplier_overview(int(sid))}
+
+
+@router.get("/suppliers/{supplier_id}/products")
+async def supplier_products(
+    supplier_id: int, request: Request, user: dict = Depends(_auth)
+):
+    """Products tagged to this supplier, with last cost and current stock."""
+    from kirana.repositories.main import KiranaRepository
+
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    try:
+        return {"products": repo.supplier_products(int(sid), supplier_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/suppliers/{supplier_id}/products")
+async def tag_supplier_product(
+    supplier_id: int, request: Request, user: dict = Depends(_auth)
+):
+    """Tag a product to this supplier (optionally with its cost price)."""
+    from kirana.repositories.main import KiranaRepository
+
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    b = await request.json()
+    product_id = b.get("product_id")
+    if not product_id:
+        raise HTTPException(status_code=400, detail="product_id required")
+    repo = KiranaRepository(request.app.state.engine)
+    if not repo.product_exists(int(product_id)):
+        raise HTTPException(status_code=404, detail="Product not found")
+    try:
+        return repo.tag_supplier_product(
+            int(sid), supplier_id, int(product_id), b.get("cost_price")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.delete("/suppliers/{supplier_id}/products/{product_id}")
+async def untag_supplier_product(
+    supplier_id: int, product_id: int, request: Request,
+    user: dict = Depends(_auth),
+):
+    from kirana.repositories.main import KiranaRepository
+
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    if not repo.untag_supplier_product(int(sid), supplier_id, product_id):
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return {"deleted": True}
+
+
+@router.post("/purchases/{purchase_id}/receive")
+async def receive_purchase(
+    purchase_id: int, request: Request, user: dict = Depends(_auth)
+):
+    """Mark a purchase order received and move its items into inventory
+    (transactional; idempotent for already-received orders)."""
+    from kirana.repositories.main import KiranaRepository
+
+    sid = user.get("store_id")
+    if sid is None:
+        raise HTTPException(status_code=403, detail="Store owner login required")
+    repo = KiranaRepository(request.app.state.engine)
+    try:
+        return repo.receive_purchase(int(sid), purchase_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 # ── Returns / exchanges (purchase memory) ───────────────────────────────────────
 
 

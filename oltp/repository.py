@@ -270,12 +270,21 @@ class OltpRepository:
             raise HTTPException(status_code=404, detail=f"Unknown OLTP table: {table_name}")
         return meta
 
+    @staticmethod
+    def _filter_condition(column, value):
+        # "__null__" lets query-string filters (which are always strings)
+        # express IS NULL — needed to target e.g. the base pricing row
+        # (variant_id IS NULL) of a product that also has variant rows.
+        if isinstance(value, str) and value == "__null__":
+            return column.is_(None)
+        return column == value
+
     def _apply_filters(self, stmt, table: Table, filters: dict[str, Any]):
         for key, value in filters.items():
             column = table.columns.get(key)
             if column is None:
                 raise HTTPException(status_code=400, detail=f"Unknown filter column: {key}")
-            stmt = stmt.where(column == value)
+            stmt = stmt.where(self._filter_condition(column, value))
         return stmt
 
     def _row_filter(self, table_name: str, table: Table, keys: dict[str, Any]):
@@ -285,7 +294,7 @@ class OltpRepository:
                 status_code=400,
                 detail=f"No valid lookup keys provided for {table_name}",
             )
-        return and_(*[table.c[k] == keys[k] for k in filter_cols])
+        return and_(*[self._filter_condition(table.c[k], keys[k]) for k in filter_cols])
 
     def _check_write_permission(self, table_name: str, user: dict, action: str) -> None:
         if user.get("role") == "admin":
