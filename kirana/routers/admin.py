@@ -228,6 +228,43 @@ async def admin_store_deep_dive(
     return data
 
 
+@router.get("/admin/tutorial/funnel")
+async def admin_tutorial_funnel(
+    request: Request,
+    days: int = 30,
+    user: dict = Depends(_auth),
+):
+    """Tutorial adoption funnel for the admin panel: how many owners started,
+    completed or skipped each guided flow, and which getting-started checklist
+    steps get done. Derived from the app's `tut:*` events in app_activity
+    (fired by the in-app tutorial engine)."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+    from sqlalchemy import text as _text
+
+    with request.app.state.engine.connect() as conn:
+        rows = conn.execute(
+            _text("""
+            SELECT event, COUNT(*) AS hits, COUNT(DISTINCT user_id) AS users
+            FROM kirana_oltp.app_activity
+            WHERE event LIKE 'tut:%'
+              AND created_at >= NOW() - make_interval(days => :days)
+            GROUP BY event
+            ORDER BY event
+        """),
+            {"days": days},
+        ).mappings().all()
+    return {
+        "days": days,
+        "events": [
+            {"event": r["event"], "hits": int(r["hits"]), "users": int(r["users"])}
+            for r in rows
+        ],
+    }
+
+
 @router.get("/admin/vision/analytics")
 async def admin_vision_analytics(
     request: Request,
