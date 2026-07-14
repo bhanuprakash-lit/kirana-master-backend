@@ -505,6 +505,10 @@ class BaseRepositoryMixin:
                 "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS daily_budget NUMERIC",
                 "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS latitude     NUMERIC(10,7)",
                 "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS longitude    NUMERIC(10,7)",
+                # Whether this store's data is shown in the director analytics
+                # dashboard. Default TRUE (real stores show); admins switch OFF
+                # dev/test/internal stores from the admin panel.
+                "ALTER TABLE kirana_oltp.store ADD COLUMN IF NOT EXISTS include_in_director BOOLEAN NOT NULL DEFAULT TRUE",
             ]:
                 conn.execute(text(ddl))
 
@@ -1376,6 +1380,20 @@ class BaseRepositoryMixin:
             ))
 
             # ── Module M3: Multi-location / multi-rack stock ──────────────────
+            # Racks are first-class rows: the owner can pre-create shelf labels,
+            # rename and merge them. label_key is the normalized identity
+            # (case/space/punctuation-insensitive) so "A1", "a 1" and "A-1" all
+            # name the same rack; label keeps the canonical display spelling.
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.rack (
+                    rack_id    BIGSERIAL PRIMARY KEY,
+                    store_id   BIGINT NOT NULL REFERENCES kirana_oltp.store(store_id),
+                    label      VARCHAR(60) NOT NULL,
+                    label_key  VARCHAR(60) NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (store_id, label_key)
+                )
+            """))
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS kirana_oltp.inventory_location (
                     id          BIGSERIAL PRIMARY KEY,
@@ -1383,10 +1401,13 @@ class BaseRepositoryMixin:
                     product_id  BIGINT NOT NULL REFERENCES kirana_oltp.product(product_id),
                     variant_id  BIGINT,
                     rack        VARCHAR(60) NOT NULL,
-                    quantity    NUMERIC NOT NULL DEFAULT 0,
-                    UNIQUE (store_id, product_id, variant_id, rack)
+                    rack_id     BIGINT REFERENCES kirana_oltp.rack(rack_id),
+                    quantity    NUMERIC NOT NULL DEFAULT 0
                 )
             """))
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.inventory_location "
+                "ADD COLUMN IF NOT EXISTS rack_id BIGINT REFERENCES kirana_oltp.rack(rack_id)"))
 
             # ── Module M7: Warranty & Serial (electronics) ────────────────────
             conn.execute(text("""
@@ -1756,6 +1777,103 @@ class BaseRepositoryMixin:
                     ),
                     {"k": _due_backfill_key},
                 )
+
+            # Racks become first-class (runs once): build rack rows from the
+            # legacy free-text placement labels, folding case/space/punctuation
+            # variants ("A1" / "a 1" / "A-1") into one rack, then merge the
+            # duplicate placements the fold exposes. The SQL normalization here
+            # must stay in sync with rack_label_key() in stocklocations.py.
+            _racks_key = "racks_first_class_v1"
+            already = conn.execute(
+                text("SELECT 1 FROM kirana_oltp.app_migrations WHERE key = :k"),
+                {"k": _racks_key},
+            ).first()
+            if not already:
+                # One rack per normalized key; the first-seen spelling
+                # (canonicalized to trimmed/single-spaced/uppercase) is kept
+                # as the display label.
+                conn.execute(text("""
+                    INSERT INTO kirana_oltp.rack (store_id, label, label_key)
+                    SELECT DISTINCT ON (store_id, label_key)
+                           store_id, label, label_key
+                    FROM (
+                        SELECT store_id, id,
+                               UPPER(REGEXP_REPLACE(BTRIM(rack), '\\s+', ' ', 'g')) AS label,
+                               UPPER(REGEXP_REPLACE(rack, '[^[:alnum:]]+', '', 'g')) AS label_key
+                        FROM kirana_oltp.inventory_location
+                    ) t
+                    WHERE label_key <> ''
+                    ORDER BY store_id, label_key, id
+                    ON CONFLICT (store_id, label_key) DO NOTHING
+                """))
+                conn.execute(text("""
+                    UPDATE kirana_oltp.inventory_location il
+                    SET rack_id = r.rack_id, rack = r.label
+                    FROM kirana_oltp.rack r
+                    WHERE il.rack_id IS NULL
+                      AND r.store_id = il.store_id
+                      AND r.label_key = UPPER(REGEXP_REPLACE(il.rack, '[^[:alnum:]]+', '', 'g'))
+                """))
+                # Labels that normalize to nothing (e.g. "--") land in UNSORTED.
+                conn.execute(text("""
+                    INSERT INTO kirana_oltp.rack (store_id, label, label_key)
+                    SELECT DISTINCT store_id, 'UNSORTED', 'UNSORTED'
+                    FROM kirana_oltp.inventory_location
+                    WHERE rack_id IS NULL
+                    ON CONFLICT (store_id, label_key) DO NOTHING
+                """))
+                conn.execute(text("""
+                    UPDATE kirana_oltp.inventory_location il
+                    SET rack_id = r.rack_id, rack = r.label
+                    FROM kirana_oltp.rack r
+                    WHERE il.rack_id IS NULL
+                      AND r.store_id = il.store_id
+                      AND r.label_key = 'UNSORTED'
+                """))
+                # Folding can leave the same product twice in one rack: keep the
+                # oldest row with the summed quantity, drop the rest.
+                conn.execute(text("""
+                    UPDATE kirana_oltp.inventory_location il
+                    SET quantity = agg.total
+                    FROM (
+                        SELECT MIN(id) AS keep_id, SUM(quantity) AS total
+                        FROM kirana_oltp.inventory_location
+                        GROUP BY store_id, product_id, COALESCE(variant_id, 0), rack_id
+                        HAVING COUNT(*) > 1
+                    ) agg
+                    WHERE il.id = agg.keep_id
+                """))
+                conn.execute(text("""
+                    DELETE FROM kirana_oltp.inventory_location il
+                    USING (
+                        SELECT id, MIN(id) OVER (
+                            PARTITION BY store_id, product_id,
+                                         COALESCE(variant_id, 0), rack_id
+                        ) AS keep_id
+                        FROM kirana_oltp.inventory_location
+                    ) d
+                    WHERE il.id = d.id AND d.id <> d.keep_id
+                """))
+                conn.execute(
+                    text(
+                        "INSERT INTO kirana_oltp.app_migrations(key) VALUES (:k) "
+                        "ON CONFLICT (key) DO NOTHING"
+                    ),
+                    {"k": _racks_key},
+                )
+
+            # The old 4-column UNIQUE treated NULL variant_id rows as always
+            # distinct (NULL <> NULL), so the placement upsert *inserted a
+            # duplicate row* instead of updating for every non-variant product.
+            # Replace it with a COALESCE-based unique index on the rack FK.
+            conn.execute(text(
+                "ALTER TABLE kirana_oltp.inventory_location DROP CONSTRAINT IF EXISTS "
+                "inventory_location_store_id_product_id_variant_id_rack_key"))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS inventory_location_placement_uniq
+                ON kirana_oltp.inventory_location
+                    (store_id, product_id, COALESCE(variant_id, 0), rack_id)
+            """))
 
             # kirana_oltp.admin_settings
             conn.execute(

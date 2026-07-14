@@ -19,6 +19,7 @@ import LoyaltyOverview from './pages/LoyaltyOverview';
 import StoreOps from './pages/StoreOps';
 import Intelligence from './pages/Intelligence';
 import Vision from './pages/Vision';
+import DirectorAccess from './pages/DirectorAccess';
 import Issues from './pages/Issues';
 import Settings from './pages/Settings';
 import WhatsApp from './pages/whatsapp/WhatsApp';
@@ -122,6 +123,7 @@ function App() {
                   <Route path="/store-ops" element={<StoreOps />} />
                   <Route path="/intelligence" element={<Intelligence />} />
                   <Route path="/vision" element={<Vision />} />
+                  <Route path="/director-access" element={<DirectorAccess />} />
                   <Route path="/callcenter/executives" element={<CcExecutives />} />
                   <Route path="/callcenter/assignments" element={<CcAssignments />} />
                   <Route path="/callcenter/feedback" element={<CcFeedback />} />

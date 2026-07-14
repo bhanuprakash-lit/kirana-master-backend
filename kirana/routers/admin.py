@@ -171,6 +171,47 @@ async def admin_list_stores(request: Request, user: dict = Depends(_auth)):
     return {"stores": [dict(r) for r in rows]}
 
 
+@router.get("/admin/director/stores")
+async def admin_director_stores(request: Request, user: dict = Depends(_auth)):
+    """List all stores with their director-dashboard inclusion flag, so the admin
+    can curate which stores' analytics the director sees (excludes dev/test stores)."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from sqlalchemy import text as _text
+
+    with request.app.state.engine.connect() as conn:
+        rows = conn.execute(_text("""
+            SELECT store_id, name, location,
+                   COALESCE(vertical_code, 'grocery') AS vertical_code,
+                   COALESCE(include_in_director, TRUE) AS include_in_director
+            FROM kirana_oltp.store
+            WHERE NOT COALESCE(is_deleted, FALSE)
+            ORDER BY include_in_director DESC, name
+        """)).mappings().all()
+    return {"stores": [dict(r) for r in rows]}
+
+
+@router.post("/admin/director/stores/{store_id}")
+async def admin_set_director_store(
+    store_id: int, request: Request, user: dict = Depends(_auth)
+):
+    """Toggle whether a store's data appears in the director analytics dashboard."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    body = await request.json()
+    include = bool(body.get("include", True))
+    from sqlalchemy import text as _text
+
+    with request.app.state.engine.begin() as conn:
+        res = conn.execute(_text(
+            "UPDATE kirana_oltp.store SET include_in_director = :inc "
+            "WHERE store_id = :sid AND NOT COALESCE(is_deleted, FALSE)"
+        ), {"inc": include, "sid": store_id})
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Store not found")
+    return {"store_id": store_id, "include_in_director": include}
+
+
 @router.get("/admin/stores/{store_id}/deep-dive")
 async def admin_store_deep_dive(
     store_id: int, request: Request, user: dict = Depends(_auth)
@@ -185,6 +226,43 @@ async def admin_store_deep_dive(
     if not data:
         raise HTTPException(status_code=404, detail="Store not found")
     return data
+
+
+@router.get("/admin/tutorial/funnel")
+async def admin_tutorial_funnel(
+    request: Request,
+    days: int = 30,
+    user: dict = Depends(_auth),
+):
+    """Tutorial adoption funnel for the admin panel: how many owners started,
+    completed or skipped each guided flow, and which getting-started checklist
+    steps get done. Derived from the app's `tut:*` events in app_activity
+    (fired by the in-app tutorial engine)."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+    from sqlalchemy import text as _text
+
+    with request.app.state.engine.connect() as conn:
+        rows = conn.execute(
+            _text("""
+            SELECT event, COUNT(*) AS hits, COUNT(DISTINCT user_id) AS users
+            FROM kirana_oltp.app_activity
+            WHERE event LIKE 'tut:%'
+              AND created_at >= NOW() - make_interval(days => :days)
+            GROUP BY event
+            ORDER BY event
+        """),
+            {"days": days},
+        ).mappings().all()
+    return {
+        "days": days,
+        "events": [
+            {"event": r["event"], "hits": int(r["hits"]), "users": int(r["users"])}
+            for r in rows
+        ],
+    }
 
 
 @router.get("/admin/vision/analytics")

@@ -371,6 +371,258 @@ class InventoryRepositoryMixin:
             conn.commit()
         return dict(row)
 
+    # ── Supplier dashboard ────────────────────────────────────────────────────
+
+    def supplier_overview(self, store_id: int) -> list[dict]:
+        """Per-supplier rollup for the supplier dashboard: how many products
+        each supplier is tagged to, the unpaid purchase total, next due date
+        and overdue amount. Ordered by payment priority — overdue first, then
+        earliest due date, then largest outstanding — i.e. 'whom do I need to
+        pay first?'."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                text("""
+                SELECT s.supplier_id, s.name, s.phone, s.category,
+                       COALESCE(pc.product_count, 0)          AS product_count,
+                       COALESCE(d.unpaid_total, 0)::float     AS unpaid_total,
+                       COALESCE(d.unpaid_orders, 0)           AS unpaid_orders,
+                       COALESCE(d.overdue_amount, 0)::float   AS overdue_amount,
+                       d.next_due_date::text                  AS next_due_date
+                FROM kirana_oltp.supplier s
+                LEFT JOIN (
+                    SELECT supplier_id, COUNT(DISTINCT product_id) AS product_count
+                    FROM kirana_oltp.product_supplier
+                    GROUP BY supplier_id
+                ) pc ON pc.supplier_id = s.supplier_id
+                LEFT JOIN (
+                    SELECT supplier_id,
+                           SUM(total_amount)  AS unpaid_total,
+                           COUNT(*)           AS unpaid_orders,
+                           SUM(CASE WHEN due_date < CURRENT_DATE
+                                    THEN total_amount ELSE 0 END) AS overdue_amount,
+                           MIN(due_date)      AS next_due_date
+                    FROM kirana_oltp.purchases
+                    WHERE store_id = :sid
+                      AND COALESCE(payment_status, 'unpaid') <> 'paid'
+                    GROUP BY supplier_id
+                ) d ON d.supplier_id = s.supplier_id
+                WHERE s.store_id = :sid
+                ORDER BY COALESCE(d.overdue_amount, 0) DESC,
+                         d.next_due_date ASC NULLS LAST,
+                         COALESCE(d.unpaid_total, 0) DESC,
+                         s.name
+            """),
+                {"sid": store_id},
+            ).mappings().all()
+        return [dict(r) for r in rows]
+
+    def supplier_products(self, store_id: int, supplier_id: int) -> list[dict]:
+        """Products tagged to this supplier (via product_supplier), with the
+        last known cost and the store's current base stock."""
+        with self._conn() as conn:
+            owner = conn.execute(
+                text("SELECT 1 FROM kirana_oltp.supplier "
+                     "WHERE supplier_id = :sup AND store_id = :sid"),
+                {"sup": supplier_id, "sid": store_id},
+            ).first()
+            if not owner:
+                raise ValueError("Supplier not found for this store")
+            rows = conn.execute(
+                text("""
+                SELECT ps.product_id, p.name,
+                       ps.cost_price::float AS cost_price,
+                       ps.lead_time_days,
+                       COALESCE(i.quantity, 0) AS stock
+                FROM kirana_oltp.product_supplier ps
+                JOIN kirana_oltp.product p ON p.product_id = ps.product_id
+                LEFT JOIN kirana_oltp.inventory i
+                       ON i.store_id = :sid AND i.product_id = ps.product_id
+                      AND i.variant_id IS NULL
+                WHERE ps.supplier_id = :sup
+                ORDER BY p.name
+            """),
+                {"sup": supplier_id, "sid": store_id},
+            ).mappings().all()
+        return [dict(r) for r in rows]
+
+    def tag_supplier_product(
+        self,
+        store_id: int,
+        supplier_id: int,
+        product_id: int,
+        cost_price: float | None = None,
+    ) -> dict:
+        """Link a product to a supplier (upsert into product_supplier)."""
+        with self._conn() as conn:
+            owner = conn.execute(
+                text("SELECT 1 FROM kirana_oltp.supplier "
+                     "WHERE supplier_id = :sup AND store_id = :sid"),
+                {"sup": supplier_id, "sid": store_id},
+            ).first()
+            if not owner:
+                raise ValueError("Supplier not found for this store")
+            existing = conn.execute(
+                text("SELECT id FROM kirana_oltp.product_supplier "
+                     "WHERE supplier_id = :sup AND product_id = :pid"),
+                {"sup": supplier_id, "pid": product_id},
+            ).first()
+            if existing:
+                if cost_price is not None:
+                    conn.execute(
+                        text("UPDATE kirana_oltp.product_supplier "
+                             "SET cost_price = :c WHERE id = :id"),
+                        {"c": cost_price, "id": existing[0]},
+                    )
+            else:
+                conn.execute(
+                    text("""
+                    INSERT INTO kirana_oltp.product_supplier
+                        (product_id, supplier_id, cost_price)
+                    VALUES (:pid, :sup, :c)
+                """),
+                    {"pid": product_id, "sup": supplier_id, "c": cost_price},
+                )
+            conn.commit()
+        return {"supplier_id": supplier_id, "product_id": product_id,
+                "tagged": True}
+
+    def untag_supplier_product(
+        self, store_id: int, supplier_id: int, product_id: int
+    ) -> bool:
+        with self._conn() as conn:
+            owner = conn.execute(
+                text("SELECT 1 FROM kirana_oltp.supplier "
+                     "WHERE supplier_id = :sup AND store_id = :sid"),
+                {"sup": supplier_id, "sid": store_id},
+            ).first()
+            if not owner:
+                return False
+            res = conn.execute(
+                text("DELETE FROM kirana_oltp.product_supplier "
+                     "WHERE supplier_id = :sup AND product_id = :pid"),
+                {"sup": supplier_id, "pid": product_id},
+            )
+            conn.commit()
+        return res.rowcount > 0
+
+    def receive_purchase(self, store_id: int, purchase_id: int) -> dict:
+        """Mark a purchase order as received AND put its items into stock.
+
+        In one transaction: flips the purchase to status='received' (recording
+        arrival_date), adds each purchase_item's quantity to the store's base
+        inventory row (creating it if the product was never stocked), logs an
+        inventory_movements 'purchase' row per item (feeds the purchased-stock
+        KPIs), and refreshes product_supplier cost memory so future sales
+        snapshot a true cost. Idempotent: an already-received order is a no-op.
+        """
+        with self._conn() as conn:
+            purchase = (
+                conn.execute(
+                    text("""
+                    SELECT purchase_id, supplier_id, status
+                    FROM kirana_oltp.purchases
+                    WHERE purchase_id = :pid AND store_id = :sid
+                    FOR UPDATE
+                """),
+                    {"pid": purchase_id, "sid": store_id},
+                )
+                .mappings()
+                .first()
+            )
+            if not purchase:
+                raise ValueError("Purchase order not found for this store")
+            if (purchase["status"] or "").lower() == "received":
+                return {
+                    "purchase_id": purchase_id,
+                    "already_received": True,
+                    "restocked_units": 0,
+                }
+
+            items = (
+                conn.execute(
+                    text("""
+                    SELECT product_id, quantity, cost_price
+                    FROM kirana_oltp.purchase_items
+                    WHERE purchase_id = :pid
+                """),
+                    {"pid": purchase_id},
+                )
+                .mappings()
+                .all()
+            )
+
+            restocked = 0
+            supplier_id = purchase["supplier_id"]
+            for it in items:
+                pid = int(it["product_id"])
+                qty = int(it["quantity"] or 0)
+                if qty <= 0:
+                    continue
+                # Purchase items carry no variant, so stock lands on the base
+                # (NULL-variant) inventory row; create it if it doesn't exist.
+                updated = conn.execute(
+                    text("""
+                    UPDATE kirana_oltp.inventory
+                    SET quantity = quantity + :q
+                    WHERE store_id = :sid AND product_id = :pid
+                      AND variant_id IS NULL
+                    RETURNING inventory_id
+                """),
+                    {"q": qty, "sid": store_id, "pid": pid},
+                ).first()
+                if not updated:
+                    conn.execute(
+                        text("""
+                        INSERT INTO kirana_oltp.inventory (store_id, product_id, quantity)
+                        VALUES (:sid, :pid, :q)
+                    """),
+                        {"sid": store_id, "pid": pid, "q": qty},
+                    )
+                conn.execute(
+                    text("""
+                    INSERT INTO kirana_oltp.inventory_movements
+                        (store_id, product_id, change_quantity, reason, reference_id)
+                    VALUES (:sid, :pid, :q, 'purchase', :ref)
+                """),
+                    {"sid": store_id, "pid": pid, "q": qty, "ref": purchase_id},
+                )
+                cost = it["cost_price"]
+                if supplier_id is not None and cost is not None and float(cost) > 0:
+                    tagged = conn.execute(
+                        text("""
+                        UPDATE kirana_oltp.product_supplier SET cost_price = :c
+                        WHERE product_id = :pid AND supplier_id = :sup
+                        RETURNING id
+                    """),
+                        {"c": float(cost), "pid": pid, "sup": supplier_id},
+                    ).first()
+                    if not tagged:
+                        conn.execute(
+                            text("""
+                            INSERT INTO kirana_oltp.product_supplier
+                                (product_id, supplier_id, cost_price)
+                            VALUES (:pid, :sup, :c)
+                        """),
+                            {"pid": pid, "sup": supplier_id, "c": float(cost)},
+                        )
+                restocked += qty
+
+            conn.execute(
+                text("""
+                UPDATE kirana_oltp.purchases
+                SET status = 'received', arrival_date = now()
+                WHERE purchase_id = :pid
+            """),
+                {"pid": purchase_id},
+            )
+            conn.commit()
+        return {
+            "purchase_id": purchase_id,
+            "already_received": False,
+            "restocked_units": restocked,
+            "items": len(items),
+        }
+
     def record_return(
         self,
         store_id: int,

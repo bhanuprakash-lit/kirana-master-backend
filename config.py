@@ -21,6 +21,7 @@ class Settings:
 
     # ── Kirana AI ────────────────────────────────────────────────────────────
     kirana_api_key: str
+    director_token: str    # read-only secret for the director analytics dashboard
     ml_results_dir: str    # path to ml_models/results/ CSVs  (local copy)
     ml_artifacts_dir: str  # path to ml_models/artifacts/ .pkl (local copy)
 
@@ -77,6 +78,7 @@ def get_settings() -> Settings:
         ),
 
         kirana_api_key=os.getenv("KIRANA_API_KEY", "kirana-dev-key"),
+        director_token=os.getenv("DIRECTOR_TOKEN", ""),
 
         # Local ML model copies inside the master backend directory
         ml_results_dir=os.getenv(

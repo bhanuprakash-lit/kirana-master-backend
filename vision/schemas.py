@@ -22,6 +22,7 @@ class SessionSummary(BaseModel):
     total_units: int
     unknown_count: int
     created_at: Optional[str] = None
+    photo_count: int = 0  # how many photos this scan uploaded (viewable in history)
 
 
 class VisionItemOut(BaseModel):
@@ -146,6 +147,8 @@ class CounterSummaryItem(BaseModel):
     display_name: str
     qty: int
     is_unknown: bool
+    price: Optional[float] = None       # store's active selling price (None = no match/price)
+    line_value: Optional[float] = None  # price * qty
 
 
 class CounterSummaryResponse(BaseModel):
@@ -154,6 +157,43 @@ class CounterSummaryResponse(BaseModel):
     items: list[CounterSummaryItem]
     total_units: int
     total_skus: int
+    total_value: float = 0.0
+
+
+class CounterHistorySession(BaseModel):
+    session_id: int
+    session_date: str
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    created_at: Optional[str] = None
+    total_units: int
+    total_skus: int
+    unknown_count: int
+    total_value: float = 0.0
+    items: list[CounterSummaryItem] = []
+
+
+class CounterHistoryResponse(BaseModel):
+    store_id: int
+    sessions: list[CounterHistorySession]
+
+
+class CounterResolveInput(BaseModel):
+    """On-device model class labels the app wants resolved to catalog products."""
+    class_names: list[str] = []
+
+
+class CounterResolveItem(BaseModel):
+    class_name: str
+    product_id: Optional[int] = None
+    display_name: str
+    price: Optional[float] = None
+    is_unknown: bool
+
+
+class CounterResolveResponse(BaseModel):
+    store_id: int
+    items: list[CounterResolveItem]
 
 
 # ── Bulk stock-in / onboarding ────────────────────────────────────────────────

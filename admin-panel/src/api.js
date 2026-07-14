@@ -25,6 +25,11 @@ export function isConfigured() {
   return !!_baseUrl && (!!_apiKey || !!_token);
 }
 
+/** Backend base URL (used e.g. to build the director dashboard link). */
+export function getBaseUrl() {
+  return _baseUrl;
+}
+
 /** Register a handler invoked when any request returns 401/403 (bad/revoked key). */
 export function onUnauthorized(fn) {
   _onUnauthorized = fn;
@@ -124,6 +129,8 @@ export const api = {
   approveTrial:    (storeId)              => request('POST', `/kirana/admin/approve-trial/${storeId}`),
   getAdminSettings: ()                   => request('GET',  '/kirana/admin/settings'),
   setAdminSettings: (body)               => request('POST', '/kirana/admin/settings', body),
+  directorStores:   ()                   => request('GET',  '/kirana/admin/director/stores'),
+  setDirectorStore: (id, include)        => request('POST', `/kirana/admin/director/stores/${id}`, { include }),
   extendTrial:     (storeId, days)        => request('POST', `/kirana/admin/extend-trial/${storeId}`, { days }),
   cancelSub:       (storeId)              => request('POST', `/kirana/admin/cancel-subscription/${storeId}`),
   
