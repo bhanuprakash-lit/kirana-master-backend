@@ -320,6 +320,7 @@ class StoreRepositoryMixin:
             region,
             city,
             COALESCE(vertical_code, 'grocery') AS vertical_code,
+            COALESCE(gst_enabled, FALSE)       AS gst_enabled,
             (SELECT COUNT(DISTINCT product_id)
              FROM kirana_oltp.inventory
              WHERE store_id = s.store_id)     AS sku_count
@@ -352,6 +353,9 @@ class StoreRepositoryMixin:
             "region": "region",
             "city": "city",
             "vertical_code": "vertical_code",
+            # V0.5 — GST registration is a store fact, not a vertical trait:
+            # a registered kirana files GST too. Drives the GST-report row.
+            "gst_enabled": "gst_enabled",
         }
         sets, params = [], {"sid": store_id}
         for k, v in kwargs.items():
@@ -363,7 +367,7 @@ class StoreRepositoryMixin:
             return None
         sql = (
             f"UPDATE kirana_oltp.store SET {', '.join(sets)} WHERE store_id = :sid "
-            f"RETURNING store_id, name AS store_name, store_type, footfall, budget, daily_budget, location, region, city, vertical_code"
+            f"RETURNING store_id, name AS store_name, store_type, footfall, budget, daily_budget, location, region, city, vertical_code, gst_enabled"
         )
         with self._conn() as conn:
             row = conn.execute(text(sql), params).mappings().first()
