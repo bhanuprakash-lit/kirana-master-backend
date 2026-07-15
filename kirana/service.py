@@ -359,6 +359,7 @@ class KiranaService:
             footfall=req.footfall, budget=req.budget, daily_budget=req.daily_budget,
             location=req.location, region=req.region,
             city=req.city, vertical_code=req.vertical_code,
+            gst_enabled=req.gst_enabled,
         )
         if not updated:
             raise ValueError("Store not found")

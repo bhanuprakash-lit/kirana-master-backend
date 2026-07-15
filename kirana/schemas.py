@@ -101,6 +101,7 @@ class StoreUpdateRequest(BaseModel):
     region: Optional[str] = None
     city: Optional[str] = None            # M2 — zone/city rollup
     vertical_code: Optional[str] = None   # F1 — owner switches vertical post-setup
+    gst_enabled: Optional[bool] = None    # V0.5 — store is GST-registered
 
 
 class RecommendationItem(BaseModel):

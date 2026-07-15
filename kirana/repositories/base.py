@@ -536,6 +536,17 @@ class BaseRepositoryMixin:
                     "ADD COLUMN IF NOT EXISTS vertical_code TEXT"
                 )
             )
+            # V0.5 — GST registration is a store-level fact (a registered
+            # kirana files GST too), not a vertical trait. Drives whether the
+            # app shows the GST report; defaults off for grocery-family
+            # stores, and the app treats non-grocery verticals as enabled
+            # regardless for back-compat.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.store "
+                    "ADD COLUMN IF NOT EXISTS gst_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
             # Seed the known verticals (idempotent — never overwrites edits).
             conn.execute(
                 text("""
