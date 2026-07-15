@@ -99,6 +99,10 @@ class OrderCreate(BaseModel):
     coupon_id: Optional[int] = None
     coupon_discount: Optional[float] = None
     redeem_points: Optional[float] = None
+    # ₹ value of the redeemed points + the biller's custom whole-bill discount —
+    # persisted so order history can explain the paid total.
+    redeem_value: Optional[float] = None
+    manual_discount: Optional[float] = None
     # POS deep-links (best-effort, never fail the sale):
     #   M7 serials sold on this bill, M4 membership session used + appointment
     #   billed, M9 job card billed.
@@ -146,6 +150,11 @@ class OrderOut(BaseModel):
     # F3 — GST breakup (null when no taxable items)
     tax_amount: Optional[float] = None
     taxable_amount: Optional[float] = None
+    # Bill-level discounts (null on orders placed before they were persisted —
+    # the app then shows the reconciling gap as one "other discount" line)
+    coupon_discount: Optional[float] = None
+    redeem_value: Optional[float] = None
+    manual_discount: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 
 

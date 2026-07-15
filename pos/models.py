@@ -113,6 +113,12 @@ class KiranaOrder(POSBase):
     tax_amount     = Column(Numeric, nullable=True)   # F3 — total GST in the bill
     taxable_amount = Column(Numeric, nullable=True)   # F3 — total minus tax
     staff_id       = Column(BigInteger, nullable=True)  # M5 — who billed this order
+    # Bill-level discounts, persisted so order history can show the full
+    # breakdown from items total down to what was actually paid (previously
+    # only the reduced total arrived and the gap was unexplained).
+    coupon_discount = Column(Numeric, nullable=True)  # M1 — coupon ₹ off
+    redeem_value    = Column(Numeric, nullable=True)  # M1 — points redeemed, ₹ value
+    manual_discount = Column(Numeric, nullable=True)  # custom whole-bill ₹ off
 
     items   = relationship("KiranaOrderItem", back_populates="order")
     payment = relationship("KiranaPayment",   back_populates="order", uselist=False)
