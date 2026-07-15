@@ -320,6 +320,9 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
         basket_gross=order.basket_gross,
         basket_savings=order.basket_savings,
         staff_id=order.staff_id,
+        coupon_discount=order.coupon_discount,
+        redeem_value=order.redeem_value,
+        manual_discount=order.manual_discount,
     )
     db.add(db_order)
     db.flush()

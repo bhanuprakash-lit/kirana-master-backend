@@ -193,6 +193,11 @@ class BaseRepositoryMixin:
                 "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS basket_name    VARCHAR(255)",
                 "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS basket_gross   NUMERIC(12,2)",
                 "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS basket_savings NUMERIC(12,2)",
+                # Bill-level discounts, persisted so order history can explain
+                # the paid total (coupon / points value / custom bill discount).
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS coupon_discount NUMERIC(10,2)",
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS redeem_value    NUMERIC(10,2)",
+                "ALTER TABLE kirana_oltp.orders ADD COLUMN IF NOT EXISTS manual_discount NUMERIC(10,2)",
             ]:
                 conn.execute(text(ddl))
             # per-store basket tier config (ranges + discount %); NULL row ⇒ defaults
