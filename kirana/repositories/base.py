@@ -1176,6 +1176,122 @@ class BaseRepositoryMixin:
                 )
             """)
             )
+
+            # ── V2: services sellable at POS ───────────────────────────────
+            # A service sells through the normal order pipeline as a flagged
+            # product row (order_item FK, revenue, KPIs all just work), but it
+            # carries no stock: the sale trigger skips inventory for
+            # is_service products (see the CREATE OR REPLACE below).
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.product "
+                    "ADD COLUMN IF NOT EXISTS is_service BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.service "
+                    "ADD COLUMN IF NOT EXISTS product_id BIGINT "
+                    "REFERENCES kirana_oltp.product(product_id)"
+                )
+            )
+            # product.category_id is NOT NULL — service-linked products live
+            # under one shared 'Services' category (vertical_code NULL =
+            # visible to all verticals).
+            conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.category (name, vertical_code)
+                SELECT 'Services', NULL
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM kirana_oltp.category
+                    WHERE name = 'Services' AND vertical_code IS NULL
+                )
+            """)
+            )
+            # Re-assert the sale trigger fn WITH the is_service skip.
+            # CREATE OR REPLACE is idempotent per boot; the canonical copy in
+            # db_generation/ensure_full_schema.py is kept in sync.
+            conn.execute(
+                text("""
+                CREATE OR REPLACE FUNCTION kirana_oltp.update_inventory_on_sale()
+                RETURNS TRIGGER AS $$
+                DECLARE
+                    order_store_id BIGINT;
+                    current_stock  INT;
+                    is_real_variant BOOLEAN := FALSE;
+                    is_service_row  BOOLEAN := FALSE;
+                BEGIN
+                    -- V2: services have no stock — skip inventory entirely.
+                    SELECT COALESCE(is_service, FALSE) INTO is_service_row
+                    FROM kirana_oltp.product WHERE product_id = NEW.product_id;
+                    IF is_service_row THEN
+                        RETURN NEW;
+                    END IF;
+
+                    SELECT store_id INTO order_store_id
+                    FROM kirana_oltp.orders WHERE order_id = NEW.order_id;
+
+                    -- F2: real (non-implicit) variants are decremented at the
+                    -- application level (pos/crud.py), scoped to the exact
+                    -- variant sold. Skip here to avoid double-decrementing.
+                    IF NEW.variant_id IS NOT NULL THEN
+                        SELECT NOT is_implicit INTO is_real_variant
+                        FROM kirana_oltp.product_variant WHERE variant_id = NEW.variant_id;
+                    END IF;
+
+                    IF is_real_variant THEN
+                        RETURN NEW;
+                    END IF;
+
+                    SELECT quantity INTO current_stock
+                    FROM kirana_oltp.inventory
+                    WHERE store_id = order_store_id AND product_id = NEW.product_id
+                      AND variant_id IS NOT DISTINCT FROM NEW.variant_id
+                    FOR UPDATE;
+
+                    IF current_stock IS NULL THEN
+                        RAISE EXCEPTION 'Inventory row missing for store %, product %', order_store_id, NEW.product_id;
+                    END IF;
+
+                    IF current_stock < NEW.quantity THEN
+                        RAISE EXCEPTION 'Insufficient stock: available %, requested %', current_stock, NEW.quantity;
+                    END IF;
+
+                    UPDATE kirana_oltp.inventory
+                    SET quantity = quantity - NEW.quantity
+                    WHERE store_id = order_store_id AND product_id = NEW.product_id
+                      AND variant_id IS NOT DISTINCT FROM NEW.variant_id;
+
+                    INSERT INTO kirana_oltp.inventory_movements (store_id, product_id, change_quantity, reason, reference_id)
+                    VALUES (order_store_id, NEW.product_id, -NEW.quantity, 'sale', NEW.order_id);
+
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+            """)
+            )
+            # Backfill: link legacy services to products. Self-limiting via
+            # the product_id IS NULL guard, safe every boot; new services get
+            # their linked product at creation time (services repo).
+            conn.execute(
+                text("""
+                DO $$
+                DECLARE r RECORD; pid BIGINT; cat BIGINT;
+                BEGIN
+                    SELECT category_id INTO cat FROM kirana_oltp.category
+                    WHERE name = 'Services' AND vertical_code IS NULL LIMIT 1;
+                    FOR r IN SELECT service_id, name FROM kirana_oltp.service
+                             WHERE product_id IS NULL LOOP
+                        INSERT INTO kirana_oltp.product (category_id, name, unit, is_service)
+                        VALUES (cat, r.name, 'service', TRUE)
+                        RETURNING product_id INTO pid;
+                        UPDATE kirana_oltp.service SET product_id = pid
+                        WHERE service_id = r.service_id;
+                    END LOOP;
+                END $$
+            """)
+            )
+
             # Appointments / bookings.
             conn.execute(
                 text("""

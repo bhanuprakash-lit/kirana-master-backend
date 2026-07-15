@@ -1132,7 +1132,16 @@ DECLARE
     order_store_id BIGINT;
     current_stock  INT;
     is_real_variant BOOLEAN := FALSE;
+    is_service_row  BOOLEAN := FALSE;
 BEGIN
+    -- V2: services sell as flagged product rows but carry no stock —
+    -- skip inventory validation/decrement entirely.
+    SELECT COALESCE(is_service, FALSE) INTO is_service_row
+    FROM kirana_oltp.product WHERE product_id = NEW.product_id;
+    IF is_service_row THEN
+        RETURN NEW;
+    END IF;
+
     SELECT store_id INTO order_store_id
     FROM kirana_oltp.orders WHERE order_id = NEW.order_id;
 

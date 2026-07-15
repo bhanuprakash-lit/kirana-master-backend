@@ -15,7 +15,7 @@ class ServicesRepositoryMixin:
     # ── Service catalogue ───────────────────────────────────────────────────
     def list_services(self, store_id: int, include_inactive: bool = False) -> list[dict]:
         sql = """
-        SELECT service_id, name, price, duration_min, category, is_active
+        SELECT service_id, name, price, duration_min, category, is_active, product_id
         FROM kirana_oltp.service WHERE store_id = :sid
         """
         if not include_inactive:
@@ -27,6 +27,12 @@ class ServicesRepositoryMixin:
 
     def create_service(self, store_id: int, name: str, price: float,
                        duration_min: int = 30, category: str | None = None) -> dict:
+        """Create a service AND its linked is_service product (same txn).
+
+        The product row is what makes the service sellable at POS through the
+        normal order pipeline (order_item FK, revenue, KPIs). It carries no
+        stock — the sale trigger skips inventory for is_service products.
+        """
         with self._conn() as conn:
             row = conn.execute(
                 text("""
@@ -37,8 +43,25 @@ class ServicesRepositoryMixin:
                 {"sid": store_id, "name": name, "price": price,
                  "dur": duration_min, "cat": category},
             ).mappings().first()
+            pid = conn.execute(
+                text("""
+                INSERT INTO kirana_oltp.product (category_id, name, unit, is_service)
+                SELECT category_id, :name, 'service', TRUE
+                FROM kirana_oltp.category
+                WHERE name = 'Services' AND vertical_code IS NULL
+                LIMIT 1
+                RETURNING product_id
+                """),
+                {"name": name},
+            ).scalar()
+            if pid is not None:
+                conn.execute(
+                    text("UPDATE kirana_oltp.service SET product_id = :pid "
+                         "WHERE service_id = :sid_id"),
+                    {"pid": pid, "sid_id": row["service_id"]},
+                )
             conn.commit()
-        return dict(row)
+        return {**dict(row), "product_id": pid}
 
     def update_service(self, service_id: int, store_id: int, **fields) -> dict | None:
         allowed = {"name", "price", "duration_min", "category", "is_active"}
@@ -51,9 +74,17 @@ class ServicesRepositoryMixin:
             return None
         sql = ("UPDATE kirana_oltp.service SET " + ", ".join(sets) +
                " WHERE service_id = :sid_id AND store_id = :sid "
-               "RETURNING service_id, name, price, duration_min, category, is_active")
+               "RETURNING service_id, name, price, duration_min, category, is_active, product_id")
         with self._conn() as conn:
             row = conn.execute(text(sql), params).mappings().first()
+            # Keep the linked product's name in sync so receipts/order history
+            # show the renamed service correctly.
+            if row and row["product_id"] is not None and "name" in params:
+                conn.execute(
+                    text("UPDATE kirana_oltp.product SET name = :name "
+                         "WHERE product_id = :pid AND is_service"),
+                    {"name": params["name"], "pid": row["product_id"]},
+                )
             conn.commit()
         return dict(row) if row else None
 
