@@ -40,6 +40,24 @@ def _auth(request: Request) -> dict:
     raise HTTPException(status_code=401, detail="Unauthorised")
 
 
+def _enforce_store_scope(request: Request, user: dict = Depends(_auth)):
+    """Router-level IDOR guard: a store-scoped user may only forecast their
+    own store (must pass their own store_id); admins may query any. Read from
+    the raw query string so it can't interact with each route's store_id
+    default. Applied once to every forecast route."""
+    if user.get("role") == "admin":
+        return
+    owned = user.get("store_id")
+    if owned is None:
+        raise HTTPException(status_code=403, detail="No store assigned to this user")
+    raw = request.query_params.get("store_id")
+    if raw is None or int(raw) != int(owned):
+        raise HTTPException(status_code=403, detail="Access denied to this store")
+
+
+router.dependencies.append(Depends(_enforce_store_scope))
+
+
 def _forecast_engine(request: Request) -> ForecastEngine:
     svc = request.app.state.kirana_service
     return ForecastEngine(ml_adapter=svc.ml)

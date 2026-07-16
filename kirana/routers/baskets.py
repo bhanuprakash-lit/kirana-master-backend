@@ -238,7 +238,12 @@ async def get_recommended_campaigns(
     user: dict = Depends(_auth),
 ):
     """Returns top campaigns: general time-based + area-specific from associations."""
-    sid = store_id or user.get("store_id") or 0
+    # IDOR guard: non-admins are pinned to their own store, so a passed
+    # store_id can't be used to read a competitor's campaign strategy.
+    if user.get("role") == "admin":
+        sid = store_id or user.get("store_id") or 0
+    else:
+        sid = user.get("store_id") or 0
     if not sid:
         raise HTTPException(status_code=400, detail="store_id required")
     from kirana.campaigns import (

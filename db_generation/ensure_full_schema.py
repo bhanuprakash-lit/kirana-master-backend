@@ -11,10 +11,11 @@ Combines all schema from:
 Fully IDEMPOTENT — safe to run against a fresh DB or an existing one.
 All statements use IF NOT EXISTS / ADD COLUMN IF NOT EXISTS.
 
-Usage (Azure):
+Usage (Azure) — set the DB_* environment variables first (never commit the
+real password to source):
     $env:DB_HOST     = "psql-lohiya-kirana.postgres.database.azure.com"
     $env:DB_USER     = "psqladmin"
-    $env:DB_PASSWORD = "Lohiya@2026"
+    $env:DB_PASSWORD = "<from Azure Key Vault>"
     $env:DB_NAME     = "db-kirana-dev"
     $env:DB_PORT     = "5432"
     python db_generation/ensure_full_schema.py
@@ -25,7 +26,8 @@ import psycopg2
 
 DB_HOST     = os.environ.get("DB_HOST",     "localhost")
 DB_USER     = os.environ.get("DB_USER",     "postgres")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "123456")
+# Local-dev fallback reads PGPASSWORD; never hardcode a password (SAST F01).
+DB_PASSWORD = os.environ.get("DB_PASSWORD", os.environ.get("PGPASSWORD", ""))
 DB_NAME     = os.environ.get("DB_NAME",     "lit_db")
 DB_PORT     = os.environ.get("DB_PORT",     "5432")
 

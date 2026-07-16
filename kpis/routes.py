@@ -117,6 +117,36 @@ def _auth(request: Request):
     raise HTTPException(status_code=401, detail="Unauthorised")
 
 
+def _enforce_store_scope(request: Request, user: dict = Depends(_auth)):
+    """Router-level IDOR guard for every KPI endpoint.
+
+    KPI routes take `store_id` as a query param and feed it straight to the
+    calculators, defaulting to store 1 when omitted — so without this a store
+    owner could read any other store's revenue/margin/shrinkage by changing
+    (or omitting) the number. Admins (X-API-Key or the admin bearer) may query
+    any store; a store-scoped user must pass their OWN store_id explicitly.
+    Read from the raw query string so it can't interact with each endpoint's
+    own `store_id` default. Applied once at the router level.
+    """
+    if user.get("role") == "admin":
+        return
+    # /registry exposes only the KPI catalogue metadata (no store data), so it
+    # needs no store_id and is safe for any authenticated user.
+    if request.url.path.rstrip("/").endswith("/registry"):
+        return
+    owned = user.get("store_id")
+    if owned is None:
+        raise HTTPException(status_code=403, detail="No store assigned to this user")
+    raw = request.query_params.get("store_id")
+    if raw is None or int(raw) != int(owned):
+        raise HTTPException(status_code=403, detail="Access denied to this store")
+
+
+# Apply the guard to every route on this router (added after the routes are
+# registered; FastAPI copies router.dependencies onto each route at include).
+router.dependencies.append(Depends(_enforce_store_scope))
+
+
 # ── 1. Repeat Customer Frequency ──────────────────────────────────────────────
 
 @router.get("/repeat-customer-frequency",

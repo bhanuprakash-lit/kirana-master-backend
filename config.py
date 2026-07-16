@@ -71,10 +71,14 @@ def get_settings() -> Settings:
         debug=os.getenv("MASTER_DEBUG", "false").lower() == "true",
         cors_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000,*").split(","),
 
-        # Single DB — everything lives in lit_db
+        # Single DB — everything lives in lit_db. Credentials come from
+        # DATABASE_URL (Azure Key Vault in deployed envs); the local-dev
+        # fallback reads the password from PGPASSWORD rather than shipping a
+        # hardcoded one in source (SAST Finding 01).
         db_url=os.getenv(
             "DATABASE_URL",
-            "postgresql+psycopg2://postgres:123456@localhost:5432/lit_db",
+            "postgresql+psycopg2://postgres:"
+            f"{os.getenv('PGPASSWORD', '')}@localhost:5432/lit_db",
         ),
 
         kirana_api_key=os.getenv("KIRANA_API_KEY", "kirana-dev-key"),

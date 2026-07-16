@@ -42,14 +42,22 @@ if _DATABASE_URL:
     DB_CONFIG = _db_config_from_url(_DATABASE_URL)
     DB_URL = _DATABASE_URL
 else:
+    # Local dev fallback ONLY. Credentials come from the environment — never
+    # hardcode a password here (SAST Finding 01): a committed default leaks to
+    # anyone with source access and invites credential stuffing. Devs set
+    # DATABASE_URL, or PGPASSWORD for this local-only path.
+    _local_pw = os.getenv("PGPASSWORD", "")
     DB_CONFIG = {
-        "host": "localhost",
-        "dbname": "lit_db",
-        "user": "postgres",
-        "password": "123456",
-        "port": 5432,
+        "host": os.getenv("PGHOST", "localhost"),
+        "dbname": os.getenv("PGDATABASE", "lit_db"),
+        "user": os.getenv("PGUSER", "postgres"),
+        "password": _local_pw,
+        "port": int(os.getenv("PGPORT", "5432")),
     }
-    DB_URL = "postgresql+psycopg2://postgres:123456@localhost:5432/lit_db"
+    DB_URL = (
+        f"postgresql+psycopg2://{DB_CONFIG['user']}:{_local_pw}"
+        f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
+    )
 
 # Output dirs — env-driven so they match the app's MLAdapter (config.py
 # ml_results_dir / ml_artifacts_dir). On Azure these should point at a mounted

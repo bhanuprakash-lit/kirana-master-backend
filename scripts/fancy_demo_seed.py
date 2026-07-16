@@ -42,11 +42,9 @@ USER_ID = 83  # gurumurthy upputuri
 REG_DATE = date(2026, 6, 25)
 TODAY = date(2026, 6, 30)
 
-DB_URL = os.environ.get(
-    "AZURE_DB_URL",
-    "host=psql-lohiya-kirana.postgres.database.azure.com port=5432 "
-    "dbname=db-kirana-dev user=psqladmin password=Lohiya@2026 sslmode=require",
-)
+DB_URL = os.environ.get("AZURE_DB_URL") or os.environ.get("DATABASE_URL")
+if not DB_URL:
+    raise SystemExit("Set AZURE_DB_URL (or DATABASE_URL) — no hardcoded DB credentials.")
 
 MANIFEST_PATH = os.path.join(os.path.dirname(__file__), "fancy_demo_manifest.json")
 

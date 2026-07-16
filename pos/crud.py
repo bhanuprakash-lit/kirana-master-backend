@@ -335,6 +335,10 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
             db.rollback()
             raise HTTPException(status_code=404, detail=f"Product {item.product_id} not found")
 
+        # V2 — services sell as flagged product rows with NO stock: skip the
+        # stock pre-check entirely (the DB sale trigger skips them too).
+        is_service = bool(getattr(product, "is_service", False) or False)
+
         # F2: real (non-implicit) variants track their own stock on
         # product_variant.stock; grocery / implicit variants use the
         # product-level inventory table exactly as before.
@@ -344,9 +348,13 @@ def create_order(db: Session, order: OrderCreate, user_id: int, store_id: int) -
                 "SELECT stock, is_implicit FROM kirana_oltp.product_variant "
                 "WHERE variant_id = :vid AND product_id = :pid"
             ), {"vid": item.variant_id, "pid": item.product_id}).first()
-        use_variant_stock = variant_row is not None and not variant_row[1]
+        use_variant_stock = (
+            variant_row is not None and not variant_row[1] and not is_service
+        )
 
-        if use_variant_stock:
+        if is_service:
+            pass  # no inventory to validate or decrement
+        elif use_variant_stock:
             if float(variant_row[0]) < item.quantity:
                 db.rollback()
                 raise HTTPException(

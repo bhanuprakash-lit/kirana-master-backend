@@ -97,14 +97,28 @@ class WhatsAppSessionStore:
             conn.commit()
         return self.get(phone)
 
+    # Columns update() is allowed to write. Column names become raw SQL
+    # identifiers in the SET clause, so they MUST come from this fixed set —
+    # never from arbitrary kwargs keys (SAST Finding 05: this is the most
+    # externally-facing module, and a webhook-derived key would otherwise
+    # become an injected identifier).
+    _UPDATABLE = {
+        "state", "language", "store_id", "owner_name",
+        "store_name", "user_number", "last_message_at",
+    }
+
     def update(self, phone: str, **kwargs):
-        if not kwargs:
+        clean = {k: v for k, v in kwargs.items() if k in self._UPDATABLE}
+        unknown = set(kwargs) - self._UPDATABLE
+        if unknown:
+            raise ValueError(f"wa_sessions has no updatable column(s): {sorted(unknown)}")
+        if not clean:
             return
         phone = self.normalize_phone(phone)
         self.get(phone)
-        kwargs["updated_at"] = datetime.now(timezone.utc)
-        sets   = ", ".join(f"{k} = :{k}" for k in kwargs)
-        params = {"phone": phone, **kwargs}
+        clean["updated_at"] = datetime.now(timezone.utc)
+        sets   = ", ".join(f"{k} = :{k}" for k in clean)
+        params = {"phone": phone, **clean}
         sql    = f"UPDATE wa_sessions SET {sets} WHERE phone = :phone"
         with self._conn() as conn:
             conn.execute(text(sql), params)

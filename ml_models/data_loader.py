@@ -44,8 +44,14 @@ def _q(sql: str, conn=None) -> pd.DataFrame:
 
 
 def _in(store_ids: list[int]) -> str:
-    """Format store_ids list as SQL IN clause content: '27' or '27,28,29'."""
-    return ",".join(str(s) for s in store_ids)
+    """Format store_ids list as SQL IN clause content: '27' or '27,28,29'.
+
+    Every element is coerced to int before it reaches the query text (SAST
+    Finding 03): the IN-lists are string-built into SQL, so a non-integer
+    store id would otherwise be an injection surface if this helper is ever
+    reused in a request-scoped path. int() raises on anything non-numeric.
+    """
+    return ",".join(str(int(s)) for s in store_ids)
 
 
 # ─── Active store discovery ───────────────────────────────────────────────────

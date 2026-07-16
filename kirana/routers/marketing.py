@@ -101,6 +101,9 @@ async def toggle_campaign(
 async def get_referral_token(
     request: Request, body: ReferralTokenRequest, user: dict = Depends(_auth)
 ):
+    # IDOR guard: a store-scoped user may only mint tokens for their own store.
+    if user.get("role") != "admin" and user.get("store_id") != body.store_id:
+        raise HTTPException(status_code=403, detail="Access denied to this store")
     result = _svc(request).get_or_create_referral_token(
         body.store_id, body.customer_id, body.campaign_id
     )
@@ -134,6 +137,9 @@ async def process_referral(
 async def get_vouchers(
     request: Request, customer_id: int, store_id: int, user: dict = Depends(_auth)
 ):
+    # IDOR guard: only the owning store (or admin) may read its vouchers.
+    if user.get("role") != "admin" and user.get("store_id") != store_id:
+        raise HTTPException(status_code=403, detail="Access denied to this store")
     return {"vouchers": _svc(request).get_pending_vouchers(customer_id, store_id)}
 
 
