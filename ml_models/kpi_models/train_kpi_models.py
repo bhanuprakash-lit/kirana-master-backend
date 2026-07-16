@@ -57,8 +57,14 @@ def _db_config_from_url(url: str) -> dict:
     return cfg
 
 _db_url = os.getenv("DATABASE_URL")
+# Credentials from the environment only — never a hardcoded default password
+# (SAST Finding 01). Local dev uses standard libpq PG* vars.
 DB = _db_config_from_url(_db_url) if _db_url else dict(
-    host="localhost", dbname="lit_db", user="postgres", password="123456"
+    host=os.getenv("PGHOST", "localhost"),
+    dbname=os.getenv("PGDATABASE", "lit_db"),
+    user=os.getenv("PGUSER", "postgres"),
+    password=os.getenv("PGPASSWORD", ""),
+    port=int(os.getenv("PGPORT", "5432")),
 )
 ARTIFACTS = os.getenv(
     "ML_KPI_ARTIFACTS_DIR",
@@ -76,9 +82,9 @@ def _conn():
     return psycopg2.connect(**DB)
 
 
-def _q(sql: str, **kwargs) -> pd.DataFrame:
+def _q(sql: str, params=None, **kwargs) -> pd.DataFrame:
     conn = _conn()
-    df = pd.read_sql(sql, conn)
+    df = pd.read_sql(sql, conn, params=params)
     conn.close()
     return df
 
@@ -301,20 +307,23 @@ def train_new_product_trial():
 def train_shrinkage_anomaly():
     from datetime import date, timedelta
     log.info("\n[4/5] Training Shrinkage Anomaly Detector")
-    opening_date = (date.today() - timedelta(days=30)).isoformat()
-    closing_date = (date.today() - timedelta(days=1)).isoformat()
+    # Bound as parameters, not interpolated (SAST Finding 02). These are
+    # internal date objects today; binding keeps them injection-proof if a
+    # caller ever passes a value derived from config/request input.
+    opening_date = date.today() - timedelta(days=30)
+    closing_date = date.today() - timedelta(days=1)
 
-    df = _q(f"""
+    df = _q("""
     WITH opening AS (
         SELECT DISTINCT ON (store_id, product_id) store_id, product_id, stock_on_hand
         FROM kirana_oltp.inventory_snapshots
-        WHERE snapshot_date >= '{opening_date}'
+        WHERE snapshot_date >= %(opening)s
         ORDER BY store_id, product_id, snapshot_date ASC
     ),
     closing AS (
         SELECT DISTINCT ON (store_id, product_id) store_id, product_id, stock_on_hand
         FROM kirana_oltp.inventory_snapshots
-        WHERE snapshot_date <= '{closing_date}'
+        WHERE snapshot_date <= %(closing)s
         ORDER BY store_id, product_id, snapshot_date DESC
     ),
     moves AS (
@@ -322,7 +331,7 @@ def train_shrinkage_anomaly():
                SUM(CASE WHEN reason='purchase' THEN change_quantity ELSE 0 END) AS purchased,
                SUM(CASE WHEN reason='sale' THEN ABS(change_quantity) ELSE 0 END) AS sold
         FROM kirana_oltp.inventory_movements
-        WHERE created_at BETWEEN '{opening_date}' AND '{closing_date}'
+        WHERE created_at BETWEEN %(opening)s AND %(closing)s
         GROUP BY store_id, product_id
     )
     SELECT o.store_id, o.product_id,
@@ -337,7 +346,7 @@ def train_shrinkage_anomaly():
     JOIN closing cl USING (store_id, product_id)
     LEFT JOIN moves m USING (store_id, product_id)
     WHERE (o.stock_on_hand + COALESCE(m.purchased,0) - COALESCE(m.sold,0)) - cl.stock_on_hand >= 0
-    """)
+    """, params={"opening": opening_date, "closing": closing_date})
 
     if df.empty or len(df) < 20:
         log.warning("  Not enough data — skipping")

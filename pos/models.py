@@ -56,6 +56,8 @@ class KiranaProduct(POSBase):
     image_url     = Column(String)
     hsn_code      = Column(String)   # F3 — GST HSN/SAC code
     gst_rate      = Column(Numeric)  # F3 — per-product GST %
+    # V2 — service sold as a product row (no stock, sale trigger skips it)
+    is_service    = Column(Boolean, default=False)
     created_at    = Column(DateTime)
 
     category    = relationship("KiranaCategory", back_populates="products")

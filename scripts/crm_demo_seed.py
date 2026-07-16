@@ -24,11 +24,9 @@ from datetime import date, datetime, timedelta
 import psycopg2
 import psycopg2.extras
 
-DB_URL = os.environ.get(
-    "AZURE_DB_URL",
-    "host=psql-lohiya-kirana.postgres.database.azure.com port=5432 "
-    "dbname=db-kirana-dev user=psqladmin password=Lohiya@2026 sslmode=require",
-)
+DB_URL = os.environ.get("AZURE_DB_URL") or os.environ.get("DATABASE_URL")
+if not DB_URL:
+    raise SystemExit("Set AZURE_DB_URL (or DATABASE_URL) — no hardcoded DB credentials.")
 
 SOURCE_STORE_ID = 25
 TARGET_STORE_IDS = [22, 23, 24, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 48, 50]

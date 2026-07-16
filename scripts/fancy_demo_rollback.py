@@ -13,18 +13,45 @@ import os
 
 import psycopg2
 
-DB_URL = os.environ.get(
-    "AZURE_DB_URL",
-    "host=psql-lohiya-kirana.postgres.database.azure.com port=5432 "
-    "dbname=db-kirana-dev user=psqladmin password=Lohiya@2026 sslmode=require",
-)
+# Connection string comes from the environment — never a hardcoded DB
+# password in source (a committed credential is a real leak; the Azure
+# password that used to live here has been removed and must be rotated).
+DB_URL = os.environ.get("AZURE_DB_URL") or os.environ.get("DATABASE_URL")
+if not DB_URL:
+    raise SystemExit("Set AZURE_DB_URL (or DATABASE_URL) to run this rollback.")
 
 MANIFEST_PATH = os.path.join(os.path.dirname(__file__), "fancy_demo_manifest.json")
+
+# Only these (table, id_col) pairs may be targeted by delete_ids — the table
+# and id column become raw SQL identifiers (not bindable), so they must come
+# from this closed, code-defined set, never from arguments (SAST Finding 06:
+# a destructive DELETE with a dynamic target table).
+_DELETABLE = {
+    ("basket", "basket_id"),
+    ("coupon", "coupon_id"),
+    ("crm_deals", "deal_id"),
+    ("customer", "customer_id"),
+    ("footfall", "footfall_id"),
+    ("inventory", "inventory_id"),
+    ("inventory_movements", "movement_id"),
+    ("job_card", "job_id"),
+    ("khata", "khata_id"),
+    ("loyalty_transaction", "txn_id"),
+    ("orders", "order_id"),
+    ("pricing", "pricing_id"),
+    ("product", "product_id"),
+    ("purchases", "purchase_id"),
+    ("staff", "staff_id"),
+    ("staff_attendance", "id"),
+    ("supplier", "supplier_id"),
+}
 
 
 def delete_ids(cur, table: str, id_col: str, ids: list, label: str = ""):
     if not ids:
         return 0
+    if (table, id_col) not in _DELETABLE:
+        raise ValueError(f"Refusing DELETE on non-allowlisted target: {table}.{id_col}")
     cur.execute(f"DELETE FROM kirana_oltp.{table} WHERE {id_col} = ANY(%s)", (ids,))
     n = cur.rowcount
     print(f"  {label or table}: removed {n} rows")
