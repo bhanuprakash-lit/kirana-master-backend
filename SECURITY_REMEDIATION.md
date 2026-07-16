@@ -21,7 +21,7 @@ items marked **false positive** were verified in code and needed no change.
 
 | Finding | Verdict | Fix |
 |---|---|---|
-| **F01 — Hardcoded DB credentials (Critical)** | **Confirmed + expanded** | Removed the hardcoded `123456` from `ml_models/config.py`, `ml_models/kpi_models/train_kpi_models.py`, root `config.py`, and `db_generation/ensure_full_schema.py` (env-only, `PG*` fallbacks, no literal password). **Also found and removed a live Azure DB password (`Lohiya@2026`) hardcoded in 6 ops/demo scripts** — those now require `AZURE_DB_URL`/`DATABASE_URL`. **⚠ The exposed credentials must be ROTATED** (they are assumed compromised — present in git history). |
+| **F01 — Hardcoded DB credentials (Critical)** | **Confirmed + expanded** | Removed the hardcoded weak local password from `ml_models/config.py`, `ml_models/kpi_models/train_kpi_models.py`, root `config.py`, and `db_generation/ensure_full_schema.py` (env-only, `PG*` fallbacks, no literal password). **Also found and removed a live Azure dev DB password hardcoded in 6 ops/demo scripts** — those now require `AZURE_DB_URL`/`DATABASE_URL`. **⚠ Both exposed credentials must be ROTATED** (assumed compromised — present in git history). Actual values are intentionally not reproduced here. |
 | **F02 — Unparameterized dates in shrinkage query** | **Confirmed** | Bound `opening_date`/`closing_date` as `%(name)s` params via `_q(..., params=...)`. |
 | **F03 — String-built store_id IN-lists (×10)** | **Confirmed** | `data_loader._in()` now `int()`-coerces every element before it reaches SQL text (covers all 10 sites; raises on non-numeric). |
 | F04 — Dynamic product table name | **False positive** | `_product_tbl()` returns one of two hardcoded literal table names via a set-membership check; `store_id` is never interpolated into an identifier. |
@@ -31,6 +31,6 @@ items marked **false positive** were verified in code and needed no change.
 
 ## Required operator follow-ups (not code)
 
-1. **Rotate** the PostgreSQL passwords that were in source (`123456` local, `Lohiya@2026` Azure dev) in every environment — assume exposed via git history.
+1. **Rotate** the PostgreSQL passwords that were in source (the weak local default and the Azure dev password) in every environment — assume exposed via git history. `.claude/settings.local.json` on dev machines also carries the Azure password in example commands; scrub it there too.
 2. Add a git-history secret scanner (gitleaks / trufflehog) to CI to prevent re-introduction.
 3. Consider purging the leaked secrets from git history (BFG / `git filter-repo`).
