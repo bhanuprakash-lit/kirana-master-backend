@@ -215,8 +215,13 @@ class KiranaService:
         )
 
     def bootstrap(self):
-        self.ml.refresh()
-        logger.info("Kirana service bootstrapped")
+        # ML recommendation frames are loaded lazily on first use (get_frame /
+        # get_ml_state call refresh()), NOT at startup: eager-loading the ~170k
+        # row reorder CSV + building the joined state peaked over the 1Gi
+        # container limit and OOM-killed the process before uvicorn could bind
+        # the port, crash-looping the whole app. Deferring lets the service
+        # boot and serve non-ML traffic immediately.
+        logger.info("Kirana service bootstrapped (ML frames deferred to first use)")
 
     # ── Health ────────────────────────────────────────────────────────────────
 

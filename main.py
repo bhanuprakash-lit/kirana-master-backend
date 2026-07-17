@@ -106,7 +106,9 @@ async def lifespan(app: FastAPI):
     from kirana.service import KiranaService
     kirana_svc = KiranaService(db_conn=engine, settings=s)
     kirana_svc.bootstrap()
-    logger.info("Kirana AI service bootstrapped — %d ML rows loaded", kirana_svc.ml.get_frame().shape[0])
+    # NB: do not call get_frame() here — it would trigger the deferred ML load
+    # at startup and reintroduce the boot-time OOM this deferral fixes.
+    logger.info("Kirana AI service bootstrapped (ML frames load on first use)")
 
     # Trigger schema bootstrap (adds auth columns, migrates legacy public tables,
     # seeds store defaults) before any request handler runs.
