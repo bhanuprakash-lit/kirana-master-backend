@@ -49,12 +49,18 @@ ML_RESULT_FILES = [
 ]
 
 
-def _load(path: str, label: str) -> pd.DataFrame:
+def _load(path: str, label: str, usecols: set[str] | None = None) -> pd.DataFrame:
     if not os.path.exists(path):
         logger.warning("ML results file not found: %s — returning empty frame", path)
         return pd.DataFrame()
     try:
-        df = pd.read_csv(path)
+        # usecols keeps peak memory down on the large CSVs (the reorder set is
+        # ~170k rows): only the columns _build_ml_state actually reads are
+        # materialised. The lambda is tolerant of columns that aren't present.
+        read_kwargs: dict[str, Any] = {}
+        if usecols is not None:
+            read_kwargs["usecols"] = lambda c, _keep=usecols: c in _keep
+        df = pd.read_csv(path, **read_kwargs)
         logger.info("Loaded %s: %d rows", label, len(df))
         return df
     except Exception as exc:
@@ -234,11 +240,22 @@ class MLAdapter:
 
     # ── Refresh ──────────────────────────────────────────────────────────────
 
+    # Only the columns _build_ml_state reads from the (large) reorder CSV.
+    # Loading just these instead of the full ~170k-row × all-columns frame is
+    # what keeps startup memory under the 1Gi container limit.
+    _REORDER_COLS = {
+        "store_id", "product_id", "current_stock", "avg_daily_sales",
+        "reorder_point", "predicted_reorder_qty", "needs_reorder",
+        "days_until_stockout", "lead_time_days", "eoq",
+        "name", "sku", "category_name",
+    }
+
     def refresh(self) -> None:
         stockout = _load(self._path("stockout_predictions.csv"), "stockout")
         margin   = _load(self._path("margin_predictions.csv"),   "margin")
         velocity = _load(self._path("velocity_predictions.csv"), "velocity")
-        reorder  = _load(self._path("reorder_recommendations.csv"), "reorder")
+        reorder  = _load(self._path("reorder_recommendations.csv"), "reorder",
+                         usecols=self._REORDER_COLS)
         deadstk  = _load(self._path("deadstock_predictions.csv"), "deadstock")
 
         ml_state = self._build_ml_state(stockout, reorder, velocity, margin, deadstk)
