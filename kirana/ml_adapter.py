@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import time
+import math
 import logging
 from typing import Any
 
@@ -25,6 +26,27 @@ from sqlalchemy.engine import Engine
 from sqlalchemy import text
 
 logger = logging.getLogger("kirana.ml_adapter")
+
+
+def _json_safe(d: dict) -> dict:
+    """Coerce a row dict to JSON-serialisable primitives — numpy scalars to
+    native types, NaN/inf to None — so it can be stored as JSONB."""
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        if v is None:
+            out[k] = None
+        elif isinstance(v, np.integer):
+            out[k] = int(v)
+        elif isinstance(v, np.bool_):
+            out[k] = bool(v)
+        elif isinstance(v, (float, np.floating)):
+            fv = float(v)
+            out[k] = None if (math.isnan(fv) or math.isinf(fv)) else fv
+        elif isinstance(v, np.ndarray):
+            out[k] = v.tolist()
+        else:
+            out[k] = v
+    return out
 
 
 # Stockout cards below this avg_units_sold are suppressed — a SKU that
@@ -250,7 +272,16 @@ class MLAdapter:
         "name", "sku", "category_name",
     }
 
-    def refresh(self) -> None:
+    # ── CSV → recommendations computation (OFFLINE, memory-heavy) ─────────────
+    #
+    # This is the expensive step (loads the ~170k-row reorder CSV + joins +
+    # row-wise build). It runs in `load_to_db()` — invoked by the training
+    # pipeline where the CSVs live and RAM is generous — NOT in the API
+    # request path. The API only ever queries the tables per store, so it can
+    # never OOM on this data (which is what took the 1Gi container down).
+
+    def _compute_from_csvs(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Build (ml_state signals, recommendation rows) from the result CSVs."""
         stockout = _load(self._path("stockout_predictions.csv"), "stockout")
         margin   = _load(self._path("margin_predictions.csv"),   "margin")
         velocity = _load(self._path("velocity_predictions.csv"), "velocity")
@@ -259,10 +290,8 @@ class MLAdapter:
         deadstk  = _load(self._path("deadstock_predictions.csv"), "deadstock")
 
         ml_state = self._build_ml_state(stockout, reorder, velocity, margin, deadstk)
-        self._ml_state = ml_state
 
         rows: list[dict[str, Any]] = []
-
         for _, r in ml_state.iterrows():
             common = {
                 "store_id":      int(r["store_id"]),
@@ -273,58 +302,155 @@ class MLAdapter:
             sig = self._row_signal(r)
             avg_velocity = sig["avg_units_sold"] or sig["avg_daily_sales"]
 
-            # ── Stockout: only when 7d-prob is high AND velocity is non-trivial
             prob_7d = sig["prob_stockout_7d"]
             if prob_7d >= 0.5 and avg_velocity >= MIN_VELOCITY_FOR_STOCKOUT:
-                rows.append({**common, **sig,
-                             "recommendation_type": "stockout_risk"})
+                rows.append({**common, **sig, "recommendation_type": "stockout_risk"})
 
-            # ── Reorder: needs_reorder=1 AND qty>0 (rule from optimizer)
             qty   = float(r.get("predicted_reorder_qty") or 0)
             needs = int(r.get("needs_reorder") or 0)
             if needs == 1 and qty > 0:
-                rows.append({**common, **sig,
-                             "recommendation_type": "reorder_now",
+                rows.append({**common, **sig, "recommendation_type": "reorder_now",
                              "reorder_qty": qty})
 
-            # ── Fast moving
             if int(r.get("is_fast_moving") or 0) == 1:
-                rows.append({**common, **sig,
-                             "recommendation_type": "fast_moving"})
+                rows.append({**common, **sig, "recommendation_type": "fast_moving"})
 
-            # ── High margin / profit opportunity
             if int(r.get("is_high_margin") or 0) == 1:
-                rows.append({**common, **sig,
-                             "recommendation_type": "profit_opportunity"})
+                rows.append({**common, **sig, "recommendation_type": "profit_opportunity"})
 
-            # ── Dead stock — model flag PLUS velocity sanity check.
-            # IsolationForest fallback can flag fast-movers as anomalous;
-            # require the velocity to actually be near zero before showing it.
             recent_velocity = sig["avg_units_sold"]
             if (int(r.get("is_dead_stock") or 0) == 1 and
                     recent_velocity <= MAX_VELOCITY_FOR_DEADSTOCK and
                     int(r.get("is_fast_moving") or 0) == 0):
-                rows.append({**common, **sig,
-                             "recommendation_type": "dead_stock"})
+                rows.append({**common, **sig, "recommendation_type": "dead_stock"})
 
         df = pd.DataFrame(rows) if rows else pd.DataFrame()
-
         if not df.empty:
-            before = len(df)
             df = df.drop_duplicates(
-                subset=["store_id", "sku_id", "recommendation_type"],
-                keep="first",
-            )
-            if before != len(df):
-                logger.info("MLAdapter de-duped %d duplicate rows", before - len(df))
+                subset=["store_id", "sku_id", "recommendation_type"], keep="first")
             df = df.replace([float("inf"), float("-inf")], None)
             df = df.where(df.notna(), None)
+        return ml_state, df
 
-        self._frame = df
-        logger.info(
-            "MLAdapter refresh complete: %d recommendation rows across %d stores",
-            len(df), df["store_id"].nunique() if not df.empty else 0,
-        )
+    def load_to_db(self) -> dict:
+        """OFFLINE loader: compute recommendations + signals from the CSVs and
+        write them into Postgres (kirana_oltp.ml_recommendations / ml_signals),
+        replacing the previous snapshot. Run this from the training pipeline
+        (after the CSVs are generated) — never in the API request path.
+        Returns row counts. Requires an engine."""
+        if self._engine is None:
+            raise RuntimeError("load_to_db needs a database engine")
+        import json
+        ml_state, reco = self._compute_from_csvs()
+
+        reco_records: list[dict] = []
+        for row in reco.to_dict("records"):
+            payload = {k: v for k, v in row.items()
+                       if k not in ("store_id", "sku_id", "recommendation_type",
+                                    "product_name", "category_name")}
+            reco_records.append({
+                "store_id": int(row["store_id"]), "sku_id": int(row["sku_id"]),
+                "rtype": str(row["recommendation_type"]),
+                "product_name": row.get("product_name") or "",
+                "category_name": row.get("category_name") or "",
+                "payload": json.dumps(_json_safe(payload)),
+            })
+
+        sig_records: list[dict] = []
+        if not ml_state.empty:
+            for row in ml_state.to_dict("records"):
+                sig_records.append({
+                    "store_id": int(row["store_id"]),
+                    "product_id": int(row["product_id"]),
+                    "payload": json.dumps(_json_safe(row)),
+                })
+
+        with self._engine.begin() as conn:
+            self._ensure_tables(conn)
+            conn.execute(text("TRUNCATE kirana_oltp.ml_recommendations"))
+            conn.execute(text("TRUNCATE kirana_oltp.ml_signals"))
+            if reco_records:
+                conn.execute(text("""
+                    INSERT INTO kirana_oltp.ml_recommendations
+                        (store_id, sku_id, recommendation_type, product_name,
+                         category_name, payload)
+                    VALUES (:store_id, :sku_id, :rtype, :product_name,
+                            :category_name, CAST(:payload AS JSONB))
+                """), reco_records)
+            if sig_records:
+                # chunked insert keeps the loader's own memory bounded on the
+                # large signals set.
+                for i in range(0, len(sig_records), 5000):
+                    conn.execute(text("""
+                        INSERT INTO kirana_oltp.ml_signals (store_id, product_id, payload)
+                        VALUES (:store_id, :product_id, CAST(:payload AS JSONB))
+                    """), sig_records[i:i + 5000])
+        # Invalidate the API-side cache so the next read picks up the new data.
+        self._frame = None
+        logger.info("MLAdapter.load_to_db: wrote %d recommendations, %d signals",
+                    len(reco_records), len(sig_records))
+        return {"recommendations": len(reco_records), "signals": len(sig_records)}
+
+    @staticmethod
+    def _ensure_tables(conn) -> None:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS kirana_oltp.ml_recommendations (
+                store_id            BIGINT NOT NULL,
+                sku_id              BIGINT NOT NULL,
+                recommendation_type TEXT   NOT NULL,
+                product_name        TEXT,
+                category_name       TEXT,
+                payload             JSONB  NOT NULL DEFAULT '{}',
+                updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (store_id, sku_id, recommendation_type)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ml_reco_store "
+                          "ON kirana_oltp.ml_recommendations(store_id)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS kirana_oltp.ml_signals (
+                store_id   BIGINT NOT NULL,
+                product_id BIGINT NOT NULL,
+                payload    JSONB  NOT NULL DEFAULT '{}',
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (store_id, product_id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ml_signals_store "
+                          "ON kirana_oltp.ml_signals(store_id)"))
+
+    # ── DB-backed reads (API path — light, per store, never loads CSVs) ───────
+
+    def _read_recos(self, store_id: int | None = None) -> pd.DataFrame:
+        """Recommendation rows from Postgres as the frame consumers expect
+        (payload JSONB unpacked back into columns). Empty frame if the table
+        doesn't exist yet (before the first loader run) — graceful, no error."""
+        if self._engine is None:
+            return pd.DataFrame()
+        sql = ("SELECT store_id, sku_id, recommendation_type, product_name, "
+               "category_name, payload FROM kirana_oltp.ml_recommendations")
+        params: dict[str, Any] = {}
+        if store_id is not None:
+            sql += " WHERE store_id = :sid"
+            params["sid"] = int(store_id)
+        try:
+            with self._engine.connect() as conn:
+                rows = conn.execute(text(sql), params).mappings().all()
+        except Exception as exc:  # table missing / DB hiccup → degrade to empty
+            logger.warning("ml_recommendations read failed (%s) — empty", exc)
+            return pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        records = []
+        for r in rows:
+            rec = {
+                "store_id": r["store_id"], "sku_id": r["sku_id"],
+                "recommendation_type": r["recommendation_type"],
+                "product_name": r["product_name"], "category_name": r["category_name"],
+            }
+            rec.update(r["payload"] or {})
+            records.append(rec)
+        return pd.DataFrame(records)
 
         # Freshness guard: warn loudly if any model file is missing or stale, so
         # degraded ML output isn't silent.
@@ -365,82 +491,105 @@ class MLAdapter:
     def flags_for_store(self, store_id: int) -> dict[int, list[str]]:
         """{product_id: [recommendation_type, ...]} for one store — drives the
         ML flag tags (fast_moving / reorder_now / dead_stock / ...) on items."""
-        df = self.get_frame()
-        if df is None or df.empty or "store_id" not in df.columns:
+        df = self._read_recos(store_id)
+        if df.empty or "sku_id" not in df.columns:
             return {}
-        sub = df[df["store_id"] == store_id]
         out: dict[int, list[str]] = {}
-        for _, r in sub.iterrows():
-            pid = int(r["sku_id"])
-            out.setdefault(pid, []).append(str(r["recommendation_type"]))
+        for _, r in df.iterrows():
+            out.setdefault(int(r["sku_id"]), []).append(str(r["recommendation_type"]))
         return out
 
+    def refresh(self) -> None:
+        """API-side refresh = drop the cached frame so the next read re-queries
+        Postgres. It does NOT recompute from the CSVs (that's load_to_db(), run
+        offline in the training pipeline) — the whole point of the DB backing
+        is that the API never loads the large CSVs into memory."""
+        self._frame = None
+
     def get_frame(self) -> pd.DataFrame:
+        """All recommendation rows (the small, already-filtered set) from
+        Postgres, cached for the request lifetime."""
         if self._frame is None:
-            self.refresh()
+            self._frame = self._read_recos()
         return self._frame
 
-    def get_ml_state(self) -> pd.DataFrame | None:
-        if self._ml_state is None:
-            self.refresh()
-        return self._ml_state
+    def _read_signals(self, store_id: int) -> pd.DataFrame:
+        """One store's ml_state signal rows from Postgres (never all stores —
+        the full signals set is ~170k rows and would reintroduce the OOM)."""
+        if self._engine is None:
+            return pd.DataFrame()
+        try:
+            with self._engine.connect() as conn:
+                rows = conn.execute(text(
+                    "SELECT store_id, product_id, payload FROM kirana_oltp.ml_signals "
+                    "WHERE store_id = :sid"), {"sid": int(store_id)}).mappings().all()
+        except Exception as exc:
+            logger.warning("ml_signals read failed (%s) — empty", exc)
+            return pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        recs = []
+        for r in rows:
+            rec = {"store_id": r["store_id"], "product_id": r["product_id"]}
+            rec.update(r["payload"] or {})
+            recs.append(rec)
+        return pd.DataFrame(recs)
+
+    def get_ml_state(self, store_id: int | None = None) -> pd.DataFrame | None:
+        """Signal frame for ONE store (pass store_id). Returns empty when no
+        store is given — callers must scope to a store so the full 170k-row
+        signals set never loads at once."""
+        if store_id is None:
+            return pd.DataFrame()
+        return self._read_signals(int(store_id))
 
     # ── Quick summary for a single store ──────────────────────────────────────
 
     def store_summary(self, store_id: int) -> dict:
-        df = self.get_frame()
+        df = self._read_recos(store_id)
         if df.empty:
             return {"store_id": store_id, "stockout_risk": 0, "reorder": 0,
                     "fast_moving": 0, "profit": 0, "dead_stock": 0}
-        sdf = df[df["store_id"] == store_id]
+        rt = df["recommendation_type"]
         return {
             "store_id":      store_id,
-            "stockout_risk": int((sdf["recommendation_type"] == "stockout_risk").sum()),
-            "reorder":       int((sdf["recommendation_type"] == "reorder_now").sum()),
-            "fast_moving":   int((sdf["recommendation_type"] == "fast_moving").sum()),
-            "profit":        int((sdf["recommendation_type"] == "profit_opportunity").sum()),
-            "dead_stock":    int((sdf["recommendation_type"] == "dead_stock").sum()),
+            "stockout_risk": int((rt == "stockout_risk").sum()),
+            "reorder":       int((rt == "reorder_now").sum()),
+            "fast_moving":   int((rt == "fast_moving").sum()),
+            "profit":        int((rt == "profit_opportunity").sum()),
+            "dead_stock":    int((rt == "dead_stock").sum()),
         }
 
     # ── Helper queries used by other modules ──────────────────────────────────
 
-    def get_stockout_products(self, store_id: int | None = None, top_n: int = 10) -> list[dict]:
-        df = self.get_frame()
-        if df.empty:
+    def _top(self, rtype: str, store_id: int | None, top_n: int,
+             sort_col: str, cols: list[str]) -> list[dict]:
+        df = self._read_recos(store_id)
+        if df.empty or "recommendation_type" not in df.columns:
             return []
-        mask = df["recommendation_type"] == "stockout_risk"
-        if store_id:
-            mask &= df["store_id"] == store_id
-        sub = df[mask].nlargest(top_n, "prob_stockout_7d")
-        return sub[["sku_id", "product_name", "category_name",
-                    "prob_stockout_7d", "days_to_stockout"]].to_dict("records")
+        sub = df[df["recommendation_type"] == rtype]
+        if sub.empty:
+            return []
+        if sort_col in sub.columns:
+            sub = sub.nlargest(top_n, sort_col)
+        else:
+            sub = sub.head(top_n)
+        keep = [c for c in cols if c in sub.columns]
+        return sub[keep].to_dict("records")
+
+    def get_stockout_products(self, store_id: int | None = None, top_n: int = 10) -> list[dict]:
+        return self._top("stockout_risk", store_id, top_n, "prob_stockout_7d",
+                         ["sku_id", "product_name", "category_name",
+                          "prob_stockout_7d", "days_to_stockout"])
 
     def get_fast_moving(self, store_id: int | None = None, top_n: int = 10) -> list[dict]:
-        df = self.get_frame()
-        if df.empty:
-            return []
-        mask = df["recommendation_type"] == "fast_moving"
-        if store_id:
-            mask &= df["store_id"] == store_id
-        sub = df[mask].nlargest(top_n, "forecast_demand")
-        return sub[["sku_id", "product_name", "category_name", "forecast_demand"]].to_dict("records")
+        return self._top("fast_moving", store_id, top_n, "forecast_demand",
+                         ["sku_id", "product_name", "category_name", "forecast_demand"])
 
     def get_high_margin(self, store_id: int | None = None, top_n: int = 10) -> list[dict]:
-        df = self.get_frame()
-        if df.empty:
-            return []
-        mask = df["recommendation_type"] == "profit_opportunity"
-        if store_id:
-            mask &= df["store_id"] == store_id
-        sub = df[mask].nlargest(top_n, "effective_margin")
-        return sub[["sku_id", "product_name", "category_name", "effective_margin"]].to_dict("records")
+        return self._top("profit_opportunity", store_id, top_n, "effective_margin",
+                         ["sku_id", "product_name", "category_name", "effective_margin"])
 
     def get_dead_stock(self, store_id: int | None = None, top_n: int = 10) -> list[dict]:
-        df = self.get_frame()
-        if df.empty:
-            return []
-        mask = df["recommendation_type"] == "dead_stock"
-        if store_id:
-            mask &= df["store_id"] == store_id
-        sub = df[mask].nlargest(top_n, "current_stock")
-        return sub[["sku_id", "product_name", "category_name", "current_stock"]].to_dict("records")
+        return self._top("dead_stock", store_id, top_n, "current_stock",
+                         ["sku_id", "product_name", "category_name", "current_stock"])
