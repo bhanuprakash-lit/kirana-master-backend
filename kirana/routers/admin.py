@@ -67,6 +67,22 @@ async def ml_status(
     return svc.ml.freshness()
 
 
+@router.post("/admin/ml/reload-db")
+async def ml_reload_db(request: Request, user: dict = Depends(_auth)):
+    """Recompute recommendations from the prediction CSVs and load them into
+    Postgres (ml_recommendations / ml_signals), which the API then serves per
+    store. This is the memory-heavy CSV read — only run it where the CSVs are
+    small or the container has headroom (it normally runs inside training via
+    train_all.py). Admin-only."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    try:
+        counts = _svc(request).ml.load_to_db()
+        return {"loaded": True, **counts}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"ML DB load failed: {exc}")
+
+
 @router.post("/admin/ml/retrain")
 async def ml_retrain(request: Request, user: dict = Depends(_auth)):
     """Kick off model retraining (ml_models/train_all.py) in the background.

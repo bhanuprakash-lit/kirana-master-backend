@@ -170,6 +170,23 @@ def main():
     reorder_inf.to_csv(os.path.join(RESULTS_DIR, "reorder_recommendations.csv"), index=False)
     print(f"  reorder_recommendations.csv  ({len(reorder_inf):,} rows)")
 
+    # ── Load recommendations into Postgres ────────────────────────────────────
+    # The API serves recommendations by querying these tables per store, so it
+    # never loads the large CSVs into memory (that took the 1Gi container down
+    # with an OOM). This heavy CSV→DB step runs HERE, in the training job,
+    # where there's ample RAM — not in the API request path.
+    try:
+        from sqlalchemy import create_engine
+        from config import DB_URL
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from kirana.ml_adapter import MLAdapter
+        _counts = MLAdapter(RESULTS_DIR, engine=create_engine(DB_URL)).load_to_db()
+        print(f"  Loaded into Postgres: {_counts}")
+    except Exception as _e:  # never fail training just because the DB load did
+        print(f"  WARNING: could not load recommendations into Postgres: {_e}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     banner("Training Complete")
     print(f"  Total time: {time.time()-t0:.1f}s")

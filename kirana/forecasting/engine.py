@@ -161,11 +161,12 @@ class ForecastEngine:
         }
 
     def _store_frame(self, store_id: int):
-        ml_state = self._ml.get_ml_state()
+        # Scoped to one store: the adapter queries Postgres for just this
+        # store's signals (the full set is ~170k rows and would OOM if loaded).
+        ml_state = self._ml.get_ml_state(store_id)
         if ml_state is None or ml_state.empty:
             return None
-        sub = ml_state[ml_state["store_id"] == store_id]
-        return sub if not sub.empty else None
+        return ml_state
 
     # ── Public API ────────────────────────────────────────────────────────────
 
