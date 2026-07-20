@@ -63,6 +63,7 @@ def test_settings():
         pro_price_inr=500,
         google_play_package_name="",
         google_play_credentials_json="",
+        apple_iap_shared_secret="",
         azure_storage_connection_string="",
         consent_audio_container="",
         onboarding_shelf_container="",

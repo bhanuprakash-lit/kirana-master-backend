@@ -304,14 +304,61 @@ async def mock_confirm_payment(
         raise HTTPException(status_code=400, detail="Payment confirmation failed")
 
 
+async def _verify_apple_receipt(receipt_data: str, shared_secret: str) -> None:
+    """Validate a StoreKit receipt via Apple's verifyReceipt endpoint.
+
+    Tries production first; on status 21007 (a sandbox receipt sent to prod)
+    retries the sandbox endpoint. This prod→sandbox fallback is Apple's
+    recommended flow and transparently handles both App Review (sandbox) and
+    live purchases. Raises HTTPException on any invalid/unconfirmed receipt.
+
+    `receipt_data` is the base64 app receipt the iOS `in_app_purchase` plugin
+    sends as `serverVerificationData` (purchase_token in our payload).
+    """
+    import httpx
+
+    payload = {
+        "receipt-data": receipt_data,
+        "password": shared_secret,
+        "exclude-old-transactions": True,
+    }
+    prod = "https://buy.itunes.apple.com/verifyReceipt"
+    sandbox = "https://sandbox.itunes.apple.com/verifyReceipt"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(prod, json=payload)
+            data = resp.json()
+            if data.get("status") == 21007:  # sandbox receipt → retry sandbox
+                resp = await client.post(sandbox, json=payload)
+                data = resp.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Apple verification error: {exc}"
+        ) from exc
+
+    if data.get("status") != 0:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Apple receipt validation failed (status {data.get('status')})",
+        )
+
+
 @router.post("/payment/verify-iap")
 async def verify_iap_payment(request: Request, user: dict = Depends(_auth)):
-    """Verify a Google Play IAP purchase and activate the subscription.
+    """Verify an in-app-purchase and activate the subscription.
 
-    Optional server-side verification with Google Play Developer API when
-    GOOGLE_PLAY_CREDENTIALS_JSON is set in .env. Without credentials, the
-    purchase token is trusted (acceptable for testing; add credentials before
-    going live).
+    Platform-aware (from the `platform` field, default "android" for legacy
+    clients):
+      • android → optional Google Play Developer API check (GOOGLE_PLAY_* env).
+      • ios     → optional Apple verifyReceipt check (APPLE_IAP_SHARED_SECRET env).
+    When the relevant credentials aren't configured the receipt is trusted
+    (acceptable for testing/review; configure before relying on it in prod).
+
+    Sending an Apple receipt to the Google verifier (or vice-versa) would fail,
+    so routing on `platform` is what keeps iOS purchases from breaking once Play
+    credentials are live.
     """
     sid = user.get("store_id")
     if sid is None:
@@ -321,6 +368,7 @@ async def verify_iap_payment(request: Request, user: dict = Depends(_auth)):
     tier = body.get("tier", "")
     product_id = body.get("product_id", "")
     purchase_token = body.get("purchase_token", "")
+    platform = (body.get("platform") or "android").lower()
 
     if tier not in ("basic", "pro"):
         raise HTTPException(status_code=400, detail="Invalid tier")
@@ -329,49 +377,55 @@ async def verify_iap_payment(request: Request, user: dict = Depends(_auth)):
 
     s = request.app.state.settings
 
-    # Optional: verify with Google Play Developer API
-    if s.google_play_credentials_json and s.google_play_package_name:
-        try:
-            import json as _json
-            from google.oauth2 import service_account as _sa
-            from googleapiclient.discovery import build as _build
+    if platform == "ios":
+        # Optional: verify with Apple's verifyReceipt (needs shared secret).
+        if s.apple_iap_shared_secret:
+            await _verify_apple_receipt(purchase_token, s.apple_iap_shared_secret)
+    else:
+        # Android — optional Google Play Developer API verification.
+        if s.google_play_credentials_json and s.google_play_package_name:
+            try:
+                import json as _json
+                from google.oauth2 import service_account as _sa
+                from googleapiclient.discovery import build as _build
 
-            creds_path = s.google_play_credentials_json
-            if not creds_path.startswith("{"):
-                with open(creds_path) as f:
-                    creds_data = _json.load(f)
-            else:
-                creds_data = _json.loads(creds_path)
+                creds_path = s.google_play_credentials_json
+                if not creds_path.startswith("{"):
+                    with open(creds_path) as f:
+                        creds_data = _json.load(f)
+                else:
+                    creds_data = _json.loads(creds_path)
 
-            creds = _sa.Credentials.from_service_account_info(
-                creds_data,
-                scopes=["https://www.googleapis.com/auth/androidpublisher"],
-            )
-            service = _build(
-                "androidpublisher", "v3", credentials=creds, cache_discovery=False
-            )
-            result = (
-                service.purchases()
-                .subscriptions()
-                .get(
-                    packageName=s.google_play_package_name,
-                    subscriptionId=product_id,
-                    token=purchase_token,
+                creds = _sa.Credentials.from_service_account_info(
+                    creds_data,
+                    scopes=["https://www.googleapis.com/auth/androidpublisher"],
                 )
-                .execute()
-            )
+                service = _build(
+                    "androidpublisher", "v3", credentials=creds, cache_discovery=False
+                )
+                result = (
+                    service.purchases()
+                    .subscriptions()
+                    .get(
+                        packageName=s.google_play_package_name,
+                        subscriptionId=product_id,
+                        token=purchase_token,
+                    )
+                    .execute()
+                )
 
-            # paymentState: 1=received, 2=free trial, 0=pending
-            if result.get("paymentState", 0) not in (1, 2):
+                # paymentState: 1=received, 2=free trial, 0=pending
+                if result.get("paymentState", 0) not in (1, 2):
+                    raise HTTPException(
+                        status_code=402,
+                        detail="Payment not yet confirmed by Google Play",
+                    )
+            except HTTPException:
+                raise
+            except Exception as exc:
                 raise HTTPException(
-                    status_code=402, detail="Payment not yet confirmed by Google Play"
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500, detail=f"Play verification error: {exc}"
-            ) from exc
+                    status_code=500, detail=f"Play verification error: {exc}"
+                ) from exc
 
     # Activate subscription
     result = _svc(request).upgrade_subscription(int(sid), tier)
