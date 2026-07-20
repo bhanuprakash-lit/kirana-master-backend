@@ -57,6 +57,12 @@ class Settings:
     google_play_package_name: str     # e.g. com.yourcompany.kirana_ai
     google_play_credentials_json: str # path to service account JSON; empty = skip verification
 
+    # ── Apple App Store IAP verification ──────────────────────────────────────
+    # App-specific shared secret from App Store Connect (Subscriptions → App-Specific
+    # Shared Secret). Empty = skip verification (trust the receipt; fine for dev/review,
+    # set before relying on it in production).
+    apple_iap_shared_secret: str
+
     # ── Azure Blob (udhaar voice-consent clips — durable, legal record) ───────
     azure_storage_connection_string: str  # empty = consent upload disabled
     consent_audio_container: str          # blob container name for consent clips
@@ -120,6 +126,8 @@ def get_settings() -> Settings:
 
         google_play_package_name=os.getenv("GOOGLE_PLAY_PACKAGE_NAME", ""),
         google_play_credentials_json=os.getenv("GOOGLE_PLAY_CREDENTIALS_JSON", ""),
+
+        apple_iap_shared_secret=os.getenv("APPLE_IAP_SHARED_SECRET", ""),
 
         azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING", ""),
         consent_audio_container=os.getenv("CONSENT_AUDIO_CONTAINER", "udhaar-consent"),
