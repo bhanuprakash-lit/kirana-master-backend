@@ -191,7 +191,7 @@ async def ai_status(
         # Admin key — unlimited, return max values
         return {f: {"used": 0, "limit": lim, "credits": 999, "remaining": lim}
                 for f, lim in {"voice": 3, "handwrite": 5, "invoice": 2}.items()}
-    return _repo(request).get_ai_status(user_id)
+    return _repo(request).get_ai_status(user_id, user.get("store_id"))
 
 
 @router.post("/credits/add")
@@ -208,7 +208,9 @@ async def ai_credits_add(
         raise HTTPException(status_code=400, detail="Invalid feature")
     if payload.count <= 0:
         raise HTTPException(status_code=400, detail="count must be positive")
-    return _repo(request).add_ai_credits(user_id, payload.feature, payload.count)
+    return _repo(request).add_ai_credits(
+        user_id, payload.feature, payload.count, user.get("store_id")
+    )
 
 
 @router.post("/voice")
@@ -227,7 +229,7 @@ async def ai_voice(
 
     # Check & deduct limit (raises 429 if exhausted)
     if user_id is not None:
-        repo.check_and_record_ai_use(user_id, "voice")
+        repo.check_and_record_ai_use(user_id, "voice", user.get("store_id"))
 
     api_key = _gemini_api_key(request)
     parts = [
@@ -243,7 +245,9 @@ async def ai_voice(
 
     # Return updated status alongside result so Flutter updates counts in one round-trip
     if user_id is not None:
-        result["ai_status"] = repo.get_ai_status(user_id).get("voice")
+        result["ai_status"] = repo.get_ai_status(
+            user_id, user.get("store_id")
+        ).get("voice")
     return result
 
 
@@ -261,7 +265,7 @@ async def ai_handwrite(
     repo = _repo(request)
 
     if user_id is not None:
-        repo.check_and_record_ai_use(user_id, "handwrite")
+        repo.check_and_record_ai_use(user_id, "handwrite", user.get("store_id"))
 
     api_key = _gemini_api_key(request)
     parts = [
@@ -276,7 +280,9 @@ async def ai_handwrite(
         raise HTTPException(status_code=502, detail="AI returned invalid JSON")
 
     if user_id is not None:
-        result["ai_status"] = repo.get_ai_status(user_id).get("handwrite")
+        result["ai_status"] = repo.get_ai_status(
+            user_id, user.get("store_id")
+        ).get("handwrite")
     return result
 
 
@@ -294,7 +300,7 @@ async def ai_invoice(
     repo = _repo(request)
 
     if user_id is not None:
-        repo.check_and_record_ai_use(user_id, "invoice")
+        repo.check_and_record_ai_use(user_id, "invoice", user.get("store_id"))
 
     api_key = _gemini_api_key(request)
     parts = [
@@ -309,7 +315,9 @@ async def ai_invoice(
         raise HTTPException(status_code=502, detail="AI returned invalid JSON")
 
     if user_id is not None:
-        result["ai_status"] = repo.get_ai_status(user_id).get("invoice")
+        result["ai_status"] = repo.get_ai_status(
+            user_id, user.get("store_id")
+        ).get("invoice")
     return result
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+from fastapi import HTTPException
 from sqlalchemy import text
 
 logger = logging.getLogger("kirana.repository")
@@ -179,6 +180,64 @@ class LoyaltyRepositoryMixin:
             conn.commit()
         return dict(row)
 
+    # Fields an owner may edit on an existing coupon (PAI-17).
+    _COUPON_EDITABLE = (
+        "code", "discount_type", "value", "min_order", "max_discount",
+        "valid_from", "valid_to", "usage_limit", "is_active",
+    )
+
+    def update_coupon(self, coupon_id: int, store_id: int, **fields) -> dict | None:
+        """Edit a coupon definition.
+
+        Past redemptions are untouched: `coupon_redemption` records the ₹ that
+        was actually given, so changing value/validity here only affects future
+        use. The one field we refuse to change after a redemption is `code` —
+        it's how the owner recognises the coupon in that history.
+        """
+        clean = {k: v for k, v in fields.items()
+                 if k in self._COUPON_EDITABLE and v is not None}
+        if not clean:
+            return self.get_coupon(coupon_id, store_id)
+        if "code" in clean:
+            clean["code"] = str(clean["code"]).strip().upper()
+        with self._conn() as conn:
+            used = conn.execute(
+                text("SELECT used_count FROM kirana_oltp.coupon "
+                     "WHERE coupon_id = :cid AND store_id = :sid"),
+                {"cid": coupon_id, "sid": store_id},
+            ).scalar()
+            if used is None:
+                return None
+            if "code" in clean and (used or 0) > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This coupon has already been redeemed — its code can't be changed.",
+                )
+            sets = ", ".join(f"{k} = :{k}" for k in clean)
+            row = conn.execute(
+                text(f"""
+                UPDATE kirana_oltp.coupon SET {sets}
+                WHERE coupon_id = :cid AND store_id = :sid
+                RETURNING coupon_id, code, discount_type, value, min_order, max_discount,
+                          valid_from, valid_to, usage_limit, used_count, is_active
+                """),
+                {"cid": coupon_id, "sid": store_id, **clean},
+            ).mappings().first()
+            conn.commit()
+        return dict(row) if row else None
+
+    def get_coupon(self, coupon_id: int, store_id: int) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                text("""
+                SELECT coupon_id, code, discount_type, value, min_order, max_discount,
+                       valid_from, valid_to, usage_limit, used_count, is_active
+                FROM kirana_oltp.coupon WHERE coupon_id = :cid AND store_id = :sid
+                """),
+                {"cid": coupon_id, "sid": store_id},
+            ).mappings().first()
+        return dict(row) if row else None
+
     def set_coupon_active(self, coupon_id: int, store_id: int, is_active: bool) -> bool:
         with self._conn() as conn:
             n = conn.execute(
@@ -188,19 +247,14 @@ class LoyaltyRepositoryMixin:
             conn.commit()
         return n > 0
 
-    def validate_coupon(self, store_id: int, code: str, order_amount: float) -> dict:
-        with self._conn() as conn:
-            c = conn.execute(
-                text("""
-                SELECT coupon_id, discount_type, value, min_order, max_discount,
-                       valid_from, valid_to, usage_limit, used_count, is_active
-                FROM kirana_oltp.coupon
-                WHERE store_id = :sid AND UPPER(code) = UPPER(:code)
-                """),
-                {"sid": store_id, "code": code.strip()},
-            ).mappings().first()
-        if not c:
-            return {"valid": False, "reason": "Coupon not found", "discount": 0}
+    @staticmethod
+    def _eligibility(c: dict, order_amount: float) -> dict:
+        """Shared coupon eligibility + discount maths.
+
+        Used by both `validate_coupon` (owner typed a code) and
+        `applicable_coupons` (POS offers what already fits this bill, PAI-16),
+        so the two can never disagree about what's usable.
+        """
         if not c["is_active"]:
             return {"valid": False, "reason": "Coupon inactive", "discount": 0}
         from datetime import date
@@ -221,6 +275,52 @@ class LoyaltyRepositoryMixin:
             discount = float(c["value"])
         discount = round(min(discount, order_amount), 2)
         return {"valid": True, "reason": "OK", "discount": discount, "coupon_id": c["coupon_id"]}
+
+    def validate_coupon(self, store_id: int, code: str, order_amount: float) -> dict:
+        with self._conn() as conn:
+            c = conn.execute(
+                text("""
+                SELECT coupon_id, discount_type, value, min_order, max_discount,
+                       valid_from, valid_to, usage_limit, used_count, is_active
+                FROM kirana_oltp.coupon
+                WHERE store_id = :sid AND UPPER(code) = UPPER(:code)
+                """),
+                {"sid": store_id, "code": code.strip()},
+            ).mappings().first()
+        if not c:
+            return {"valid": False, "reason": "Coupon not found", "discount": 0}
+        return self._eligibility(dict(c), order_amount)
+
+    def applicable_coupons(self, store_id: int, order_amount: float) -> list[dict]:
+        """Coupons this bill already qualifies for, best discount first.
+
+        PAI-16 — the till had a code box but never told the owner which of
+        their own coupons fit the cart in front of them.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                text("""
+                SELECT coupon_id, code, discount_type, value, min_order, max_discount,
+                       valid_from, valid_to, usage_limit, used_count, is_active
+                FROM kirana_oltp.coupon
+                WHERE store_id = :sid AND is_active
+                """),
+                {"sid": store_id},
+            ).mappings().all()
+        out = []
+        for r in rows:
+            c = dict(r)
+            res = self._eligibility(c, order_amount)
+            if res["valid"] and res["discount"] > 0:
+                out.append({
+                    "coupon_id": c["coupon_id"],
+                    "code": c["code"],
+                    "discount_type": c["discount_type"],
+                    "value": float(c["value"]),
+                    "discount": res["discount"],
+                })
+        out.sort(key=lambda x: x["discount"], reverse=True)
+        return out
 
     def redeem_coupon(self, coupon_id: int, store_id: int, discount: float,
                       order_id: int | None = None, customer_id: int | None = None) -> None:

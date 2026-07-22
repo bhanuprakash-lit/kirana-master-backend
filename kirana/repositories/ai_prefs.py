@@ -27,36 +27,46 @@ class Ai_prefsRepositoryMixin:
         "allow_social_marketing":   False,
     }
 
-    def check_and_record_ai_use(self, user_id: int, feature: str) -> None:
+    def check_and_record_ai_use(
+        self, user_id: int, feature: str, store_id: int | None = None
+    ) -> None:
         """
-        Atomically checks whether the user may use this AI feature and records
-        one use.  Raises HTTPException 429 when the daily quota is exhausted
-        AND no credits remain.
+        Atomically checks whether the user may use this AI feature *at this
+        store* and records one use.  Raises HTTPException 429 when the daily
+        quota is exhausted AND no credits remain.
+
+        PAI-11/12 — the free daily allowance is per (owner, store): an owner
+        with three shops gets the full 3 voice / 5 write / 2 invoice in each,
+        because the quota exists to cap Gemini spend per till, not per person.
+        Purchased **credits stay per owner** — money spent once should be
+        spendable at any of their stores.
         """
         import datetime
 
         today = datetime.date.today().isoformat()
         daily_lim = self._AI_DAILY_LIMITS.get(feature, 0)
+        sid = int(store_id or 0)
 
         with self._conn() as conn:
             # Ensure a today-row exists, then lock it
             conn.execute(
                 text("""
-                INSERT INTO kirana_oltp.ai_usage (user_id, feature, usage_date, count)
-                VALUES (:uid, :feat, :today, 0)
-                ON CONFLICT (user_id, feature, usage_date) DO NOTHING
+                INSERT INTO kirana_oltp.ai_usage (user_id, store_id, feature, usage_date, count)
+                VALUES (:uid, :sid, :feat, :today, 0)
+                ON CONFLICT (user_id, store_id, feature, usage_date) DO NOTHING
             """),
-                {"uid": user_id, "feat": feature, "today": today},
+                {"uid": user_id, "sid": sid, "feat": feature, "today": today},
             )
 
             used = (
                 conn.execute(
                     text("""
                 SELECT count FROM kirana_oltp.ai_usage
-                WHERE user_id = :uid AND feature = :feat AND usage_date = :today
+                WHERE user_id = :uid AND store_id = :sid
+                  AND feature = :feat AND usage_date = :today
                 FOR UPDATE
             """),
-                    {"uid": user_id, "feat": feature, "today": today},
+                    {"uid": user_id, "sid": sid, "feat": feature, "today": today},
                 ).scalar()
                 or 0
             )
@@ -66,9 +76,10 @@ class Ai_prefsRepositoryMixin:
                     text("""
                     UPDATE kirana_oltp.ai_usage
                     SET count = count + 1
-                    WHERE user_id = :uid AND feature = :feat AND usage_date = :today
+                    WHERE user_id = :uid AND store_id = :sid
+                      AND feature = :feat AND usage_date = :today
                 """),
-                    {"uid": user_id, "feat": feature, "today": today},
+                    {"uid": user_id, "sid": sid, "feat": feature, "today": today},
                 )
             else:
                 # Try credits — lock the row first
@@ -109,20 +120,25 @@ class Ai_prefsRepositoryMixin:
 
             conn.commit()
 
-    def get_ai_status(self, user_id: int) -> dict:
-        """Return current usage + credits for all AI features."""
+    def get_ai_status(self, user_id: int, store_id: int | None = None) -> dict:
+        """Return current usage + credits for all AI features at this store.
+
+        Usage is per (owner, store) — see `check_and_record_ai_use`; credits
+        are per owner and therefore shared across their stores.
+        """
         import datetime
 
         today = datetime.date.today().isoformat()
+        sid = int(store_id or 0)
 
         with self._conn() as conn:
             usage_rows = (
                 conn.execute(
                     text("""
                 SELECT feature, count FROM kirana_oltp.ai_usage
-                WHERE user_id = :uid AND usage_date = :today
+                WHERE user_id = :uid AND store_id = :sid AND usage_date = :today
             """),
-                    {"uid": user_id, "today": today},
+                    {"uid": user_id, "sid": sid, "today": today},
                 )
                 .mappings()
                 .all()
@@ -157,8 +173,14 @@ class Ai_prefsRepositoryMixin:
             }
         return result
 
-    def add_ai_credits(self, user_id: int, feature: str, count: int) -> dict:
-        """Add purchased credits for a feature and return updated status."""
+    def add_ai_credits(
+        self, user_id: int, feature: str, count: int, store_id: int | None = None
+    ) -> dict:
+        """Add purchased credits for a feature and return updated status.
+
+        Credits are owner-level (not per store); `store_id` only scopes the
+        usage figures in the status payload we hand back.
+        """
         with self._conn() as conn:
             conn.execute(
                 text("""
@@ -170,7 +192,7 @@ class Ai_prefsRepositoryMixin:
                 {"uid": user_id, "feat": feature, "count": count},
             )
             conn.commit()
-        return self.get_ai_status(user_id)
+        return self.get_ai_status(user_id, store_id)
 
     def get_user_prefs(self, user_id: int) -> dict:
         sql = "SELECT * FROM kirana_oltp.user_prefs WHERE user_id = :uid"

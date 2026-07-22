@@ -9,6 +9,8 @@ export default function Stores() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [autoApprove, setAutoApprove] = useState(false);
+  // PAI-19 — who opted in to "let LohiyaAI market my store".
+  const [marketingOnly, setMarketingOnly] = useState(false);
   const [togglingAuto, setTogglingAuto] = useState(false);
 
   useEffect(() => {
@@ -46,15 +48,16 @@ export default function Stores() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return stores;
-    return stores.filter(s =>
+    const base = marketingOnly ? stores.filter(s => s.allow_social_marketing) : stores;
+    if (!q) return base;
+    return base.filter(s =>
       (s.store_name || '').toLowerCase().includes(q) ||
       (s.owner_name || '').toLowerCase().includes(q) ||
       (s.location || '').toLowerCase().includes(q) ||
       (s.vertical_code || '').toLowerCase().includes(q) ||
       String(s.store_id).includes(q)
     );
-  }, [stores, query]);
+  }, [stores, query, marketingOnly]);
 
   const handleApproveTrial = async (storeId) => {
     try {
@@ -108,6 +111,15 @@ export default function Stores() {
               />
             </button>
           </div>
+          <label className="flex items-center gap-1.5 text-sm text-slate-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={marketingOnly}
+              onChange={(e) => setMarketingOnly(e.target.checked)}
+              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Marketing opt-in only
+          </label>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -130,14 +142,15 @@ export default function Stores() {
                 <th className="px-4 py-3">Vertical</th>
                 <th className="px-4 py-3">Owner</th>
                 <th className="px-4 py-3">Plan / Tier</th>
+                <th className="px-4 py-3">Marketing</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan="6" className="px-4 py-4 text-center text-slate-400">Loading stores...</td></tr>
+                <tr><td colSpan="7" className="px-4 py-4 text-center text-slate-400">Loading stores...</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan="6" className="px-4 py-4 text-center text-slate-400">No stores found.</td></tr>
+                <tr><td colSpan="7" className="px-4 py-4 text-center text-slate-400">No stores found.</td></tr>
               ) : (
                 filtered.map(store => (
                   <tr key={store.store_id} className="hover:bg-slate-50/50">
@@ -178,6 +191,15 @@ export default function Stores() {
                         <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Basic</span>
                       ) : (
                         <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">{store.tier || 'None'}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {store.allow_social_marketing ? (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800" title="Owner allows LohiyaAI to market this store">
+                          📣 Opted in
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">Off</span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-right space-x-3">
