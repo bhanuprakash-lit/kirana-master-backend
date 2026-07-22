@@ -767,3 +767,109 @@ def get_image(path: str, request: Request, user: dict = Depends(_auth)):
     if not abs_path:
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(abs_path)
+
+
+# ── Model delivery (PAI-15) ───────────────────────────────────────────────────
+#
+# The counter model is no longer bundled in the APK — see vision/model_storage.py
+# for why encrypting the asset wouldn't have helped. The app fetches it once,
+# authenticated, and caches it in app-private storage.
+
+
+@router.get("/model/{model}/manifest")
+def get_model_manifest(model: str, request: Request, user: dict = Depends(_auth)):
+    """Version + checksum so the app knows whether its cached copy is current."""
+    if model not in ("counter",):
+        raise HTTPException(status_code=404, detail="Unknown model")
+    from vision import model_storage
+
+    if not model_storage.is_configured():
+        raise HTTPException(status_code=503, detail="Model storage not configured")
+    try:
+        manifest = model_storage.get_manifest(model)
+    except Exception:
+        logger.exception("vision: model manifest fetch failed for %s", model)
+        raise HTTPException(status_code=503, detail="Model manifest unavailable")
+    return {
+        "model": model,
+        "version": manifest.get("version"),
+        "sha256": manifest.get("sha256"),
+        "size": manifest.get("size"),
+    }
+
+
+@router.get("/model/{model}/download")
+def download_vision_model(
+    model: str, request: Request, user: dict = Depends(_auth)
+):
+    """Stream the weights to an authenticated client, and record who took them.
+
+    The version is resolved from the manifest rather than taken from the query
+    string, so a caller can't probe the container for other blobs.
+    """
+    if model not in ("counter",):
+        raise HTTPException(status_code=404, detail="Unknown model")
+    from vision import model_storage
+
+    if not model_storage.is_configured():
+        raise HTTPException(status_code=503, detail="Model storage not configured")
+    try:
+        manifest = model_storage.get_manifest(model)
+        version = manifest["version"]
+        data = model_storage.download_model(model, version)
+    except Exception:
+        logger.exception("vision: model download failed for %s", model)
+        raise HTTPException(status_code=503, detail="Model unavailable")
+
+    # Attribution — this is the part that makes a leaked account traceable.
+    # Never let a logging failure block the download.
+    try:
+        from sqlalchemy import text as _text
+
+        with request.app.state.engine.begin() as conn:
+            conn.execute(
+                _text("""
+                INSERT INTO kirana_oltp.vision_model_fetch
+                    (user_id, store_id, model, version)
+                VALUES (:uid, :sid, :model, :ver)
+                """),
+                {
+                    "uid": user.get("user_id"),
+                    "sid": user.get("store_id"),
+                    "model": model,
+                    "ver": version,
+                },
+            )
+    except Exception:
+        logger.warning("vision: could not record model fetch", exc_info=True)
+
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={
+            "X-Model-Version": str(version),
+            "X-Model-Sha256": str(manifest.get("sha256", "")),
+        },
+    )
+
+
+@router.get("/model/{model}/labels")
+def download_vision_labels(
+    model: str, request: Request, user: dict = Depends(_auth)
+):
+    """Label list for the current model version (small, plain text)."""
+    if model not in ("counter",):
+        raise HTTPException(status_code=404, detail="Unknown model")
+    from vision import model_storage
+
+    if not model_storage.is_configured():
+        raise HTTPException(status_code=503, detail="Model storage not configured")
+    try:
+        manifest = model_storage.get_manifest(model)
+        data = model_storage.download_labels(model, manifest["version"])
+    except Exception:
+        logger.exception("vision: label fetch failed for %s", model)
+        raise HTTPException(status_code=503, detail="Labels unavailable")
+    if data is None:
+        raise HTTPException(status_code=404, detail="No labels for this version")
+    return Response(content=data, media_type="text/plain; charset=utf-8")
