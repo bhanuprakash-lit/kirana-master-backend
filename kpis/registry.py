@@ -874,7 +874,7 @@ _REGISTRY: list[KPIDef] = [
         target="50–70% / season", baseline="Units sold ÷ units received",
         why="Core apparel health metric — how fast a buy sells before markdown.",
         ai_agent="Stock AI", data_source="order_item (variant), inventory",
-        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear", "boutique", "sports_fitness", "cosmetics"]),
 
     _ok("size-curve", calc.calc_size_curve, "sizes_tracked",
         kpi_id="V_AP_2", spreadsheet_num="V2", name="Size-curve / Size-mix", category="Inventory",
@@ -882,7 +882,7 @@ _REGISTRY: list[KPIDef] = [
         target="Match demand curve", baseline="Sales by size",
         why="Reveals which sizes sell out first so re-orders match real demand.",
         ai_agent="Stock AI", data_source="product_variant.attributes, order_item",
-        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear", "boutique", "sports_fitness", "cosmetics"]),
 
     _ok("markdown", calc.calc_markdown, "markdown_pct",
         kpi_id="V_AP_3", spreadsheet_num="V3", name="Markdown %", category="Finance",
@@ -890,7 +890,7 @@ _REGISTRY: list[KPIDef] = [
         target="< 20% of revenue", baseline="Markdown value ÷ revenue",
         why="Tracks how much margin is lost to discounting.",
         ai_agent="Pricing AI", data_source="order_item, pricing/mrp",
-        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear", "boutique", "sports_fitness", "cosmetics"]),
 
     _ok("gmroi", calc.calc_gmroi, "gmroi",
         kpi_id="V_AP_4", spreadsheet_num="V4", name="GMROI", category="Finance",
@@ -898,7 +898,7 @@ _REGISTRY: list[KPIDef] = [
         target="> 2.5", baseline="Gross margin ÷ avg inventory cost",
         why="Return on every rupee tied up in stock — key for fashion/electronics.",
         ai_agent="Pricing AI", data_source="order_item.cost_price, inventory, pricing",
-        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear", "electronics"]),
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear", "boutique", "sports_fitness", "cosmetics", "electronics"]),
 
     _ok("outfit-uptake", calc.calc_outfit_uptake, "attach_pct",
         kpi_id="V_AP_5", spreadsheet_num="V5", name="Outfit / Bundle Uptake", category="Customer",
@@ -906,7 +906,7 @@ _REGISTRY: list[KPIDef] = [
         target="+10% basket", baseline="Bundle attach rate",
         why="Cross-sell driver for apparel/footwear.",
         ai_agent="Recommender AI", data_source="order_item co-occurrence",
-        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear"]),
+        perspective="Owner", spreadsheet_status="New", verticals=["apparel", "footwear", "boutique", "sports_fitness", "cosmetics"]),
 
     # ── Electronics / mobile ──────────────────────────────────────────────────
     _ok("attach-rate", calc.calc_attach_rate, "attach_rate_pct",
@@ -1024,6 +1024,8 @@ def kpi_to_metadata(k: KPIDef) -> dict:
 # The coarse vertical codes the app understands (mirror of the backend seed).
 KNOWN_VERTICALS = [
     "grocery", "apparel", "footwear", "electronics", "optical", "services", "general",
+    # PAI-3 — split out of grocery/apparel so they can diverge.
+    "bakery", "boutique", "sports_fitness", "cosmetics",
 ]
 
 
