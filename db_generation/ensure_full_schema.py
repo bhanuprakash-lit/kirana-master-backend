@@ -553,10 +553,11 @@ step("table:ai_usage", """
 CREATE TABLE IF NOT EXISTS kirana_oltp.ai_usage (
     id          BIGSERIAL PRIMARY KEY,
     user_id     BIGINT NOT NULL REFERENCES kirana_oltp.users(user_id) ON DELETE CASCADE,
+    store_id    BIGINT NOT NULL DEFAULT 0,
     feature     VARCHAR(20) NOT NULL,
     usage_date  DATE NOT NULL DEFAULT CURRENT_DATE,
     count       INT NOT NULL DEFAULT 0,
-    UNIQUE (user_id, feature, usage_date)
+    UNIQUE (user_id, store_id, feature, usage_date)
 )
 """)
 

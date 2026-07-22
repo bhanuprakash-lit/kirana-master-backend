@@ -66,6 +66,7 @@ def test_settings():
         apple_iap_shared_secret="",
         azure_storage_connection_string="",
         consent_audio_container="",
+        vision_model_container="",
         onboarding_shelf_container="",
     )
 

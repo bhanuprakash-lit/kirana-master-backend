@@ -585,7 +585,35 @@ class BaseRepositoryMixin:
                     ('general',
                      '{"expiry": false, "loose": false, "variants": false, "serial": false, "warranty": false, "appointments": false, "vision": false}',
                      '["pcs","pack","box","set"]',
-                     'grocery', 'standard', '{}')
+                     'grocery', 'standard', '{}'),
+                    -- PAI-3: four trades that were riding another vertical's
+                    -- profile and mis-fitting it.
+                    -- Bakery: own-make goods, so expiry+loose like grocery, but
+                    -- split out so it stops inheriting grocery's packaged-goods
+                    -- reorder ML and gains job cards for cake pre-orders.
+                    ('bakery',
+                     '{"expiry": true, "loose": true, "variants": false, "serial": false, "warranty": false, "appointments": false, "vision": false}',
+                     '["pcs","kg","g","dozen","pack","box"]',
+                     'bakery', 'standard', '{}'),
+                    -- Boutique: apparel behaviour; separate code so alteration
+                    -- job cards and estimates can be promoted for them alone.
+                    ('boutique',
+                     '{"expiry": false, "loose": false, "variants": true, "serial": false, "warranty": false, "appointments": false, "vision": false}',
+                     '["pcs","pair","set"]',
+                     'apparel', 'standard', '{}'),
+                    -- Sports & fitness: sells shoes/apparel/equipment. Same as
+                    -- apparel today; its own code leaves room for equipment
+                    -- serials later without touching clothing stores.
+                    ('sports_fitness',
+                     '{"expiry": false, "loose": false, "variants": true, "serial": false, "warranty": false, "appointments": false, "vision": false}',
+                     '["pcs","pair","set"]',
+                     'apparel', 'standard', '{}'),
+                    -- Cosmetics: the one combination nothing else offered —
+                    -- expiry (cosmetics do expire) AND variants (shade/size).
+                    ('cosmetics',
+                     '{"expiry": true, "loose": false, "variants": true, "serial": false, "warranty": false, "appointments": false, "vision": false}',
+                     '["pcs","ml","g","pack","set"]',
+                     'apparel', 'standard', '{}')
                 ON CONFLICT (vertical_code) DO UPDATE SET
                     features    = EXCLUDED.features,
                     unit_set    = EXCLUDED.unit_set,
@@ -1813,12 +1841,70 @@ class BaseRepositoryMixin:
                 CREATE TABLE IF NOT EXISTS kirana_oltp.ai_usage (
                     id          BIGSERIAL PRIMARY KEY,
                     user_id     BIGINT NOT NULL REFERENCES kirana_oltp.users(user_id) ON DELETE CASCADE,
+                    store_id    BIGINT NOT NULL DEFAULT 0,
                     feature     VARCHAR(20) NOT NULL,
                     usage_date  DATE NOT NULL DEFAULT CURRENT_DATE,
                     count       INT NOT NULL DEFAULT 0,
-                    UNIQUE (user_id, feature, usage_date)
+                    UNIQUE (user_id, store_id, feature, usage_date)
                 )
             """)
+            )
+            # PAI-11/12 — the free daily allowance is PER STORE, not per owner.
+            # The original key was (user_id, feature, usage_date), so an owner
+            # with three stores shared one set of 3 voice / 5 write / 2 invoice
+            # uses across all of them. Add store_id and re-key.
+            #
+            # store_id is a plain BIGINT (no FK) defaulting to 0 so legacy rows
+            # collapse into a single "unknown store" bucket and the UNIQUE stays
+            # a plain constraint — a nullable column would make ON CONFLICT
+            # unusable, since NULLs never compare equal.
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.ai_usage "
+                    "ADD COLUMN IF NOT EXISTS store_id BIGINT NOT NULL DEFAULT 0"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE kirana_oltp.ai_usage "
+                    "DROP CONSTRAINT IF EXISTS ai_usage_user_id_feature_usage_date_key"
+                )
+            )
+            conn.execute(
+                text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'ai_usage_user_store_feature_date_key'
+                    ) THEN
+                        ALTER TABLE kirana_oltp.ai_usage
+                        ADD CONSTRAINT ai_usage_user_store_feature_date_key
+                        UNIQUE (user_id, store_id, feature, usage_date);
+                    END IF;
+                END $$;
+            """)
+            )
+
+            # PAI-15 — who fetched the vision model, and when. This is what
+            # makes a leaked account traceable and revocable; without it the
+            # authenticated download is just a slower way to hand out weights.
+            conn.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.vision_model_fetch (
+                    fetch_id   BIGSERIAL PRIMARY KEY,
+                    user_id    BIGINT,
+                    store_id   BIGINT,
+                    model      VARCHAR(40) NOT NULL,
+                    version    VARCHAR(40) NOT NULL,
+                    fetched_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_vision_model_fetch_user "
+                    "ON kirana_oltp.vision_model_fetch(user_id, fetched_at DESC)"
+                )
             )
 
             conn.execute(
