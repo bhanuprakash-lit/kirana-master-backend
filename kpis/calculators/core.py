@@ -10,6 +10,9 @@ ML_PROFILES = {
     "apparel":     {"dead_stock_days": 60, "slow_mover_days": 45},
     "electronics": {"dead_stock_days": 45, "slow_mover_days": 30},
     "services":    {"dead_stock_days": 30, "slow_mover_days": 21},
+    # PAI-3 — bakery is own-make and turns over in days, not weeks: reusing
+    # grocery's 21-day window would call yesterday's unsold bread "healthy".
+    "bakery":      {"dead_stock_days": 5,  "slow_mover_days": 3},
 }
 
 

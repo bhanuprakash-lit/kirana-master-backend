@@ -66,6 +66,7 @@ class Settings:
     # ── Azure Blob (udhaar voice-consent clips — durable, legal record) ───────
     azure_storage_connection_string: str  # empty = consent upload disabled
     consent_audio_container: str          # blob container name for consent clips
+    vision_model_container: str           # blob container for vision model weights (PAI-15)
     onboarding_shelf_container: str       # blob container for bulk stock-in shelf photos
 
 
@@ -131,5 +132,6 @@ def get_settings() -> Settings:
 
         azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING", ""),
         consent_audio_container=os.getenv("CONSENT_AUDIO_CONTAINER", "udhaar-consent"),
+        vision_model_container=os.getenv("VISION_MODEL_CONTAINER", "vision-models"),
         onboarding_shelf_container=os.getenv("ONBOARDING_SHELF_CONTAINER", "onboarding-shelf"),
     )

@@ -113,14 +113,41 @@ async def create_coupon(request: Request, user: dict = Depends(_auth)):
 
 
 @router.patch("/coupons/{coupon_id}")
-async def toggle_coupon(coupon_id: int, request: Request, user: dict = Depends(_auth)):
+async def update_coupon(coupon_id: int, request: Request, user: dict = Depends(_auth)):
+    """Edit a coupon, or just flip its active switch.
+
+    Historically this only accepted `is_active`; PAI-17 added full editing.
+    A body carrying only `is_active` keeps the old cheap path so existing
+    clients behave exactly as before.
+    """
     body = await request.json()
-    ok = _repo(request).set_coupon_active(
-        coupon_id, _store_id(user), bool(body.get("is_active", True))
-    )
-    if not ok:
+    store_id = _store_id(user)
+    fields = {k: body[k] for k in (
+        "code", "discount_type", "value", "min_order", "max_discount",
+        "valid_from", "valid_to", "usage_limit", "is_active",
+    ) if k in body}
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    if fields.get("discount_type") not in (None, "percent", "flat"):
+        raise HTTPException(status_code=400, detail="discount_type must be percent or flat")
+    if set(fields) == {"is_active"}:
+        ok = _repo(request).set_coupon_active(
+            coupon_id, store_id, bool(fields["is_active"])
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="Coupon not found")
+        return {"updated": True}
+    row = _repo(request).update_coupon(coupon_id, store_id, **fields)
+    if row is None:
         raise HTTPException(status_code=404, detail="Coupon not found")
-    return {"updated": True}
+    return row
+
+
+@router.get("/coupons/applicable")
+async def applicable_coupons(request: Request, amount: float = 0,
+                             user: dict = Depends(_auth)):
+    """Coupons the current bill already qualifies for (PAI-16)."""
+    return {"coupons": _repo(request).applicable_coupons(_store_id(user), float(amount or 0))}
 
 
 @router.post("/coupons/validate")
