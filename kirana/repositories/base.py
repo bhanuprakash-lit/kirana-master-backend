@@ -802,6 +802,180 @@ class BaseRepositoryMixin:
                 ) AS d(vertical_code, cp)
                 WHERE vc.vertical_code = d.vertical_code
             """))
+            # ── G7: per-store category groups ─────────────────────────────────
+            # Products stay GLOBAL on purpose — that's the contribution model:
+            # one store adds a product, everyone can scan its barcode and set
+            # their own price (`pricing` is already per store, as is `inventory`).
+            # Privatising the catalog would kill that, so G7 is implemented as an
+            # organisation layer only: each store groups the shared categories
+            # however it likes ("Kids & treats" = chips + biscuits + ice cream).
+            #
+            # This is a SECOND axis, deliberately not `category.parent_category_id`
+            # — that one is the merchandising taxonomy (Beverages -> Tea/Coffee),
+            # and it's global, so it can't hold "store A calls this Kids, store B
+            # calls it Snacks". Group membership is many-to-many because a real
+            # category legitimately belongs in two groups (chips are both).
+            #
+            # store_id NULL = the per-vertical DEFAULT template. A store with no
+            # rows of its own reads the template; the first edit forks a private
+            # copy (see `fork_groups_for_store`). That keeps 55 stores x 10 groups
+            # x N members out of the table until someone actually customises.
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.category_group (
+                    group_id      BIGSERIAL PRIMARY KEY,
+                    store_id      BIGINT REFERENCES kirana_oltp.store(store_id),
+                    vertical_code TEXT NOT NULL,
+                    name          VARCHAR(120) NOT NULL,
+                    seed_key      TEXT,
+                    sort_order    INT NOT NULL DEFAULT 0,
+                    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS kirana_oltp.category_group_member (
+                    group_id    BIGINT NOT NULL
+                        REFERENCES kirana_oltp.category_group(group_id) ON DELETE CASCADE,
+                    category_id BIGINT NOT NULL
+                        REFERENCES kirana_oltp.category(category_id) ON DELETE CASCADE,
+                    PRIMARY KEY (group_id, category_id)
+                )
+            """))
+            # One template per (vertical, seed_key); one name per store.
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_category_group_template
+                ON kirana_oltp.category_group (vertical_code, seed_key)
+                WHERE store_id IS NULL
+            """))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_category_group_store_name
+                ON kirana_oltp.category_group (store_id, lower(name))
+                WHERE store_id IS NOT NULL
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_category_group_store
+                ON kirana_oltp.category_group (store_id, vertical_code)
+            """))
+
+            # Default grocery groups. Grocery only, and deliberately so: it has
+            # 135 categories (76% of stores), which is where grouping earns its
+            # keep. The other verticals ship ~6-10 categories that already read
+            # as groups (apparel IS Men/Women/Kids), so a default set there would
+            # be a layer over nothing. Owners can still create their own.
+            #
+            # `seed_key` is what the app localises against — a name column can
+            # only ever hold one language, which is the same reason `copy_pack`
+            # stays empty (G1). Once an owner renames a group we clear seed_key
+            # and show their text verbatim.
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.category_group
+                    (store_id, vertical_code, name, seed_key, sort_order)
+                SELECT NULL, 'grocery', v.name, v.key, v.ord FROM (VALUES
+                    ('Staples & cooking',   'staples_cooking',    10),
+                    ('Kids & treats',       'kids_treats',        20),
+                    ('Snacks & namkeen',    'snacks_namkeen',     30),
+                    ('Beverages',           'beverages',          40),
+                    ('Personal care',       'personal_care',      50),
+                    ('Breakfast & instant', 'breakfast_instant',  60),
+                    ('Household needs',     'household_needs',    70),
+                    ('Dairy & bakery',      'dairy_bakery',       80),
+                    ('Fresh produce',       'fresh_produce',      90),
+                    ('Sauces & spreads',    'sauces_spreads',    100)
+                ) AS v(name, key, ord)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM kirana_oltp.category_group g
+                    WHERE g.store_id IS NULL
+                      AND g.vertical_code = 'grocery'
+                      AND g.seed_key = v.key
+                )
+            """))
+            # Membership by category NAME, not id: ids differ per environment.
+            # Names that don't exist are simply skipped, so a trimmed category
+            # set doesn't break seeding.
+            conn.execute(text("""
+                INSERT INTO kirana_oltp.category_group_member (group_id, category_id)
+                SELECT g.group_id, c.category_id
+                FROM (VALUES
+                    ('staples_cooking','Staples'),('staples_cooking','Atta'),
+                    ('staples_cooking','Rice'),('staples_cooking','Basmati Rice'),
+                    ('staples_cooking','Ponni Rice'),('staples_cooking','Sonamasuri & Kolam Rice'),
+                    ('staples_cooking','Rice & Rice Products'),('staples_cooking','Flour'),
+                    ('staples_cooking','Besan'),('staples_cooking','Besan, Sooji & Maida'),
+                    ('staples_cooking','Dal'),('staples_cooking','Pulses & Millets'),
+                    ('staples_cooking','Poha'),('staples_cooking','Poha, Daliya & Other Grains'),
+                    ('staples_cooking','Oil'),('staples_cooking','Oils & Ghee'),
+                    ('staples_cooking','Refined Oil'),('staples_cooking','Mustard Oil'),
+                    ('staples_cooking','Ghee & Vanaspati'),('staples_cooking','Powdered Masala'),
+                    ('staples_cooking','Whole Spices'),('staples_cooking','Spices & Vinegar'),
+                    ('staples_cooking','Salt, Sugar & Jaggery'),('staples_cooking','Organic Salt'),
+                    ('staples_cooking','Dry Fruits'),('staples_cooking','Pickles'),
+                    ('staples_cooking','Chutney & Pickle'),
+                    ('kids_treats','Chips & Crisps'),('kids_treats','Biscuits'),
+                    ('kids_treats','Cookies'),('kids_treats','Cookies & Wafers'),
+                    ('kids_treats','Cream Biscuits'),('kids_treats','Chocolate Spreads'),
+                    ('kids_treats','Popcorn'),('kids_treats','Nachos'),
+                    ('kids_treats','Ice Cream & Frozen Dessert'),
+                    ('kids_treats','Chocolate Health Drinks'),
+                    ('kids_treats','Snacks & Munchies'),('kids_treats','Sweet & Salty'),
+                    ('snacks_namkeen','Bhujia & Mixtures'),('snacks_namkeen','Namkeen Snacks'),
+                    ('snacks_namkeen','Healthy Snacks'),('snacks_namkeen','Frozen Non-Veg Snacks'),
+                    ('snacks_namkeen','Frozen Potato Snacks'),('snacks_namkeen','Frozen Veg Snacks'),
+                    ('snacks_namkeen','Chips & Crisps'),('snacks_namkeen','Nachos'),
+                    ('snacks_namkeen','Popcorn'),('snacks_namkeen','Snacks & Biscuits'),
+                    ('beverages','Beverages'),('beverages','Coffee'),('beverages','Cold Coffee'),
+                    ('beverages','Instant Coffee'),('beverages','Leaf & Dust Tea'),
+                    ('beverages','Black Tea'),('beverages','Tea'),('beverages','Tea Powder'),
+                    ('beverages','Green Tea'),('beverages','Exotic & Flavoured Tea'),
+                    ('beverages','Iced Tea'),('beverages','100% Juice'),
+                    ('beverages','Fruit Juices'),('beverages','Coconut Water'),
+                    ('beverages','Soft Drinks'),('beverages','Energy Drinks'),
+                    ('beverages','Non-Alcoholic Drinks'),('beverages','Cocktail Mixers/Tonic Waters'),
+                    ('beverages','Milk Drinks'),('beverages','Health Drinks'),
+                    ('beverages','Adult Nutritional Drinks'),('beverages','Herbal Drinks'),
+                    ('beverages','Mineral Water'),('beverages','Water & Ice Cubes'),
+                    ('beverages','Fresh Juice & Dips'),
+                    ('personal_care','Personal Care'),('personal_care','Soaps'),
+                    ('personal_care','Oral Care'),('personal_care','Feminine Care'),
+                    ('personal_care','Hair Oil'),('personal_care','Hair Oil, Masks & Serums'),
+                    ('personal_care','Handwash'),('personal_care','Shampoo'),
+                    ('personal_care','Face Cream & Gel'),('personal_care','Eye Creams & Masks'),
+                    ('personal_care','BB & CC cream'),
+                    ('breakfast_instant','Instant Food'),('breakfast_instant','Breakfast Cereal'),
+                    ('breakfast_instant','Muesli'),('breakfast_instant','Oats'),
+                    ('breakfast_instant','Granola'),('breakfast_instant','Peanut Butter'),
+                    ('breakfast_instant','Noodles'),('breakfast_instant','Pasta'),
+                    ('breakfast_instant','Ready to Eat'),('breakfast_instant','Instant Mixes'),
+                    ('breakfast_instant','Batter'),('breakfast_instant','Soup'),
+                    ('breakfast_instant','Frozen Peas & Corn'),('breakfast_instant','Frozen Veg'),
+                    ('household_needs','Cleaning & Household'),('household_needs','Household'),
+                    ('household_needs','Cleaning'),('household_needs','Detergent'),
+                    ('household_needs','Detergent Bars'),('household_needs','Detergent Powder & Bars'),
+                    ('household_needs','Dishwashing Accessories'),('household_needs','Dishwashing Bars'),
+                    ('household_needs','Dishwashing Gels & Powders'),('household_needs','Dish Liquid'),
+                    ('household_needs','Floor Cleaners & More'),('household_needs','Toilet Cleaners & More'),
+                    ('household_needs','Garbage Bags'),('household_needs','Air Fresheners'),
+                    ('dairy_bakery','Dairy'),('dairy_bakery','Dairy & Breakfast'),
+                    ('dairy_bakery','Milk'),('dairy_bakery','Curd'),('dairy_bakery','Curd & Yogurt'),
+                    ('dairy_bakery','Bread'),('dairy_bakery','Butter & More'),
+                    ('dairy_bakery','Cheese'),('dairy_bakery','Paneer & Tofu'),
+                    ('dairy_bakery','Eggs'),('dairy_bakery','Condensed Milk'),
+                    ('dairy_bakery','Cream & Whitener'),('dairy_bakery','Flavored Milk'),
+                    ('dairy_bakery','Frozen Indian Breads'),
+                    ('fresh_produce','Fruits & Vegetables'),('fresh_produce','Fresh Vegetables'),
+                    ('fresh_produce','Fruits'),('fresh_produce','Herbs & Seasoning'),
+                    ('fresh_produce','Leafies & Herbs'),
+                    ('sauces_spreads','Sauces & Spreads'),('sauces_spreads','Asian Sauces'),
+                    ('sauces_spreads','Cooking Sauces & Paste'),('sauces_spreads','Dips & Spreads'),
+                    ('sauces_spreads','Tomato & Chilli Ketchups')
+                ) AS m(key, catname)
+                JOIN kirana_oltp.category_group g
+                  ON g.store_id IS NULL AND g.vertical_code = 'grocery'
+                 AND g.seed_key = m.key
+                JOIN kirana_oltp.category c
+                  ON c.name = m.catname AND c.vertical_code = 'grocery'
+                ON CONFLICT (group_id, category_id) DO NOTHING
+            """))
+
             # Trigram index for catalog search (name ILIKE '%q%' can't use a btree).
             # Fully guarded: CREATE EXTENSION needs privilege on managed PG, so we
             # swallow any failure — search still works (just without the index).

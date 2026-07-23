@@ -18,6 +18,7 @@ from .services import router as services_router
 from .multistore import router as multistore_router
 from .staff import router as staff_router
 from .fulfilment import router as fulfilment_router
+from .categorygroups import router as categorygroups_router
 from .stocklocations import router as stocklocations_router
 from .warranty import router as warranty_router
 from .customer360 import router as customer360_router
@@ -43,6 +44,7 @@ router.include_router(services_router)
 router.include_router(multistore_router)
 router.include_router(staff_router)
 router.include_router(fulfilment_router)
+router.include_router(categorygroups_router)
 router.include_router(stocklocations_router)
 router.include_router(warranty_router)
 router.include_router(customer360_router)
