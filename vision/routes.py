@@ -26,7 +26,7 @@ from typing import Optional
 
 from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      Query, Request, UploadFile)
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from . import counter_repository as counter_repo
 from . import detector
@@ -775,11 +775,16 @@ def get_image(path: str, request: Request, user: dict = Depends(_auth)):
 # for why encrypting the asset wouldn't have helped. The app fetches it once,
 # authenticated, and caches it in app-private storage.
 
+# One entry per (model, runtime): Android takes TFLite, iOS takes CoreML, and
+# they are different files with different checksums. The app picks the prefix for
+# the platform it is running on.
+KNOWN_MODELS = ("counter", "counter-ios")
+
 
 @router.get("/model/{model}/manifest")
 def get_model_manifest(model: str, request: Request, user: dict = Depends(_auth)):
     """Version + checksum so the app knows whether its cached copy is current."""
-    if model not in ("counter",):
+    if model not in KNOWN_MODELS:
         raise HTTPException(status_code=404, detail="Unknown model")
     from vision import model_storage
 
@@ -795,6 +800,10 @@ def get_model_manifest(model: str, request: Request, user: dict = Depends(_auth)
         "version": manifest.get("version"),
         "sha256": manifest.get("sha256"),
         "size": manifest.get("size"),
+        # "tflite" or "coreml". The app already knows which one it wants from its
+        # own platform; this is here so a mismatch is visible rather than showing
+        # up as an unexplained model-load failure on the device.
+        "format": manifest.get("format", "tflite"),
     }
 
 
@@ -807,7 +816,7 @@ def download_vision_model(
     The version is resolved from the manifest rather than taken from the query
     string, so a caller can't probe the container for other blobs.
     """
-    if model not in ("counter",):
+    if model not in KNOWN_MODELS:
         raise HTTPException(status_code=404, detail="Unknown model")
     from vision import model_storage
 
@@ -816,10 +825,21 @@ def download_vision_model(
     try:
         manifest = model_storage.get_manifest(model)
         version = manifest["version"]
-        data = model_storage.download_model(model, version)
+        total = int(manifest.get("size") or 0)
     except Exception:
         logger.exception("vision: model download failed for %s", model)
         raise HTTPException(status_code=503, detail="Model unavailable")
+
+    # Resume support. A dropped download on a shop's connection is normal, and
+    # without this every retry re-sends all 38 MB — the user pays for the same
+    # bytes again and is no more likely to finish.
+    start, end = _parse_range(request.headers.get("range"), total)
+    if start is not None and total and start >= total:
+        raise HTTPException(
+            status_code=416,
+            detail="Range not satisfiable",
+            headers={"Content-Range": f"bytes */{total}"},
+        )
 
     # Attribution — this is the part that makes a leaked account traceable.
     # Never let a logging failure block the download.
@@ -843,14 +863,65 @@ def download_vision_model(
     except Exception:
         logger.warning("vision: could not record model fetch", exc_info=True)
 
-    return Response(
-        content=data,
+    offset = start or 0
+    length = (end - offset + 1) if (start is not None and end is not None) else None
+    headers = {
+        "X-Model-Version": str(version),
+        "X-Model-Sha256": str(manifest.get("sha256", "")),
+        "Accept-Ranges": "bytes",
+    }
+    if total:
+        sent = length if length is not None else total - offset
+        headers["Content-Length"] = str(sent)
+        if start is not None:
+            last = end if end is not None else total - 1
+            headers["Content-Range"] = f"bytes {offset}-{last}/{total}"
+
+    def _body():
+        try:
+            yield from model_storage.stream_model(
+                model, version, start=offset, length=length,
+                ext=model_storage.artifact_ext(manifest),
+            )
+        except Exception:
+            # The response has already begun, so we can't turn this into a 4xx.
+            # Truncating is the honest outcome: the client's checksum check
+            # rejects the partial file rather than feeding it to the detector.
+            logger.exception("vision: model stream aborted for %s", model)
+
+    return StreamingResponse(
+        _body(),
+        status_code=206 if start is not None else 200,
         media_type="application/octet-stream",
-        headers={
-            "X-Model-Version": str(version),
-            "X-Model-Sha256": str(manifest.get("sha256", "")),
-        },
+        headers=headers,
     )
+
+
+def _parse_range(header: str | None, total: int):
+    """Parse a single `bytes=` range. Returns (start, end), either may be None.
+
+    Deliberately minimal — the app sends `bytes=N-` and nothing else. Anything
+    unparseable or multi-range degrades to a normal 200 full-body response,
+    which is always a correct answer to a Range request.
+    """
+    if not header or not header.strip().lower().startswith("bytes="):
+        return None, None
+    spec = header.split("=", 1)[1].strip()
+    if "," in spec:  # multi-range: not worth supporting, serve the whole thing
+        return None, None
+    lo, _, hi = spec.partition("-")
+    try:
+        if not lo:  # suffix range ("-500" = last 500 bytes)
+            if not total or not hi:
+                return None, None
+            return max(0, total - int(hi)), total - 1
+        start = int(lo)
+        end = int(hi) if hi else None
+        if end is not None and end < start:
+            return None, None
+        return start, end
+    except ValueError:
+        return None, None
 
 
 @router.get("/model/{model}/labels")
@@ -858,7 +929,7 @@ def download_vision_labels(
     model: str, request: Request, user: dict = Depends(_auth)
 ):
     """Label list for the current model version (small, plain text)."""
-    if model not in ("counter",):
+    if model not in KNOWN_MODELS:
         raise HTTPException(status_code=404, detail="Unknown model")
     from vision import model_storage
 

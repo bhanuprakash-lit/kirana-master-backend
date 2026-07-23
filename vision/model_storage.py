@@ -13,10 +13,21 @@ endpoints in `vision/routes.py`. That means:
     can be identified and cut off;
   * the download shrinks by ~38 MB.
 
-Container layout:
-    counter/manifest.json      {"version": "...", "sha256": "...", "size": n}
-    counter/<version>.tflite   the weights
-    counter/<version>.labels   label list (small, shipped alongside)
+Container layout, one prefix per (model, runtime) pair:
+    counter/manifest.json          {"version", "sha256", "size", "ext", "format"}
+    counter/<version>.tflite       Android weights (TensorFlow Lite)
+    counter/<version>.labels       label list (small, shipped alongside)
+    counter-ios/manifest.json
+    counter-ios/<version>.mlpackage.zip   iOS weights (CoreML)
+    counter-ios/<version>.labels
+
+Android and iOS are separate prefixes because the two runtimes take different
+formats and nothing about them is shared — the `ultralytics_yolo` plugin is
+TFLite on Android and CoreML-only on iOS, and a `.mlpackage` is a *directory*,
+so it travels zipped and is extracted on the device.
+
+The blob extension comes from the manifest's `ext`, defaulting to `.tflite` so
+manifests published before iOS existed keep resolving.
 
 Configure via env:
   AZURE_STORAGE_CONNECTION_STRING   (shared with consent storage)
@@ -84,14 +95,42 @@ def get_manifest(model: str = "counter", *, refresh: bool = False) -> dict:
     return manifest
 
 
-def download_model(model: str, version: str) -> bytes:
+def artifact_ext(manifest: dict) -> str:
+    """Blob extension for a release. Pre-iOS manifests have no `ext` key."""
+    return str(manifest.get("ext") or ".tflite")
+
+
+def download_model(model: str, version: str, ext: str = ".tflite") -> bytes:
     """Fetch the weights for an exact version.
 
     The version comes from the manifest, never straight from the client, so a
     caller can't walk the container by guessing blob names.
     """
     cc = _client()
-    return cc.get_blob_client(f"{model}/{version}.tflite").download_blob().readall()
+    return cc.get_blob_client(f"{model}/{version}{ext}").download_blob().readall()
+
+
+def stream_model(
+    model: str,
+    version: str,
+    *,
+    start: int = 0,
+    length: int | None = None,
+    ext: str = ".tflite",
+):
+    """Yield the weights in chunks, optionally from a byte offset.
+
+    Reading the whole 38 MB into the server process per request would cost
+    38 MB × concurrent downloads of RAM, and gives the client nothing to show a
+    progress bar against until it's over. Streaming keeps the backend flat and
+    lets the app report progress as bytes land.
+
+    [start]/[length] back HTTP Range, so an app whose download dropped at 20 MB
+    resumes there instead of paying for the first 20 MB twice.
+    """
+    cc = _client()
+    bc = cc.get_blob_client(f"{model}/{version}{ext}")
+    return bc.download_blob(offset=start, length=length).chunks()
 
 
 def download_labels(model: str, version: str) -> bytes | None:
