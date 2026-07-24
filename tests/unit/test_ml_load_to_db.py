@@ -137,11 +137,23 @@ class TestLoadToDbEndToEnd:
         assert len(conn.inserts("ml_signals")) == 3
         assert len(conn.inserts("ml_recommendations")) == 2
 
-    def test_empty_state_still_truncates_and_reports_zero(self):
+    def test_no_source_data_keeps_snapshot_instead_of_wiping(self):
+        # Both frames empty => the CSVs are missing/unreadable (e.g. a fresh
+        # container before the first retrain). Truncating would wipe the live
+        # snapshot the app serves, so load_to_db must refuse and keep it.
         engine = _FakeEngine()
         adapter = _StubAdapter(pd.DataFrame(), pd.DataFrame(), engine)
         out = adapter.load_to_db()
-        assert out == {"recommendations": 0, "signals": 0}
-        # Stale data is cleared even when the new snapshot is empty.
+        assert out == {"recommendations": 0, "signals": 0, "skipped": "no_source_data"}
+        # Critically: it must NOT have touched the tables at all.
+        assert engine.conn.executes == []
+
+    def test_partial_data_still_loads(self):
+        # Signals present but no recommendations: real data, so it should load
+        # (and still truncate) — the guard only trips when BOTH are empty.
+        engine = _FakeEngine()
+        adapter = _StubAdapter(_signals_frame(3), pd.DataFrame(), engine)
+        out = adapter.load_to_db(chunk_size=5)
+        assert out == {"recommendations": 0, "signals": 3}
         assert any("TRUNCATE" in s for s, _ in engine.conn.executes)
-        assert engine.conn.inserts("ml_signals") == []
+        assert len(engine.conn.inserts("ml_signals")) == 1

@@ -57,17 +57,32 @@ def _require_store(store_id: int, user: dict = Depends(_auth)):
 async def ml_status(
     request: Request, refresh: bool = False, user: dict = Depends(_auth)
 ):
-    """Prediction-CSV freshness (per-file age + overall stale flag) PLUS the
-    DB-backed `ml_signals` freshness under `signals` — the table the forecast
-    and ML cards actually read. Watch `signals.age_hours`, not the CSV ages: a
-    retrain can leave the CSVs fresh while the signals load silently failed.
-    Pass ?refresh=true to reload the CSVs from disk first."""
+    """ML data freshness. The authoritative signal is the Postgres `ml_signals`
+    table — that is what the forecast and ML cards actually read — so its age is
+    reported at the top level (`stale`, `age_hours`, `rows`, `stores`). The
+    prediction CSVs are only an intermediate build artifact that `load_to_db`
+    consumes; their per-file ages live under `csv_artifacts` and must NOT be read
+    as the app's freshness (a retrain can refresh the CSVs while the DB load
+    fails). Pass ?refresh=true to drop the cached frame first."""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     svc = _svc(request)
     if refresh:
         svc.ml.refresh()
-    return {**svc.ml.freshness(), "signals": svc.ml.signals_freshness()}
+    sig = svc.ml.signals_freshness()
+    csv = svc.ml.freshness()
+    return {
+        # Authoritative — the Postgres table the app serves from.
+        "source": "ml_signals (postgres)",
+        "stale": sig.get("stale", True),
+        "age_hours": sig.get("age_hours"),
+        "rows": sig.get("rows"),
+        "stores": sig.get("stores"),
+        "newest": sig.get("newest"),
+        "signals": sig,
+        # Secondary — the CSVs load_to_db reads; NOT what the app serves.
+        "csv_artifacts": csv,
+    }
 
 
 @router.post("/admin/ml/reload-db")

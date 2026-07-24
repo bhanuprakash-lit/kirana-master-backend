@@ -120,17 +120,28 @@ export default function Settings() {
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-1">
               <span className="text-indigo-600">🧠</span> ML Model Status
             </h3>
-            {mlStatus && (
-              <div className="flex gap-4 text-[11px]">
-                 {Object.entries(mlStatus.files || {}).map(([file, info]) => (
-                   <div key={file} className="flex items-center gap-1.5">
-                     <span className={`w-1.5 h-1.5 rounded-full ${info.age_hours > 24 ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
-                     <span className="text-slate-500">{file}:</span>
-                     <span className="font-bold text-slate-700">{info.age_hours}h</span>
-                   </div>
-                 ))}
-              </div>
-            )}
+            {mlStatus && (() => {
+              // The app serves from Postgres ml_signals, not the CSVs — so show
+              // THAT freshness. (The CSV file ages under csv_artifacts are just a
+              // build artifact and used to make this read misleadingly fresh.)
+              const sig = mlStatus.signals || {};
+              const age = sig.age_hours;
+              const stale = sig.stale ?? true;
+              return (
+                <div className="flex gap-4 text-[11px] items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${stale ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+                    <span className="text-slate-500">ml_signals (live data):</span>
+                    <span className="font-bold text-slate-700">
+                      {age == null ? '—' : `${age}h old`}
+                    </span>
+                  </div>
+                  {sig.rows != null && (
+                    <span className="text-slate-400">{sig.rows} rows · {sig.stores} stores</span>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           <button onClick={handleRetrain} className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors">
             Retrain
