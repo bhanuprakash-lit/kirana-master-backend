@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import time
 import math
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -291,6 +292,10 @@ class MLAdapter:
         deadstk  = _load(self._path("deadstock_predictions.csv"), "deadstock")
 
         ml_state = self._build_ml_state(stockout, reorder, velocity, margin, deadstk)
+        # The five source frames are merged into ml_state now; drop them so they
+        # aren't held alongside ml_state + the recommendation build below (this
+        # loader runs in a memory-tight container).
+        del stockout, margin, velocity, reorder, deadstk
 
         rows: list[dict[str, Any]] = []
         for _, r in ml_state.iterrows():
@@ -333,64 +338,91 @@ class MLAdapter:
             df = df.where(df.notna(), None)
         return ml_state, df
 
-    def load_to_db(self) -> dict:
+    _RECO_INSERT_SQL = (
+        "INSERT INTO kirana_oltp.ml_recommendations "
+        "(store_id, sku_id, recommendation_type, product_name, category_name, payload) "
+        "VALUES (:store_id, :sku_id, :rtype, :product_name, :category_name, "
+        "CAST(:payload AS JSONB))"
+    )
+    _SIG_INSERT_SQL = (
+        "INSERT INTO kirana_oltp.ml_signals (store_id, product_id, payload) "
+        "VALUES (:store_id, :product_id, CAST(:payload AS JSONB))"
+    )
+
+    @staticmethod
+    def _reco_record(row: dict) -> dict:
+        payload = {k: v for k, v in row.items()
+                   if k not in ("store_id", "sku_id", "recommendation_type",
+                                "product_name", "category_name")}
+        return {
+            "store_id": int(row["store_id"]), "sku_id": int(row["sku_id"]),
+            "rtype": str(row["recommendation_type"]),
+            "product_name": row.get("product_name") or "",
+            "category_name": row.get("category_name") or "",
+            "payload": json.dumps(_json_safe(payload)),
+        }
+
+    @staticmethod
+    def _signal_record(row: dict) -> dict:
+        return {
+            "store_id": int(row["store_id"]),
+            "product_id": int(row["product_id"]),
+            "payload": json.dumps(_json_safe(row)),
+        }
+
+    @staticmethod
+    def _insert_chunked(conn, frame, sql, build_record, chunk_size: int) -> int:
+        """Build records for `frame` and INSERT them `chunk_size` rows at a time.
+
+        The point is to never hold more than one chunk of dicts (each with a
+        JSON payload string) in memory. Building the full ~170k-row list first —
+        which is what this code used to do — doubled the frame into Python dicts
+        plus JSON strings and OOM-killed the 1Gi container, so load_to_db never
+        finished and ml_signals silently stopped updating. Returns rows written."""
+        if frame is None or frame.empty:
+            return 0
+        stmt = text(sql)
+        total = 0
+        n = len(frame)
+        for start in range(0, n, chunk_size):
+            batch = [build_record(r)
+                     for r in frame.iloc[start:start + chunk_size].to_dict("records")]
+            if batch:
+                conn.execute(stmt, batch)
+                total += len(batch)
+            del batch
+        return total
+
+    def load_to_db(self, chunk_size: int = 4000) -> dict:
         """OFFLINE loader: compute recommendations + signals from the CSVs and
         write them into Postgres (kirana_oltp.ml_recommendations / ml_signals),
         replacing the previous snapshot. Run this from the training pipeline
         (after the CSVs are generated) — never in the API request path.
-        Returns row counts. Requires an engine."""
+        Returns row counts. Requires an engine.
+
+        Records are built AND inserted in row-chunks: the previous version
+        materialised the entire signal + recommendation lists (~170k dicts, each
+        carrying a JSON payload) before inserting, which blew past the 1Gi
+        container limit. Training and the CSVs would succeed while this step got
+        OOM-killed, leaving ml_signals stale for days with no error surfaced."""
         if self._engine is None:
             raise RuntimeError("load_to_db needs a database engine")
-        import json
         ml_state, reco = self._compute_from_csvs()
-
-        reco_records: list[dict] = []
-        for row in reco.to_dict("records"):
-            payload = {k: v for k, v in row.items()
-                       if k not in ("store_id", "sku_id", "recommendation_type",
-                                    "product_name", "category_name")}
-            reco_records.append({
-                "store_id": int(row["store_id"]), "sku_id": int(row["sku_id"]),
-                "rtype": str(row["recommendation_type"]),
-                "product_name": row.get("product_name") or "",
-                "category_name": row.get("category_name") or "",
-                "payload": json.dumps(_json_safe(payload)),
-            })
-
-        sig_records: list[dict] = []
-        if not ml_state.empty:
-            for row in ml_state.to_dict("records"):
-                sig_records.append({
-                    "store_id": int(row["store_id"]),
-                    "product_id": int(row["product_id"]),
-                    "payload": json.dumps(_json_safe(row)),
-                })
 
         with self._engine.begin() as conn:
             self._ensure_tables(conn)
             conn.execute(text("TRUNCATE kirana_oltp.ml_recommendations"))
             conn.execute(text("TRUNCATE kirana_oltp.ml_signals"))
-            if reco_records:
-                conn.execute(text("""
-                    INSERT INTO kirana_oltp.ml_recommendations
-                        (store_id, sku_id, recommendation_type, product_name,
-                         category_name, payload)
-                    VALUES (:store_id, :sku_id, :rtype, :product_name,
-                            :category_name, CAST(:payload AS JSONB))
-                """), reco_records)
-            if sig_records:
-                # chunked insert keeps the loader's own memory bounded on the
-                # large signals set.
-                for i in range(0, len(sig_records), 5000):
-                    conn.execute(text("""
-                        INSERT INTO kirana_oltp.ml_signals (store_id, product_id, payload)
-                        VALUES (:store_id, :product_id, CAST(:payload AS JSONB))
-                    """), sig_records[i:i + 5000])
+            reco_n = self._insert_chunked(
+                conn, reco, self._RECO_INSERT_SQL, self._reco_record, chunk_size)
+            sig_n = self._insert_chunked(
+                conn, ml_state, self._SIG_INSERT_SQL, self._signal_record, chunk_size)
+
         # Invalidate the API-side cache so the next read picks up the new data.
         self._frame = None
         logger.info("MLAdapter.load_to_db: wrote %d recommendations, %d signals",
-                    len(reco_records), len(sig_records))
-        return {"recommendations": len(reco_records), "signals": len(sig_records)}
+                    reco_n, sig_n)
+        return {"recommendations": reco_n, "signals": sig_n}
 
     @staticmethod
     def _ensure_tables(conn) -> None:
