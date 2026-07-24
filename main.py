@@ -170,6 +170,11 @@ async def lifespan(app: FastAPI):
 # ── App factory ────────────────────────────────────────────────────────────────
 
 def create_app() -> FastAPI:
+    # The interactive Swagger UI at /docs is how junk stores get in: it
+    # pre-fills every field with "string" and the register endpoint takes no
+    # auth. Expose it only in local dev (or when ENABLE_DOCS is explicitly set),
+    # never on UAT/prod. Disabling openapi.json also hides /docs and /redoc.
+    _docs_on = _ENV == "local" or os.getenv("ENABLE_DOCS", "").lower() in ("1", "true", "yes")
     app = FastAPI(
         title="Kirana Master Backend",
         description=(
@@ -177,9 +182,9 @@ def create_app() -> FastAPI:
             "and **WhatsApp intelligence layer**. All backed by a single `lit_db` PostgreSQL database."
         ),
         version="1.0.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if _docs_on else None,
+        redoc_url="/redoc" if _docs_on else None,
+        openapi_url="/openapi.json" if _docs_on else None,
         lifespan=lifespan,
     )
 

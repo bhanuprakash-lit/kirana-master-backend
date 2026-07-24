@@ -72,7 +72,7 @@ class TestAuthUser:
 class TestRegisterStoreOwnerRequest:
     def test_minimal_required_fields(self):
         req = RegisterStoreOwnerRequest(
-            username="x", full_name="X", store_name="X Store"
+            username="ramesh", full_name="Ramesh", store_name="Ramesh Store"
         )
         # Defaults the doc claims
         assert req.password == ""
@@ -83,7 +83,7 @@ class TestRegisterStoreOwnerRequest:
 
     def test_phone_auth_path_allows_empty_password(self):
         req = RegisterStoreOwnerRequest(
-            username="x", full_name="X", store_name="X Store",
+            username="ramesh", full_name="Ramesh", store_name="Ramesh Store",
             phone_number="+91...", firebase_uid="abc",
         )
         assert req.password == ""
@@ -91,11 +91,45 @@ class TestRegisterStoreOwnerRequest:
 
     def test_lat_lng_optional(self):
         req = RegisterStoreOwnerRequest(
-            username="x", full_name="X", store_name="X Store",
+            username="ramesh", full_name="Ramesh", store_name="Ramesh Store",
             latitude=12.9, longitude=77.5,
         )
         assert req.latitude == 12.9
         assert req.longitude == 77.5
+
+    def test_identity_fields_are_trimmed(self):
+        req = RegisterStoreOwnerRequest(
+            username="  ramesh  ", full_name=" Ramesh Kumar ",
+            store_name="  Ramesh Store ",
+        )
+        assert req.username == "ramesh"
+        assert req.full_name == "Ramesh Kumar"
+        assert req.store_name == "Ramesh Store"
+
+    def test_swagger_default_string_is_rejected(self):
+        # The exact scenario that produced UAT store #89: /docs pre-fills every
+        # text box with "string", so the whole payload is placeholders.
+        with pytest.raises(ValidationError):
+            RegisterStoreOwnerRequest(
+                username="string", full_name="string", store_name="string"
+            )
+
+    def test_placeholder_in_any_identity_field_is_rejected(self):
+        for bad in ("string", "STRING", " null ", "N/A", "undefined", "test"):
+            with pytest.raises(ValidationError):
+                RegisterStoreOwnerRequest(
+                    username="ramesh", full_name="Ramesh", store_name=bad
+                )
+
+    def test_too_short_identity_fields_are_rejected(self):
+        with pytest.raises(ValidationError):
+            RegisterStoreOwnerRequest(
+                username="ab", full_name="Ramesh", store_name="Ramesh Store"
+            )
+        with pytest.raises(ValidationError):
+            RegisterStoreOwnerRequest(
+                username="ramesh", full_name="R", store_name="Ramesh Store"
+            )
 
 
 class TestUserPrefsDefaults:

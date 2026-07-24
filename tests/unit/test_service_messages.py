@@ -6,11 +6,13 @@ shown in the mobile app's intelligence cards.
 from __future__ import annotations
 
 from kirana.service import (
+    _advice,
     _msg_dead_stock,
     _msg_fast_moving,
     _msg_profit,
     _msg_reorder,
     _msg_stockout,
+    _vertical_family,
 )
 
 
@@ -113,3 +115,66 @@ class TestDeadStockMessage:
     def test_zero_price_omits_capital_clause(self):
         msg = _msg_dead_stock({"current_stock": 10, "current_price": 0})
         assert "₹" not in msg
+
+
+class TestVerticalFamily:
+    def test_grocery_is_the_default_for_unset_and_unknown(self):
+        assert _vertical_family(None) == "grocery"
+        assert _vertical_family("") == "grocery"
+        assert _vertical_family("something_new") == "grocery"
+
+    def test_apparel_family_collapses_together(self):
+        for v in ("apparel", "footwear", "boutique", "sports_fitness", "cosmetics"):
+            assert _vertical_family(v) == "apparel"
+
+    def test_bakery_speaks_grocery(self):
+        assert _vertical_family("bakery") == "grocery"
+
+    def test_own_families_pass_through(self):
+        for v in ("electronics", "optical", "services", "general"):
+            assert _vertical_family(v) == v
+
+
+class TestAdviceTail:
+    def test_neutral_types_have_no_advice_tail(self):
+        # stockout/reorder advice is already vertical-neutral, so no tail here.
+        assert _advice("stockout_risk", "apparel") == ""
+        assert _advice("reorder_now", "electronics") == ""
+
+    def test_every_family_resolves_a_non_empty_tail(self):
+        for rtype in ("fast_moving", "profit_opportunity", "dead_stock"):
+            for v in ("grocery", "apparel", "electronics", "optical",
+                      "services", "general", "bakery", "footwear"):
+                assert _advice(rtype, v).strip()
+
+
+class TestVerticalAwareMessages:
+    """G6: grocery wording stays byte-identical; other verticals lose the
+    grocery-only phrases (morning rush / eye-level / return-to-vendor / shelf)."""
+
+    def test_grocery_default_is_unchanged(self):
+        assert "morning rush" in _msg_fast_moving({"forecast_demand": 5})
+        assert "eye-level" in _msg_profit({"effective_margin": 30})
+        dead = _msg_dead_stock({"current_stock": 8})
+        assert "sitting on shelf" in dead
+        assert "return-to-vendor" in dead
+
+    def test_apparel_drops_grocery_phrases(self):
+        fast = _msg_fast_moving({"forecast_demand": 5, "current_stock": 20}, "apparel")
+        assert "morning rush" not in fast
+        assert "sizes and colours" in fast
+        profit = _msg_profit({"effective_margin": 30}, "apparel")
+        assert "eye-level" not in profit
+        dead = _msg_dead_stock({"current_stock": 8}, "boutique")  # apparel family
+        assert "on shelf" not in dead
+        assert "clearance" in dead
+
+    def test_services_gets_capacity_wording_not_shelf(self):
+        fast = _msg_fast_moving({"forecast_demand": 5}, "services")
+        assert "shelf" not in fast
+        assert "capacity" in fast
+
+    def test_electronics_dead_stock_reads_naturally(self):
+        dead = _msg_dead_stock({"current_stock": 3, "current_price": 5000}, "electronics")
+        assert "sitting in stock" in dead
+        assert "bundle" in dead

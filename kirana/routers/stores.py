@@ -100,10 +100,17 @@ async def add_store(request: Request, user: dict = Depends(_auth)):
     b = await request.json()
     if not b.get("store_name"):
         raise HTTPException(status_code=400, detail="store_name required")
+    # Reject Swagger-default junk ("string") the same way registration does, so
+    # the multi-store path can't seed placeholder outlets either.
+    from kirana.schemas import _reject_placeholder
+    try:
+        store_name = _reject_placeholder(b["store_name"], field="store name", min_len=2)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     make_active = b.get("make_active", True)
     store = _repo(request).add_store_for_user(
         uid,
-        store_name=b["store_name"],
+        store_name=store_name,
         store_type=b.get("store_type") or "kirana",
         vertical_code=b.get("vertical_code"),
         footfall=b.get("footfall") or 40,

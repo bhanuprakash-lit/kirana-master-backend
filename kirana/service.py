@@ -85,7 +85,67 @@ def _round_rupees(value) -> int:
     return int(round(v / 100) * 100)
 
 
-def _msg_stockout(r: dict) -> str:
+# ── Vertical-aware advice tails (G6) ──────────────────────────────────────────
+# The numeric heads of a recommendation ("selling around 5 units/day") are
+# vertical-neutral; only the *advice* at the end used to be grocery-only
+# ("keep at eye-level", "morning rush", "return-to-vendor"). A salon or an
+# electronics shop shouldn't be told to stock its shelf for the morning rush.
+# Grocery stays the default so its wording — and the existing tests — are
+# unchanged; other verticals branch by family (mirrors the FE `vcopy` families).
+_APPAREL_FAMILY = {"apparel", "footwear", "boutique", "sports_fitness", "cosmetics"}
+
+
+def _vertical_family(vertical: str | None) -> str:
+    v = (vertical or "grocery").strip().lower()
+    if v in _APPAREL_FAMILY:
+        return "apparel"
+    if v == "bakery":            # bakery speaks grocery's shop-floor language
+        return "grocery"
+    if v in ("grocery", "electronics", "optical", "services", "general"):
+        return v
+    return "grocery"             # unknown vertical → grocery default
+
+
+# recommendation_type → family → advice sentence. "grocery" is the base every
+# family falls back to, so a new vertical never renders an empty tail.
+_ADVICE: dict[str, dict[str, str]] = {
+    "fast_moving": {
+        "grocery":     "Keep it shelf-ready, especially in the morning rush.",
+        "apparel":     "Keep the popular sizes and colours in stock.",
+        "electronics": "Keep it stocked and on display.",
+        "optical":     "Keep this style in stock — it's a strong seller.",
+        "services":    "Keep enough capacity to meet the demand.",
+        "general":     "Keep it well stocked — it's a strong seller.",
+    },
+    "profit_opportunity": {
+        "grocery":     "Promote it and keep at eye-level.",
+        "apparel":     "Feature it prominently on the display floor.",
+        "electronics": "Feature it prominently on display.",
+        "optical":     "Feature it prominently on display.",
+        "services":    "Promote it to more customers.",
+        "general":     "Feature it prominently.",
+    },
+    "dead_stock": {
+        "grocery":     "Try a markdown or return-to-vendor to free up cash.",
+        "apparel":     "Mark it down or move it to clearance to free up cash.",
+        "electronics": "Mark it down or bundle it to free up cash.",
+        "optical":     "Mark it down to free up cash.",
+        "services":    "Consider a discount to revive interest.",
+        "general":     "Mark it down or return it to the supplier to free up cash.",
+    },
+}
+
+
+def _advice(rtype: str, vertical: str | None) -> str:
+    """The vertical-appropriate closing advice for a recommendation type.
+    Empty for types (stockout/reorder) whose advice is already neutral."""
+    table = _ADVICE.get(rtype)
+    if not table:
+        return ""
+    return table.get(_vertical_family(vertical), table["grocery"])
+
+
+def _msg_stockout(r: dict, vertical: str = "grocery") -> str:
     """Stockout risk: explain *what's running out and how soon*."""
     days = _safe(r.get("days_to_stockout"))
     velocity = _safe(r.get("forecast_demand")) or 0
@@ -103,7 +163,7 @@ def _msg_stockout(r: dict) -> str:
     )
 
 
-def _msg_reorder(r: dict) -> str:
+def _msg_reorder(r: dict, vertical: str = "grocery") -> str:
     """Reorder: explain qty, why now, and how long it covers."""
     qty = _round_int(_safe(r.get("reorder_qty")) or 0)
     days = _safe(r.get("days_to_stockout"))
@@ -126,7 +186,7 @@ def _msg_reorder(r: dict) -> str:
     return head + tail + "."
 
 
-def _msg_fast_moving(r: dict) -> str:
+def _msg_fast_moving(r: dict, vertical: str = "grocery") -> str:
     """Fast-moving: explain it's a top mover and why to keep stocked."""
     velocity = _safe(r.get("forecast_demand")) or 0
     stock = _safe(r.get("current_stock"))
@@ -137,10 +197,10 @@ def _msg_fast_moving(r: dict) -> str:
         # prepend "about" — gives "current stock lasts around 4 days", not
         # "current stock covers about around 4 days".
         parts.append(f"current stock lasts {_round_days(cover)}")
-    return ". ".join(parts) + ". Keep it shelf-ready, especially in the morning rush."
+    return ". ".join(parts) + ". " + _advice("fast_moving", vertical)
 
 
-def _msg_profit(r: dict) -> str:
+def _msg_profit(r: dict, vertical: str = "grocery") -> str:
     """Profit opportunity: explain margin and recommend action."""
     margin = _safe(r.get("effective_margin")) or 0
     velocity = _safe(r.get("forecast_demand")) or 0
@@ -150,18 +210,21 @@ def _msg_profit(r: dict) -> str:
         parts.append(f"selling around {_round_int(velocity)} units/day")
     if proj > 0:
         parts.append(f"that's about ₹{_round_rupees(proj):,} profit over the next month")
-    return ". ".join(parts) + ". Promote it and keep at eye-level."
+    return ". ".join(parts) + ". " + _advice("profit_opportunity", vertical)
 
 
-def _msg_dead_stock(r: dict) -> str:
+def _msg_dead_stock(r: dict, vertical: str = "grocery") -> str:
     """Dead stock: explain it's tied-up capital with no movement."""
     stock = _round_int(_safe(r.get("current_stock")) or 0)
     price = _safe(r.get("current_price"))
     capital = (stock * price) if (price is not None and price > 0) else None
-    base = f"Hardly any sales in the last 3 weeks, {stock} units sitting on shelf"
+    # "on shelf" is grocery's word for it; other trades just have it "in stock".
+    where = "sitting on shelf" if _vertical_family(vertical) == "grocery" \
+        else "sitting in stock"
+    base = f"Hardly any sales in the last 3 weeks, {stock} units {where}"
     if capital and capital > 0:
         base += f" (about ₹{_round_rupees(capital):,} tied up)"
-    return base + ". Try a markdown or return-to-vendor to free up cash."
+    return base + ". " + _advice("dead_stock", vertical)
 
 
 _MSG = {
@@ -173,10 +236,10 @@ _MSG = {
 }
 
 
-def _build_item(row: dict) -> RecommendationItem:
+def _build_item(row: dict, vertical: str = "grocery") -> RecommendationItem:
     rt = row.get("recommendation_type", "")
     pri_fn  = _PRIORITY.get(rt, lambda _: "low")
-    msg_fn  = _MSG.get(rt, lambda _: "")
+    msg_fn  = _MSG.get(rt, lambda _r, _v="grocery": "")
     return RecommendationItem(
         store_id=int(row.get("store_id", 0)),
         sku_id=int(row.get("sku_id", 0)),
@@ -198,7 +261,7 @@ def _build_item(row: dict) -> RecommendationItem:
         expected_profit_impact=_safe(row.get("expected_profit")),
         effective_margin=_safe(row.get("effective_margin")),
         reorder_point=_safe(row.get("reorder_point")),
-        message=msg_fn(row),
+        message=msg_fn(row, vertical),
     )
 
 
@@ -385,15 +448,31 @@ class KiranaService:
             df = df[df["recommendation_type"] == q.recommendation_type]
         return df
 
+    def _store_vertical(self, store_id: int) -> str:
+        """The store's coarse vertical_code (grocery if unset/unknown). Drives
+        the vertical-aware wording of recommendation advice (G6)."""
+        from sqlalchemy import text
+        try:
+            with self._db.connect() as conn:
+                v = conn.execute(
+                    text("SELECT vertical_code FROM kirana_oltp.store WHERE store_id = :sid"),
+                    {"sid": store_id},
+                ).scalar()
+            return v or "grocery"
+        except Exception:
+            return "grocery"
+
     def _get_patched_items(self, store_id: int) -> list[RecommendationItem]:
         """Get recommendations: ML CSV results first, then SQL-scored fallbacks for missing SKUs."""
         from sqlalchemy import text
+
+        vertical = self._store_vertical(store_id)
 
         # 1. Base results from ML CSVs
         df = self.ml.get_frame()
         if not df.empty:
             df = df[df["store_id"] == store_id]
-        items = [_build_item(r) for r in df.to_dict("records")]
+        items = [_build_item(r, vertical) for r in df.to_dict("records")]
         existing_skus = {i.sku_id for i in items}
 
         # 2. SQL-scored fallbacks — real velocity + risk signals, no fake cycling
@@ -474,13 +553,13 @@ class KiranaService:
                            f"Reorder {reorder_qty} units to stay covered for 2 weeks.")
                 elif rtype == "dead_stock":
                     msg = (f"No sales in {last_sale_ago} days. {qty:.0f} units sitting idle. "
-                           f"Consider a promotion or return to supplier.")
+                           + _advice("dead_stock", vertical))
                 elif rtype == "fast_moving":
                     msg = (f"Selling {avg_daily:.1f} units/day. {qty:.0f} units left "
-                           f"(~{days_left:.0f} days). Keep shelf stocked.")
+                           f"(~{days_left:.0f} days). " + _advice("fast_moving", vertical))
                 else:
                     msg = (f"{margin:.0f}% gross margin. {qty:.0f} units in stock. "
-                           f"Cross-sell with complementary products to boost basket value.")
+                           + _advice("profit_opportunity", vertical))
 
                 items.append(RecommendationItem(
                     store_id=store_id,
