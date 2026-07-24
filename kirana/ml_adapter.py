@@ -18,6 +18,7 @@ import os
 import time
 import math
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -486,6 +487,40 @@ class MLAdapter:
             "stale_after_hours": ML_STALE_AFTER_HOURS,
             "results_dir": self.results_dir,
             "files": files,
+        }
+
+    def signals_freshness(self) -> dict[str, Any]:
+        """DB-backed freshness of the `ml_signals` table — what the forecast and
+        the app's ML cards actually read. This is deliberately separate from
+        `freshness()`, which only measures the CSV files on disk: a retrain can
+        leave the CSVs fresh while `load_to_db()` silently fails, leaving this
+        table stale for days with every other status check still green. This is
+        the value to alert on."""
+        if self._engine is None:
+            return {"available": False, "reason": "no_engine"}
+        try:
+            with self._engine.connect() as conn:
+                row = conn.execute(text(
+                    "SELECT COUNT(*) AS rows, COUNT(DISTINCT store_id) AS stores, "
+                    "MAX(updated_at) AS newest FROM kirana_oltp.ml_signals"
+                )).mappings().first()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ml_signals freshness read failed: %s", exc)
+            return {"available": False, "reason": str(exc)}
+
+        newest = row["newest"] if row else None
+        age_h = None
+        if newest is not None:
+            if newest.tzinfo is None:
+                newest = newest.replace(tzinfo=timezone.utc)
+            age_h = round((datetime.now(timezone.utc) - newest).total_seconds() / 3600, 1)
+        return {
+            "available": True,
+            "rows": int((row["rows"] if row else 0) or 0),
+            "stores": int((row["stores"] if row else 0) or 0),
+            "newest": newest.isoformat() if newest else None,
+            "age_hours": age_h,
+            "stale": age_h is None or age_h > ML_STALE_AFTER_HOURS,
         }
 
     def flags_for_store(self, store_id: int) -> dict[int, list[str]]:

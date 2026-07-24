@@ -521,6 +521,35 @@ class IntelligenceEngine:
                 rows = self._kirana_svc.ml.get_frame().shape[0]
                 logger.info("ML predictions refreshed: %d rows loaded", rows)
 
+                # train_all.py deliberately swallows a load_to_db() failure so the
+                # models still get saved — which means a retrain can report success
+                # while ml_signals stays stale for days, and every CSV-based status
+                # check looks green. The forecast + ML cards read ml_signals, so a
+                # stale table silently degrades them. Verify the table actually
+                # advanced and shout if it didn't.
+                try:
+                    sf = self._kirana_svc.ml.signals_freshness()
+                    age = sf.get("age_hours")
+                    if not sf.get("available"):
+                        logger.error(
+                            "ML retrain: ml_signals freshness unavailable after a "
+                            "successful retrain (%s) — cannot confirm the forecast "
+                            "data was updated", sf.get("reason"))
+                    elif age is None or age > 2:
+                        logger.error(
+                            "ML retrain: ml_signals NOT REFRESHED — table is %sh old "
+                            "(%d rows, %d stores) after a retrain that reported success. "
+                            "load_to_db() almost certainly failed; the forecast and ML "
+                            "cards are serving stale data. Check train_all.py's Postgres "
+                            "load step in the retrain log.",
+                            age, sf.get("rows", 0), sf.get("stores", 0))
+                    else:
+                        logger.info(
+                            "ML retrain: ml_signals refreshed (%sh old, %d rows, %d stores)",
+                            age, sf.get("rows", 0), sf.get("stores", 0))
+                except Exception:
+                    logger.exception("ML retrain: ml_signals freshness check failed")
+
         except Exception:
             logger.exception("ML retrain failed unexpectedly")
         finally:
