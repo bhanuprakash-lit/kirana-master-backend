@@ -409,6 +409,18 @@ class MLAdapter:
             raise RuntimeError("load_to_db needs a database engine")
         ml_state, reco = self._compute_from_csvs()
 
+        # Never wipe a good snapshot with nothing. If both source frames are
+        # empty the CSVs are missing/unreadable (e.g. a fresh container before
+        # the first retrain has run) — truncating here would delete the live
+        # ml_signals/ml_recommendations the app is serving. Keep what we have.
+        state_empty = ml_state is None or ml_state.empty
+        reco_empty = reco is None or reco.empty
+        if state_empty and reco_empty:
+            logger.warning(
+                "load_to_db: no source data (prediction CSVs missing or empty) — "
+                "keeping the existing Postgres snapshot instead of truncating it")
+            return {"recommendations": 0, "signals": 0, "skipped": "no_source_data"}
+
         with self._engine.begin() as conn:
             self._ensure_tables(conn)
             conn.execute(text("TRUNCATE kirana_oltp.ml_recommendations"))
