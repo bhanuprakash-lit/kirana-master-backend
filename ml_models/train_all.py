@@ -184,8 +184,17 @@ def main():
         from kirana.ml_adapter import MLAdapter
         _counts = MLAdapter(RESULTS_DIR, engine=create_engine(DB_URL)).load_to_db()
         print(f"  Loaded into Postgres: {_counts}")
+        # The forecast + ML cards read ml_signals; 0 signal rows means they'll
+        # serve stale data even though the models saved fine. Make it greppable.
+        if not _counts or not _counts.get("signals"):
+            print("  ERROR: LOAD_TO_DB_EMPTY - ml_signals got 0 rows; forecast/ML "
+                  "cards will be stale.")
     except Exception as _e:  # never fail training just because the DB load did
-        print(f"  WARNING: could not load recommendations into Postgres: {_e}")
+        # Still don't crash training (models must save), but make this loud and
+        # greppable instead of a quiet WARNING that hid stale signals for days.
+        import traceback
+        print(f"  ERROR: LOAD_TO_DB_FAILED - ml_signals NOT updated: {_e}")
+        traceback.print_exc()
 
     # ── Summary ───────────────────────────────────────────────────────────────
     banner("Training Complete")

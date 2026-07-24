@@ -57,14 +57,17 @@ def _require_store(store_id: int, user: dict = Depends(_auth)):
 async def ml_status(
     request: Request, refresh: bool = False, user: dict = Depends(_auth)
 ):
-    """Prediction-CSV freshness (per-file age + overall stale flag).
+    """Prediction-CSV freshness (per-file age + overall stale flag) PLUS the
+    DB-backed `ml_signals` freshness under `signals` — the table the forecast
+    and ML cards actually read. Watch `signals.age_hours`, not the CSV ages: a
+    retrain can leave the CSVs fresh while the signals load silently failed.
     Pass ?refresh=true to reload the CSVs from disk first."""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     svc = _svc(request)
     if refresh:
         svc.ml.refresh()
-    return svc.ml.freshness()
+    return {**svc.ml.freshness(), "signals": svc.ml.signals_freshness()}
 
 
 @router.post("/admin/ml/reload-db")
