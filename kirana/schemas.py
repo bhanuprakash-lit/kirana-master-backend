@@ -1,5 +1,24 @@
 from typing import Any, Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+
+# Values that mean "the caller never filled this in" — most often the literal
+# "string" that FastAPI's Swagger /docs UI pre-fills every text box with, which
+# is how junk stores ("string, string, string…") get registered. A real store
+# name / owner name / username is never exactly one of these.
+_PLACEHOLDER_VALUES = {
+    "string", "str", "null", "none", "n/a", "na", "undefined", "test",
+}
+
+
+def _reject_placeholder(value: str, *, field: str, min_len: int) -> str:
+    """Strip and sanity-check a required human-entered identity field."""
+    s = (value or "").strip()
+    if len(s) < min_len:
+        raise ValueError(f"{field} must be at least {min_len} characters")
+    if s.lower() in _PLACEHOLDER_VALUES:
+        raise ValueError(f"{field} looks like placeholder text — enter a real {field}")
+    return s
 
 
 class LoginRequest(BaseModel):
@@ -55,6 +74,21 @@ class RegisterStoreOwnerRequest(BaseModel):
     firebase_uid: Optional[str] = None   # for audit trail
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+
+    @field_validator("username")
+    @classmethod
+    def _v_username(cls, v: str) -> str:
+        return _reject_placeholder(v, field="username", min_len=3)
+
+    @field_validator("full_name")
+    @classmethod
+    def _v_full_name(cls, v: str) -> str:
+        return _reject_placeholder(v, field="full name", min_len=2)
+
+    @field_validator("store_name")
+    @classmethod
+    def _v_store_name(cls, v: str) -> str:
+        return _reject_placeholder(v, field="store name", min_len=2)
 
 
 class RegisterStoreOwnerResponse(BaseModel):
